@@ -33,7 +33,6 @@ use dupe::Dupe;
 use either::Either;
 use serde::Serialize;
 use starlark_derive::StarlarkPagable;
-use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_value;
 use starlark_map::Equivalent;
 
@@ -65,7 +64,9 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::comparison::equals_small_map;
+use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
+use crate::values::dict::StarlarkDict;
 use crate::values::error::ValueError;
 use crate::values::string::str_type::hash_string_value;
 use crate::values::types::dict::dict_type::DictType;
@@ -127,14 +128,6 @@ static_starlark_value!(
         content: SmallMap::new(),
     })
 );
-
-/// Every dict is a `dict[typing.Any, typing.Any]`.
-impl<'v> From<ValueOf<'v, DictView<'v>>> for ValueOf<'v, DictType<Value<'v>, Value<'v>>> {
-    #[inline]
-    fn from(value: ValueOf<'v, DictView<'v>>) -> Self {
-        Self::new_unchecked(value.to_value())
-    }
-}
 
 impl<'v> AllocValue<'v> for Dict<'v> {
     type Type = DictType<Value<'v>, Value<'v>>;
@@ -444,9 +437,9 @@ impl<'v> DictLike<'v> for Dict<'v> {
 
 starlark::methods_static!(DICT_METHODS = crate::values::types::dict::methods::dict_methods);
 
-/// A `dict` in either of its representations.
-#[derive(Debug, Clone, Copy, Dupe, StarlarkRepresentations)]
-pub(crate) enum DictView<'v> {
+/// Which of its representations a `dict` is.
+#[derive(Debug, Clone, Copy, Dupe)]
+pub(crate) enum DictRepr<'v> {
     Frozen(ValueTyped<'v, DictGen<Dict<'v>>>),
     Unfrozen(ValueTyped<'v, DictGen<RefCell<Dict<'v>>>>),
 }
@@ -455,11 +448,11 @@ pub(crate) enum DictView<'v> {
 macro_rules! with_dict {
     ($self:expr, |$x:ident| $e:expr) => {
         match $self {
-            DictView::Frozen($x) => {
+            DictRepr::Frozen($x) => {
                 let $x = &$x.as_ref().0;
                 $e
             }
-            DictView::Unfrozen($x) => {
+            DictRepr::Unfrozen($x) => {
                 let $x = &$x.as_ref().0;
                 $e
             }
@@ -467,15 +460,51 @@ macro_rules! with_dict {
     };
 }
 
-impl<'v> DictView<'v> {
+impl<'v> DictRepr<'v> {
+    /// `value` as a dict, if it is one. The representation is told by whether the value is
+    /// frozen, so one representation is tested, not both in turn.
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
+    pub(crate) fn of_value(value: Value<'v>) -> Option<Self> {
+        if value.is_frozen() {
+            ValueTyped::new(value).map(DictRepr::Frozen)
+        } else {
+            ValueTyped::new(value).map(DictRepr::Unfrozen)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn to_value(self) -> Value<'v> {
+        match self {
+            DictRepr::Frozen(x) => x.to_value(),
+            DictRepr::Unfrozen(x) => x.to_value(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_frozen(self) -> bool {
+        matches!(self, DictRepr::Frozen(_))
+    }
+
     /// The dict, borrowed for as long as the reference lives if it is mutable.
     #[inline]
     pub(crate) fn to_ref(self) -> DictRef<'v> {
         DictRef {
             aref: match self {
-                DictView::Frozen(x) => Either::Right(&x.as_ref().0),
-                DictView::Unfrozen(x) => Either::Left(x.as_ref().0.borrow()),
+                DictRepr::Frozen(x) => Either::Right(&x.as_ref().0),
+                DictRepr::Unfrozen(x) => Either::Left(x.as_ref().0.borrow()),
             },
+        }
+    }
+
+    /// The dict, to change it: an error if it is frozen or being iterated.
+    #[inline]
+    pub(crate) fn to_mut(self) -> crate::Result<DictMut<'v>> {
+        match self {
+            DictRepr::Unfrozen(x) => match x.as_ref().0.try_borrow_mut() {
+                Ok(aref) => Ok(DictMut { aref }),
+                Err(_) => Err(cannot_mutate(ValueError::MutationDuringIteration)),
+            },
+            DictRepr::Frozen(_) => Err(cannot_mutate(ValueError::CannotMutateImmutableValue)),
         }
     }
 
@@ -484,22 +513,28 @@ impl<'v> DictView<'v> {
         self,
     ) -> Either<Ref<'v, SmallMap<Value<'v>, Value<'v>>>, &'v SmallMap<Value<'v>, Value<'v>>> {
         match self {
-            DictView::Frozen(x) => Either::Right(x.as_ref().0.content()),
-            DictView::Unfrozen(x) => Either::Left(x.as_ref().0.content()),
+            DictRepr::Frozen(x) => Either::Right(x.as_ref().0.content()),
+            DictRepr::Unfrozen(x) => Either::Left(x.as_ref().0.content()),
         }
     }
 }
 
-#[starlark_value(type = Dict::TYPE)]
-impl<'v> StarlarkType<'v> for DictView<'v> {
+#[cold]
+#[inline(never)]
+fn cannot_mutate(error: ValueError) -> crate::Error {
+    crate::Error::new_other(error)
+}
+
+#[starlark_value(type = Dict::TYPE, type_expr = by_hand)]
+impl<'v> StarlarkType<'v> for StarlarkDict<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(DICT_METHODS.methods())
     }
 
-    fn collect_repr(&self, r: &mut String) {
+    fn collect_repr(this: Self, r: &mut String) {
         // Fast path as repr() for dicts is quite hot
         r.push('{');
-        for (i, (name, value)) in self.content().iter().enumerate() {
+        for (i, (name, value)) in this.repr().content().iter().enumerate() {
             if i != 0 {
                 r.push_str(", ");
             }
@@ -510,16 +545,18 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         r.push('}');
     }
 
-    fn collect_repr_cycle(&self, collector: &mut String) {
+    fn collect_repr_cycle(_this: Self, collector: &mut String) {
         collector.push_str("{...}");
     }
 
-    fn to_bool(&self) -> bool {
-        !self.content().is_empty()
+    fn to_bool(this: Self) -> bool {
+        !this.repr().content().is_empty()
     }
 
-    fn equals(&self, other: Self) -> crate::Result<bool> {
-        equals_small_map(&self.content(), &other.content(), |x, y| x.equals(*y))
+    fn equals(this: Self, other: Self) -> crate::Result<bool> {
+        equals_small_map(&this.repr().content(), &other.repr().content(), |x, y| {
+            x.equals(*y)
+        })
     }
 
     // `at` and `is_in` take a `Value`, so they are not typed methods, which the macro inlines
@@ -528,8 +565,12 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
     // representation that only says which it is: 8 more instructions on `d[k]` and 17 more on
     // `k in d`, with the `starlark` crate built as one codegen unit.
     #[inline(always)]
-    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match self.content().get_hashed_by_value(index.get_hashed()?) {
+    fn at(this: Self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        match this
+            .repr()
+            .content()
+            .get_hashed_by_value(index.get_hashed()?)
+        {
             Some(v) => Ok(v.to_value()),
             None => Err(crate::Error::new_other(ValueError::KeyNotFound(
                 index.to_repr(),
@@ -537,46 +578,53 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         }
     }
 
-    fn length(&self) -> i32 {
-        self.content().len() as i32
+    fn length(this: Self) -> i32 {
+        this.repr().content().len() as i32
     }
 
     #[inline(always)]
-    fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
-        Ok(self
+    fn is_in(this: Self, other: Value<'v>) -> crate::Result<bool> {
+        Ok(this
+            .repr()
             .content()
             .contains_key_hashed_by_value(other.get_hashed()?))
     }
 
-    unsafe fn iterate(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(this: Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         unsafe {
-            with_dict!(self, |d| d.iter_start())?;
-            Ok((*self).into())
+            with_dict!(this.repr(), |d| d.iter_start())?;
+            Ok(this.to_value())
         }
     }
 
-    unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        let len = self.content().len();
+    unsafe fn iter_size_hint(this: Self, index: usize) -> (usize, Option<usize>) {
+        let len = this.repr().content().len();
         debug_assert!(index <= len);
         let rem = len - index;
         (rem, Some(rem))
     }
 
-    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        unsafe { with_dict!(self, |d| d.content_unchecked().keys().nth(index).copied()) }
+    unsafe fn iter_next(this: Self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
+        unsafe {
+            with_dict!(this.repr(), |d| d
+                .content_unchecked()
+                .keys()
+                .nth(index)
+                .copied())
+        }
     }
 
-    unsafe fn iter_stop(&self) {
-        unsafe { with_dict!(self, |d| d.iter_stop()) }
+    unsafe fn iter_stop(this: Self) {
+        unsafe { with_dict!(this.repr(), |d| d.iter_stop()) }
     }
 
-    fn set_at(&self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
+    fn set_at(this: Self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
         let index = index.get_hashed()?;
-        with_dict!(self, |d| d.set_at(index, alloc_value))
+        with_dict!(this.repr(), |d| d.set_at(index, alloc_value))
     }
 
-    fn bit_or(&self, rhs: DictRef<'v>) -> Dict<'v> {
-        let content = self.content();
+    fn bit_or(this: Self, rhs: DictRef<'v>) -> Dict<'v> {
+        let content = this.repr().content();
         if content.is_empty() {
             return (*rhs).clone();
         }
@@ -597,7 +645,7 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for DictGen<RefCell<Dict<'v>>> {
-    type Type = DictView<'v>;
+    type Type = StarlarkDict<'v>;
 }
 
 /// The empty frozen dict is a static.
@@ -615,7 +663,7 @@ impl<'fv> AllocFrozenRepresentation<'fv> for DictGen<Dict<'fv>> {
 
 #[starlark_value(alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for DictGen<Dict<'v>> {
-    type Type = DictView<'v>;
+    type Type = StarlarkDict<'v>;
 }
 
 impl<'v, T: DictLike<'v>> Serialize for DictGen<T> {

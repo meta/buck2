@@ -23,15 +23,16 @@ use dupe::Copy_;
 use dupe::Dupe_;
 
 use crate as starlark;
-use crate::__derive_refs::representations::ViewOfRepresentations;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::dict::DictEntries;
 use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
-use crate::values::dict::value::DictView;
+use crate::values::dict::StarlarkDict;
+use crate::values::dict::value::DictRepr;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 
@@ -54,7 +55,7 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> 
 
     #[inline]
     fn get(value: Value<'v>) -> Option<Self::Get> {
-        let dict = DictView::from_value(value)?;
+        let dict = DictRepr::of_value(value)?;
         dict.to_ref()
             .iter()
             .all(|(k, v)| K::matches(k) && V::matches(v))
@@ -80,12 +81,29 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> UnpackValue<'v> for D
     }
 }
 
-impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<K, V>> {
+/// A type that `{}` belongs to: [`StarlarkDict`], and [`DictType`] while it still exists.
+pub trait EmptyDictType: sealed::Sealed {}
+
+impl<K, V> EmptyDictType for DictType<K, V> {}
+impl<'v, K, V> EmptyDictType for StarlarkDict<'v, K, V> {}
+
+mod sealed {
+    use crate::values::dict::DictType;
+    use crate::values::dict::StarlarkDict;
+
+    pub trait Sealed {}
+    impl<K, V> Sealed for DictType<K, V> {}
+    impl<'v, K, V> Sealed for StarlarkDict<'v, K, V> {}
+}
+
+impl<'v, T: StarlarkTypeExpr<'v> + EmptyDictType> ValueOf<'v, T> {
     /// The empty dict.
     pub fn empty_dict() -> Self {
         Self::new_unchecked(Value::new_empty_dict())
     }
+}
 
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<K, V>> {
     /// The dict.
     #[inline]
     pub fn dict(self) -> DictRef<'v> {
@@ -122,6 +140,28 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<
     }
 }
 
+/// A handle to a `dict[K, V]` under either of its two names is a handle under the other, for
+/// code that has one and is given the other while [`DictType`] still exists.
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> From<ValueOf<'v, DictType<K, V>>>
+    for ValueOf<'v, StarlarkDict<'v, K, V>>
+{
+    #[inline]
+    fn from(dict: ValueOf<'v, DictType<K, V>>) -> Self {
+        // The same type under its other name.
+        ValueOf::new_unchecked(dict.to_value())
+    }
+}
+
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> From<ValueOf<'v, StarlarkDict<'v, K, V>>>
+    for ValueOf<'v, DictType<K, V>>
+{
+    #[inline]
+    fn from(dict: ValueOf<'v, StarlarkDict<'v, K, V>>) -> Self {
+        // The same type under its other name.
+        ValueOf::new_unchecked(dict.to_value())
+    }
+}
+
 /// What a value read as a `dict[K, V]` gives ([`DictType`]'s `Get`): the handle, and which of
 /// its representations the dict is, so that what holds one does not look the dict up again.
 /// It does not hold a borrow of a mutable dict: [`dict`](Self::dict) takes one when it is
@@ -131,14 +171,14 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, DictType<
 #[derive(Clone_, Copy_, Dupe_)]
 pub struct DictOf<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> {
     value: ValueOf<'v, DictType<K, V>>,
-    dict: DictView<'v>,
+    dict: DictRepr<'v>,
 }
 
 impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> DictOf<'v, K, V> {
     /// The reading of a handle. The dict is looked up; its entries are not checked.
     #[inline]
     pub(crate) fn of_handle(value: ValueOf<'v, DictType<K, V>>) -> Self {
-        let dict = DictView::from_value(value.to_value()).expect("a value's type does not change");
+        let dict = DictRepr::of_value(value.to_value()).expect("a value's type does not change");
         DictOf { value, dict }
     }
 
@@ -168,11 +208,7 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> DictOf<'v, K, V> {
     /// The entries, re-checked unless the dict is frozen, as for
     /// [`StarlarkList::iter`](crate::values::list::StarlarkList::iter).
     pub fn iter(self) -> DictEntries<'v, K, V> {
-        DictEntries {
-            frozen: self.to_value().is_frozen(),
-            entries: self.entries(),
-            _marker: PhantomData,
-        }
+        DictEntries::of_borrowed(self.dict(), self.to_value().is_frozen())
     }
 
     /// The entries, each converted by `K2`, a conversion from `K`, and `V2`, a conversion from
@@ -182,15 +218,7 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> DictOf<'v, K, V> {
         K2: UnpackValue<'v, Type = K>,
         V2: UnpackValue<'v, Type = V>,
     {
-        self.entries()
-            .map(|(k, v)| Ok((K2::unpack_value_err(k)?, V2::unpack_value_err(v)?)))
-    }
-
-    fn entries(self) -> Entries<'v> {
-        Entries {
-            dict: self.dict(),
-            index: 0,
-        }
+        StarlarkDict::<'v, K, V>::of_repr(self.dict).try_items()
     }
 
     /// The value at `key`, re-checked unless the dict is frozen.
@@ -212,51 +240,6 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> DictOf<'v, K, V> {
         } else {
             ValueOf::new_err(v)
         }
-    }
-}
-
-/// The entries of a [`ValueOf<DictType<K, V>>`], borrowed from the dict.
-pub struct DictEntries<'v, K, V> {
-    frozen: bool,
-    entries: Entries<'v>,
-    _marker: PhantomData<fn() -> (K, V)>,
-}
-
-impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> Iterator for DictEntries<'v, K, V> {
-    type Item = crate::Result<(ValueOf<'v, K>, ValueOf<'v, V>)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (k, v) = self.entries.next()?;
-        Some(if self.frozen {
-            Ok((ValueOf::new_unchecked(k), ValueOf::new_unchecked(v)))
-        } else {
-            (|| Ok((ValueOf::new_err(k)?, ValueOf::new_err(v)?)))()
-        })
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.entries.size_hint()
-    }
-}
-
-/// The entries of a dict, borrowed from it; indexed because the borrow lives in the iterator.
-struct Entries<'v> {
-    dict: DictRef<'v>,
-    index: usize,
-}
-
-impl<'v> Iterator for Entries<'v> {
-    type Item = (Value<'v>, Value<'v>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (k, v) = self.dict.content.get_index(self.index)?;
-        self.index += 1;
-        Some((*k, *v))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let rem = self.dict.content.len() - self.index;
-        (rem, Some(rem))
     }
 }
 

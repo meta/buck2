@@ -15,6 +15,8 @@
 use std::cell::Cell;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::Context;
 use buck2_e2e::Buck;
@@ -433,6 +435,56 @@ pub async fn run_replace_directory_tests(buck: &Buck) -> anyhow::Result<()> {
     one_batch(buck).await
 }
 
+/// Renames a directory at the top of the project onto the path of one that buck has read.
+pub async fn run_replace_top_level_directory_test(buck: &Buck) -> anyhow::Result<()> {
+    setup_file_watcher_test(buck).await?;
+    let top = buck.cwd();
+    for (dir, value) in [("top", "before"), ("incoming", "after")] {
+        fs::create_dir(top.join(dir))?;
+        fs::write(
+            top.join(dir).join("defs.bzl"),
+            format!("VALUE = \"{value}\"\n"),
+        )?;
+    }
+    let probe = Probe::new(buck, "top_level")?;
+    let load = "load(\"//top:defs.bzl\", \"VALUE\")\n";
+    assert_eq!(probe.eval(load, "VALUE").await?, json!("before"));
+
+    fs::rename(top.join("top"), top.join("old"))?;
+    fs::rename(top.join("incoming"), top.join("top"))?;
+    assert_eq!(probe.eval(load, "VALUE").await?, json!("after"));
+    Ok(())
+}
+
+/// Renames a directory onto the path of one that buck has read, writes a file into it, and
+/// commits a change to a file elsewhere, all before the next command.
+pub async fn run_replace_directory_and_commit_elsewhere_test(buck: &Buck) -> anyhow::Result<()> {
+    setup_file_watcher_test(buck).await?;
+    // The commit is made on another bookmark: with the mergebase, buck would start over.
+    run_checked(&["sl", "bookmark", "work"], buck.cwd()).await?;
+    let probe = Probe::new(buck, "commit_elsewhere")?;
+    probe.write("d/defs.bzl", "VALUE = \"before\"\n")?;
+    probe.write("incoming/defs.bzl", "VALUE = \"after\"\n")?;
+    let load = probe.load("d:defs.bzl", "\"VALUE\"");
+    assert_eq!(probe.eval(&load, "VALUE").await?, json!("before"));
+
+    probe.replace_d_by_incoming()?;
+    probe.write("d/written", "")?;
+    fs::write(buck.cwd().join("files").join("abc"), "committed")?;
+    let commit = [
+        "sl",
+        "commit",
+        "-m",
+        "elsewhere",
+        "--config",
+        SL_USER,
+        "files/abc",
+    ];
+    run_checked(&commit, buck.cwd()).await?;
+    assert_eq!(probe.eval(&load, "VALUE").await?, json!("after"));
+    Ok(())
+}
+
 /// The build files that the last command evaluated.
 async fn evaluated(buck: &Buck) -> anyhow::Result<Vec<String>> {
     let log = buck.log(&["show"]).await?.stdout;
@@ -556,5 +608,116 @@ pub async fn run_commit_and_replace_directory_test(buck: &Buck) -> anyhow::Resul
     fs::remove_file(probe.path("d/tracked"))?;
     probe.rename("incoming", "d")?;
     assert_eq!(probe.eval(&load, "VALUE").await?, json!("after"));
+    Ok(())
+}
+
+/// A change of commit that gives a file another id and the same contents reports the
+/// directories above the file, and not the file. buck evaluates no package again.
+pub async fn run_commit_with_same_contents_evaluates_no_package_test(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    setup_file_watcher_test(buck).await?;
+    // The commits are made on another bookmark: with the mergebase, buck would start over.
+    run_checked(&["sl", "bookmark", "work"], buck.cwd()).await?;
+    let probe = Probe::new(buck, "same_contents")?;
+    for package in ["d/a/", "d/b/"] {
+        probe.write_build_file(package, "", "1")?;
+    }
+    let tracked = "probe/same_contents/d/tracked";
+    for contents in ["first", "second", "first"] {
+        probe.write("d/tracked", contents)?;
+        run_checked(&["sl", "add", tracked], buck.cwd()).await?;
+        let commit = ["sl", "commit", "-m", contents, "--config", SL_USER, tracked];
+        run_checked(&commit, buck.cwd()).await?;
+    }
+    let all = ["root//probe/same_contents/d/..."];
+    buck.targets(&all).await?;
+    assert_eq!(evaluated(buck).await?.len(), 2);
+
+    // To the first of the three commits.
+    run_checked(&["sl", "goto", ".~2"], buck.cwd()).await?;
+    buck.targets(&all).await?;
+    assert_eq!(evaluated(buck).await?, Vec::<String>::new());
+    Ok(())
+}
+
+/// A package with a tracked file in it and two packages below, which buck has evaluated, at a
+/// commit on the bookmark `work`; `main` is the commit before, without the file.
+async fn tracked_file_above_two_packages<'a>(
+    buck: &'a Buck,
+    name: &'static str,
+) -> anyhow::Result<(Probe<'a>, String)> {
+    setup_file_watcher_test(buck).await?;
+    // The commit is made on another bookmark: with the mergebase, buck would start over.
+    run_checked(&["sl", "bookmark", "work"], buck.cwd()).await?;
+    let probe = Probe::new(buck, name)?;
+    for package in ["d/a/", "d/b/"] {
+        probe.write_build_file(package, "", "1")?;
+    }
+    probe.write("d/tracked", "")?;
+    let tracked = format!("probe/{name}/d/tracked");
+    run_checked(&["sl", "add", tracked.as_str()], buck.cwd()).await?;
+    let commit = [
+        "sl",
+        "commit",
+        "-m",
+        "track",
+        "--config",
+        SL_USER,
+        tracked.as_str(),
+    ];
+    run_checked(&commit, buck.cwd()).await?;
+    let all = format!("root//probe/{name}/d/...");
+    buck.targets(&[all.as_str()]).await?;
+    assert_eq!(evaluated(buck).await?.len(), 2);
+    buck.targets(&[all.as_str()]).await?;
+    assert_eq!(evaluated(buck).await?, Vec::<String>::new());
+    Ok((probe, all))
+}
+
+/// Going to another commit and back between two commands leaves the working copy with the
+/// parents it had, and reports the directories above the files that differ between the two
+/// commits. buck evaluates no package again.
+pub async fn run_goto_and_back_evaluates_no_package_test(buck: &Buck) -> anyhow::Result<()> {
+    let (probe, all) = tracked_file_above_two_packages(buck, "there_and_back").await?;
+
+    run_checked(&["sl", "goto", "main"], buck.cwd()).await?;
+    assert!(!probe.path("d/tracked").exists());
+    run_checked(&["sl", "goto", "work"], buck.cwd()).await?;
+    buck.targets(&[all.as_str()]).await?;
+    assert_eq!(evaluated(buck).await?, Vec::<String>::new());
+    Ok(())
+}
+
+/// A command that runs after `sl goto` has checked the commit out and before it has written
+/// the parents of the working copy is told of the directories above the files that the
+/// checkout changed, while the working copy still has the parents it had. buck evaluates no
+/// package again.
+pub async fn run_goto_in_flight_evaluates_no_package_test(buck: &Buck) -> anyhow::Result<()> {
+    let (probe, all) = tracked_file_above_two_packages(buck, "in_flight").await?;
+
+    let mut goto = tokio::process::Command::new("sl")
+        .args(["goto", "main"])
+        .env("FAILPOINTS", "checkout-pre-set-parents=sleep(20000)")
+        .current_dir(buck.cwd())
+        .spawn()?;
+    // The checkout is done once the tracked file is gone.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while probe.path("d/tracked").exists() {
+        anyhow::ensure!(Instant::now() < deadline, "the checkout did not finish");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    anyhow::ensure!(
+        goto.try_wait()?.is_none(),
+        "`sl goto` did not wait before writing the parents"
+    );
+    buck.targets(&[all.as_str()]).await?;
+    let during = evaluated(buck).await?;
+    anyhow::ensure!(
+        goto.try_wait()?.is_none(),
+        "`sl goto` wrote the parents before the command was done"
+    );
+    anyhow::ensure!(goto.wait().await?.success(), "`sl goto` failed");
+    assert_eq!(during, Vec::<String>::new());
     Ok(())
 }

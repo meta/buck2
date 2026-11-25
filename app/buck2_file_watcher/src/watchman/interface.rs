@@ -58,9 +58,20 @@ struct WatchmanQueryProcessor {
     /// What the changes recorded on the updater are relative to.
     baseline: FileSystemBaseline,
     /// Whether watchman watches the root through EdenFS. What it reports there is what EdenFS's
-    /// journal sums the changes of a path up to, which differs from its other watchers. For
-    /// one, a change of commit reports every directory between the root and a file it touches
-    /// as modified.
+    /// journal sums the changes of a path up to, which differs from its other watchers:
+    ///
+    /// - A path that was removed and added again is reported as modified, whatever it was before
+    ///   and whatever it is now.
+    /// - Nothing is reported for what is in a directory that was renamed. A directory that
+    ///   another was renamed onto is reported as modified, and that is all. So is a directory
+    ///   whose attributes changed.
+    /// - A change of commit reports every directory between the root and a file it touches: as
+    ///   created if the commit before had no file below it, as modified otherwise. These
+    ///   directories are the ones they were, with what is in them.
+    ///
+    /// So a directory reported as created or modified is taken for another than the one buck2
+    /// read at the path, unless it is reported the way a change of commit reports one: see
+    /// `dirs_that_may_be_others`.
     on_eden: bool,
 }
 
@@ -82,11 +93,17 @@ impl WatchmanQueryProcessor {
 
         let mut stats = FileWatcherStats::new(base_stats, events.len());
 
-        // On EdenFS these are the directories above a commit change: see `on_eden`.
         let may_be_new_dirs = if self.on_eden {
-            BuckMutSet::default()
+            dirs_that_may_be_others(&events)
         } else {
             modified_dirs_in_modified_dirs(&events)
+        };
+        // On EdenFS a directory that became a file is reported as a modified file. Unless it
+        // was empty, what was in it is reported as deleted.
+        let was_dir: BuckMutSet<&Path> = if self.on_eden {
+            events.iter().filter_map(|ev| ev.path.parent()).collect()
+        } else {
+            BuckMutSet::default()
         };
 
         for ev in &events {
@@ -112,8 +129,12 @@ impl WatchmanQueryProcessor {
                 }
             };
 
-            let may_be_new_dir = may_be_new_dirs.contains(ev.path.as_path());
-            self.process_one_change(path, event, may_be_new_dir, &mut handler, &mut stats)?;
+            // Whether what watchman reports as modified may be new at its path.
+            let may_be_new = match ev.kind {
+                WatchmanKind::Directory => may_be_new_dirs.contains(ev.path.as_path()),
+                WatchmanKind::File | WatchmanKind::Symlink => was_dir.contains(ev.path.as_path()),
+            };
+            self.process_one_change(path, event, may_be_new, &mut handler, &mut stats)?;
         }
 
         let stats = stats.finish();
@@ -123,11 +144,21 @@ impl WatchmanQueryProcessor {
         Ok((stats, ctx))
     }
 
+    /// A directory that may be new at its path. On EdenFS nothing is reported for what is in
+    /// it: see `on_eden`.
+    fn dir_may_be_new(&self, handler: &mut FileChangeTracker, path: IProjectRelativePath) {
+        if self.on_eden {
+            handler.dir_tree_added_or_removed(path);
+        } else {
+            handler.dir_added_or_removed(path);
+        }
+    }
+
     fn process_one_change(
         &self,
         path: &ProjectRelativePath,
         ev: ChangeEvent<'_>,
-        may_be_new_dir: bool,
+        may_be_new: bool,
         handler: &mut FileChangeTracker,
         stats: &mut FileWatcherStats,
     ) -> buck2_error::Result<()> {
@@ -155,7 +186,7 @@ impl WatchmanQueryProcessor {
                         log_kind = buck2_data::FileWatcherKind::File;
                         match typ {
                             WatchmanEventType::Modify => {
-                                handler.file_contents_changed(path);
+                                file_modified(handler, path, may_be_new);
                                 log_event = buck2_data::FileWatcherEventType::Modify;
                             }
                             WatchmanEventType::Create => {
@@ -172,14 +203,18 @@ impl WatchmanQueryProcessor {
                         log_kind = buck2_data::FileWatcherKind::Directory;
                         match typ {
                             WatchmanEventType::Modify => {
-                                if may_be_new_dir {
-                                    handler.dir_added_or_removed(path);
+                                if may_be_new {
+                                    self.dir_may_be_new(handler, path);
                                 }
                                 handler.dir_entries_changed_for_watchman_bug(path);
                                 log_event = buck2_data::FileWatcherEventType::Modify;
                             }
                             WatchmanEventType::Create => {
-                                handler.dir_added_or_removed(path);
+                                if may_be_new {
+                                    self.dir_may_be_new(handler, path);
+                                } else {
+                                    handler.dir_added_or_removed(path);
+                                }
                                 log_event = buck2_data::FileWatcherEventType::Create;
                             }
                             WatchmanEventType::Delete => {
@@ -192,7 +227,7 @@ impl WatchmanQueryProcessor {
                         log_kind = buck2_data::FileWatcherKind::Symlink;
                         match typ {
                             WatchmanEventType::Modify => {
-                                handler.file_contents_changed(path);
+                                file_modified(handler, path, may_be_new);
                                 log_event = buck2_data::FileWatcherEventType::Modify;
                             }
                             WatchmanEventType::Create => {
@@ -241,6 +276,62 @@ fn modified_dirs_in_modified_dirs(events: &[WatchmanEvent]) -> BuckMutSet<&Path>
         .copied()
         .filter(|dir| dir.parent().is_some_and(|dir| modified.contains(dir)))
         .collect()
+}
+
+/// A file or a symlink that watchman reports as modified.
+fn file_modified(handler: &mut FileChangeTracker, path: IProjectRelativePath, may_be_new: bool) {
+    if may_be_new {
+        handler.file_added_or_removed(path);
+    } else {
+        handler.file_contents_changed(path);
+    }
+}
+
+/// The directories among `events`, from watchman on EdenFS, that may be others than the ones
+/// buck2 read at their paths: those reported as created or modified, but for the ones that are
+/// reported the way a change of commit reports the directories above a file it touches.
+fn dirs_that_may_be_others(events: &[WatchmanEvent]) -> BuckMutSet<&Path> {
+    let dirs: BuckMutSet<&Path> = events
+        .iter()
+        .filter(|ev| {
+            matches!(
+                (&ev.kind, &ev.event),
+                (
+                    WatchmanKind::Directory,
+                    WatchmanEventType::Create | WatchmanEventType::Modify
+                )
+            )
+        })
+        .map(|ev| ev.path.as_path())
+        .collect();
+    let with_entry: BuckMutSet<&Path> = events.iter().filter_map(|ev| ev.path.parent()).collect();
+    dirs.iter()
+        .copied()
+        .filter(|dir| !above_commit_change(dir, &dirs, &with_entry))
+        .collect()
+}
+
+/// Whether a change of commit may be what reports `dir`, one of the directories `dirs` that
+/// watchman on EdenFS reports as created or modified. A change of commit reports each
+/// directory between the root and a file it touches, so the directory that such a directory is
+/// in is reported too. A directory reported for another reason is in one that is not, unless
+/// something else changed that one. At the top of the project there is no directory to go by,
+/// and an entry of the directory has to be reported.
+///
+/// Both ways of being wrong are left. A directory that another was renamed onto is taken for
+/// one above a commit change when the directory it is in is reported with it, or at the top
+/// of the project when an entry of it is, and what is below it is not read again. A directory
+/// at the top of the project that a change of commit reports without an entry is taken for
+/// another, and what is below it is read again.
+fn above_commit_change(
+    dir: &Path,
+    dirs: &BuckMutSet<&Path>,
+    with_entry: &BuckMutSet<&Path>,
+) -> bool {
+    match dir.parent() {
+        Some(parent) if parent != Path::new("") => dirs.contains(parent),
+        _ => with_entry.contains(dir),
+    }
 }
 
 struct RevisionDetails {
@@ -549,5 +640,106 @@ mod tests {
             paths(modified_dirs_in_modified_dirs(&events)),
             Vec::<&Path>::new()
         );
+    }
+
+    /// What watchman reports on EdenFS for `mv files/d files/old; mv files/incoming files/d`.
+    fn directory_replaced() -> Vec<WatchmanEvent> {
+        vec![
+            event(
+                WatchmanEventType::Create,
+                WatchmanKind::Directory,
+                "files/old",
+            ),
+            event(
+                WatchmanEventType::Delete,
+                WatchmanKind::File,
+                "files/incoming",
+            ),
+            modified_dir("files/d"),
+        ]
+    }
+
+    /// What watchman reports on EdenFS for a change of commit that adds `files/d/added`,
+    /// modifies `gen/out.pyc`, is the first to have a file below `new`, and gives a file below
+    /// `same/sub` another id with the same contents.
+    fn commit_changed() -> Vec<WatchmanEvent> {
+        vec![
+            modified_dir("files"),
+            modified_dir("files/d"),
+            event(
+                WatchmanEventType::Create,
+                WatchmanKind::File,
+                "files/d/added",
+            ),
+            modified_dir("gen"),
+            event(WatchmanEventType::Modify, WatchmanKind::File, "gen/out.pyc"),
+            event(WatchmanEventType::Create, WatchmanKind::Directory, "new"),
+            event(
+                WatchmanEventType::Create,
+                WatchmanKind::Directory,
+                "new/sub",
+            ),
+            event(
+                WatchmanEventType::Create,
+                WatchmanKind::File,
+                "new/sub/tracked",
+            ),
+            modified_dir("same"),
+            modified_dir("same/sub"),
+        ]
+    }
+
+    #[test]
+    fn on_eden_a_replaced_directory_may_be_another() {
+        assert_eq!(
+            paths(dirs_that_may_be_others(&directory_replaced())),
+            [Path::new("files/d"), Path::new("files/old")]
+        );
+    }
+
+    /// A file written below the directory after the rename is reported, and the directory that
+    /// the directory is in is not.
+    #[test]
+    fn on_eden_a_replaced_directory_with_a_file_written_below_it_may_be_another() {
+        for written in ["files/d/pkg/written", "files/d/written"] {
+            let mut events = directory_replaced();
+            events.push(event(
+                WatchmanEventType::Create,
+                WatchmanKind::File,
+                written,
+            ));
+            assert_eq!(
+                paths(dirs_that_may_be_others(&events)),
+                [Path::new("files/d"), Path::new("files/old")],
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn on_eden_a_directory_above_a_commit_change_is_not_another() {
+        assert_eq!(
+            paths(dirs_that_may_be_others(&commit_changed())),
+            Vec::<&Path>::new()
+        );
+    }
+
+    /// Nothing is reported with a directory at the top of the project that tells a change of
+    /// commit from a rename, unless an entry of it is.
+    #[test]
+    fn on_eden_a_directory_at_the_top_reported_alone_may_be_another() {
+        let events = [modified_dir("top")];
+        assert_eq!(paths(dirs_that_may_be_others(&events)), [Path::new("top")]);
+    }
+
+    /// A directory at the top of the project that another was renamed onto, and that a file
+    /// was then written into, is reported as a directory above a change of commit is.
+    #[test]
+    fn on_eden_a_directory_at_the_top_reported_with_an_entry_is_not_another() {
+        let events = [
+            modified_dir("top"),
+            event(WatchmanEventType::Create, WatchmanKind::File, "top/written"),
+        ];
+        assert_eq!(paths(dirs_that_may_be_others(&events)), Vec::<&Path>::new());
     }
 }

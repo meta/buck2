@@ -124,14 +124,22 @@ fn update_events_ctx<T: StreamingCommand>(
         }
 
         if !event_log_opts.no_event_log {
-            subscribers.push(Box::new(EventLog::new(
-                command_event_log::<T>(ctx, paths),
-                event_log_copies(cmd, ctx),
-                ctx.working_dir.clone(),
-                cmd.sanitize_argv(ctx.argv.clone()),
-                ctx.start_time,
-                log_size_counter_bytes.clone(),
-            )));
+            // The daemon otherwise writes the command's log.
+            let log = ctx
+                .daemon_event_log
+                .is_none()
+                .then(|| command_event_log::<T>(ctx, paths));
+            let copies = event_log_copies(cmd, ctx);
+            if log.is_some() || copies.is_some() {
+                subscribers.push(Box::new(EventLog::new(
+                    log,
+                    copies,
+                    ctx.working_dir.clone(),
+                    cmd.sanitize_argv(ctx.argv.clone()),
+                    ctx.start_time,
+                    log_size_counter_bytes.clone(),
+                )));
+            }
         }
     }
     if let Some(build_id_writer) = get_build_id_writer(cmd.event_log_opts(), ctx) {
@@ -339,6 +347,10 @@ impl<T: StreamingCommand> BuckSubcommand for T {
 
     fn event_log_opts(&self) -> &CommonEventLogOptions {
         self.event_log_opts()
+    }
+
+    fn sanitize_argv(&self, argv: Argv) -> SanitizedArgv {
+        self.sanitize_argv(argv)
     }
 
     fn logging_name(&self) -> &'static str {

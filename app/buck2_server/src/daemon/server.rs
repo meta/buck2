@@ -138,6 +138,7 @@ use crate::command_observer::ObservedCommand;
 use crate::ctx::ServerCommandContext;
 use crate::daemon::crash::crash;
 use crate::daemon::dice::TenantDiceProvider;
+use crate::daemon::event_log::daemon_event_log;
 use crate::daemon::multi_event_stream::MultiEventStream;
 use crate::daemon::server_allocative::spawn_allocative;
 use crate::daemon::state::DaemonState;
@@ -994,7 +995,14 @@ impl BuckdServer {
 
             let daemon_state = self.0.daemon_state.dupe();
             let trace_id = client_ctx.trace_id.parse()?;
-            let (events, dispatch) = daemon_state.prepare_events(trace_id).await?;
+            let (event_log_sender, event_log_events) = client_ctx
+                .daemon_event_log
+                .as_ref()
+                .map(|_| daemon_event_log(soft_error_context.dupe()))
+                .unzip();
+            let (events, dispatch) = daemon_state
+                .prepare_events(trace_id, event_log_sender)
+                .await?;
             let dispatch = dispatch.with_soft_error_context(soft_error_context);
             let ActiveCommand {
                 guard,
@@ -1029,6 +1037,15 @@ impl BuckdServer {
                 }
             };
             let repo = tenant.repo.dupe();
+
+            if let Some(event_log_events) = event_log_events
+                && let Some(request) = &client_ctx.daemon_event_log
+                && let Some(event_log) = event_log_events
+                    .write(client_ctx, request, &repo.paths)
+                    .await
+            {
+                dispatch.instant_event(event_log);
+            }
 
             // The total disk space on `buck-out`, effectively fixed for the daemon's life.
             // Captured here alongside `SystemInfo` and handed to this command's
@@ -2434,7 +2451,16 @@ impl DaemonApi for BuckdServer {
                 .trace_id
                 .parse()
                 .map_err(buck2_error::Error::from)?;
-            let (event_source, dispatcher) = self.0.daemon_state.prepare_events(trace_id).await?;
+            let (event_log_sender, event_log_events) = client_ctx
+                .daemon_event_log
+                .as_ref()
+                .map(|_| daemon_event_log(soft_error_context.dupe()))
+                .unzip();
+            let (event_source, dispatcher) = self
+                .0
+                .daemon_state
+                .prepare_events(trace_id, event_log_sender)
+                .await?;
             let dispatcher = dispatcher.with_soft_error_context(soft_error_context);
             let active_command = ActiveCommand::new(&dispatcher, client_ctx.sanitized_argv.clone());
             let tenant = self
@@ -2443,6 +2469,14 @@ impl DaemonApi for BuckdServer {
                 .data()
                 .tenant_for_client_context(client_ctx)
                 .await?;
+            if let Some(event_log_events) = event_log_events
+                && let Some(request) = &client_ctx.daemon_event_log
+                && let Some(event_log) = event_log_events
+                    .write(client_ctx, request, &tenant.repo.paths)
+                    .await
+            {
+                dispatcher.instant_event(event_log);
+            }
             (event_source, dispatcher, active_command, tenant)
         };
 

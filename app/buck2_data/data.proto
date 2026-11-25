@@ -463,6 +463,8 @@ message InstantEvent {
 
     // What the client of the command said about itself.
     ClientSnapshot client_snapshot = 74;
+
+    DaemonEventLog daemon_event_log = 72;
   }
 }
 
@@ -1345,6 +1347,14 @@ message TargetCfg {
 // into `InvocationRecord.target_rule_type_names`.
 message TargetRuleTypeName {
   string rule_type = 1;
+}
+
+// Where the daemon writes the event log of this command, which holds every
+// event of it. Sent to a client that asks with
+// `ClientContext.daemon_event_log`, at the start of the command.
+message DaemonEventLog {
+  // The log's file on the daemon's host.
+  string path = 1;
 }
 
 // A snapshot of current system state, with useful info.

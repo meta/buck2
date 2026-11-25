@@ -3162,6 +3162,7 @@ dependencies = [
  "buck2_data",
  "buck2_directory",
  "buck2_error",
+ "buck2_event_log",
  "buck2_event_observer",
  "buck2_events",
  "buck2_execute",

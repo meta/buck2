@@ -15,6 +15,7 @@ pub mod daemon_tcp;
 pub(crate) mod dice;
 pub mod dice_dump;
 pub mod disk_state;
+pub(crate) mod event_log;
 pub mod forkserver;
 pub(crate) mod io_provider;
 mod multi_event_stream;

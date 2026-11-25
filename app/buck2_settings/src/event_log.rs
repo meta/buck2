@@ -11,7 +11,7 @@
 use buck2_settings_derive::buck_settings_section;
 
 /// The event log of a command: what goes into it and how many are kept.
-#[buck_settings_section(name = "event_log", version = 0, scope = invocation)]
+#[buck_settings_section(name = "event_log", version = 1, scope = invocation)]
 pub struct EventLog {
     /// How many event logs are kept on disk, counting the one about to be
     /// written.
@@ -30,4 +30,12 @@ pub struct EventLog {
         overridable_in(CommandLine, LocalSettings)
     )]
     action_graph: Option<bool>,
+    /// Whether the daemon writes the event log. The client otherwise does,
+    /// from the events the daemon sends it.
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
+    written_by_daemon: Option<bool>,
 }

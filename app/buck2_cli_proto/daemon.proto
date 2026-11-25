@@ -141,6 +141,14 @@ message TenantIdentity {
   string isolation = 2;
 }
 
+// What a client gives a daemon that is to write the event log of its command.
+message DaemonEventLogRequest {
+  // The command line for the log's header, without what the command keeps out
+  // of logs: as it was given, and with its argfiles expanded.
+  repeated string command_line_args = 1;
+  repeated string expanded_command_line_args = 2;
+}
+
 message ClientContext {
   optional uint64 tenant_generation = 1001;
   reserved 5, 21;
@@ -225,6 +233,11 @@ message ClientContext {
   // JSON containing only InvocationBuckSettings. Missing overrides use the
   // setting's defaults for this command.
   optional string invocation_settings = 29;
+
+  // Set to have the daemon write the event log of this command, where the
+  // client otherwise does. The client then writes none.
+  // `buck.data.DaemonEventLog` says where the log is.
+  DaemonEventLogRequest daemon_event_log = 33;
 
   // JSON containing only DiceBuckSettings, the per-invocation sections the
   // daemon injects into DICE. Missing overrides use the setting's defaults.

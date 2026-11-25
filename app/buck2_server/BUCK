@@ -62,6 +62,7 @@ rust_library(
         "//buck2/app/buck2_directory:buck2_directory",
         # @oss-disable[end= ]: "//buck2/app/buck2_eden:buck2_eden",
         "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_event_log:buck2_event_log",
         "//buck2/app/buck2_event_observer:buck2_event_observer",
         "//buck2/app/buck2_events:buck2_events",
         "//buck2/app/buck2_execute:buck2_execute",

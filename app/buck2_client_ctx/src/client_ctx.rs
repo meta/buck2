@@ -15,12 +15,14 @@ use buck2_agent_interactive::Advice;
 use buck2_agent_interactive::Decision;
 use buck2_agent_interactive::Invocation;
 use buck2_cli_proto::ClientContext;
+use buck2_cli_proto::DaemonEventLogRequest;
 use buck2_cli_proto::TenantIdentity;
 use buck2_cli_proto::client_context::ExitWhen as GrpcExitWhen;
 use buck2_cli_proto::client_context::HostArchOverride as GrpcHostArchOverride;
 use buck2_cli_proto::client_context::HostPlatformOverride as GrpcHostPlatformOverride;
 use buck2_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
 use buck2_common::argv::Argv;
+use buck2_common::argv::SanitizedArgv;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::LogDownloadMethod;
 use buck2_common::invocation_paths::InvocationPaths;
@@ -81,6 +83,15 @@ pub struct ClientCommandContext<'a> {
     pub(crate) isolation: FileNameBuf,
     agent_invocation_info: AgentInvocationInfo,
     event_forwarding_keys: Vec<String>,
+    /// Set if the daemon writes the event log of the command, and the client none. Set when
+    /// the command is run: until then it is not known whether the command has an event log.
+    pub(crate) daemon_event_log: Option<DaemonEventLog>,
+}
+
+/// What the daemon is given to write a command's event log: the command line for the log's
+/// header.
+pub(crate) struct DaemonEventLog {
+    argv: SanitizedArgv,
 }
 
 /// A client-side guard's verdict on one operation, together with what to record about it.
@@ -154,6 +165,7 @@ impl<'a> ClientCommandContext<'a> {
             isolation,
             agent_invocation_info,
             event_forwarding_keys,
+            daemon_event_log: None,
         }
     }
 
@@ -297,11 +309,17 @@ impl<'a> ClientCommandContext<'a> {
 
     // Handles setting up subscribers, executing a command and finalizing logging.
     pub async fn exec_async<T: BuckSubcommand>(
-        self,
+        mut self,
         cmd: T,
         matches: BuckArgMatches<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
+        // The daemon writes the log of a command that has one, if the setting says so.
+        if !cmd.event_log_opts().no_event_log && self.event_log_written_by_daemon() {
+            self.daemon_event_log = Some(DaemonEventLog {
+                argv: cmd.sanitize_argv(self.argv.clone()),
+            });
+        }
         cmd.update_events_ctx(matches, &self, events_ctx);
         events_ctx.buck_log_dir = self.paths().map(|paths| paths.log_dir()).ok();
         events_ctx.command_report_path = cmd
@@ -445,10 +463,26 @@ impl<'a> ClientCommandContext<'a> {
             agent_context: self.agent_context().to_proto(),
             tenant_identity,
             invocation_settings: None,
+            daemon_event_log: self.daemon_event_log.as_ref().map(|log| {
+                let expanded_argv = log.argv.expanded_argv.args();
+                DaemonEventLogRequest {
+                    command_line_args: log.argv.argv.clone(),
+                    expanded_command_line_args: expanded_argv.map(str::to_owned).collect(),
+                }
+            }),
             dice_settings: None,
             coding_agent_metadata: coding_agent_metadata_env()?.map(str::to_owned),
             event_forwarding_keys: self.event_forwarding_keys.clone(),
         })
+    }
+
+    /// What the `event_log.written_by_daemon` setting says. Settings are those of a
+    /// repository, and the client writes the log if they cannot be read.
+    fn event_log_written_by_daemon(&self) -> bool {
+        matches!(self.maybe_paths(), Ok(Some(_)))
+            && self
+                .buck_settings()
+                .is_ok_and(|settings| settings.invocation.event_log.written_by_daemon())
     }
 
     pub fn client_id(&self) -> Option<&str> {
@@ -510,5 +544,9 @@ pub trait BuckSubcommand {
 
     fn event_log_opts(&self) -> &CommonEventLogOptions {
         CommonEventLogOptions::no_event_log_ref()
+    }
+
+    fn sanitize_argv(&self, argv: Argv) -> SanitizedArgv {
+        argv.no_need_to_sanitize()
     }
 }

@@ -65,6 +65,7 @@ use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
+use buck2_events::EventSink;
 use buck2_events::EventSinkWithStats;
 use buck2_events::daemon_id::DaemonId;
 use buck2_events::dispatch::EventDispatcher;
@@ -152,6 +153,7 @@ use crate::daemon::disk_state::delete_unknown_disk_state;
 use crate::daemon::disk_state::maybe_initialize_dep_file_sqlite_db;
 use crate::daemon::disk_state::maybe_initialize_incremental_sqlite_db;
 use crate::daemon::disk_state::maybe_initialize_materializer_sqlite_db;
+use crate::daemon::event_log::DaemonEventLogSender;
 use crate::daemon::forkserver::launch_forkserver;
 use crate::daemon::io_provider::create_io_provider;
 use crate::daemon::panic::DaemonStatePanicDiceDump;
@@ -2690,25 +2692,25 @@ impl DaemonState {
             .map(|maybe_scribe| maybe_scribe.map(|scribe| Arc::new(scribe) as _))
     }
 
-    /// Prepares an event stream for a request by bootstrapping an event source and EventDispatcher pair. The given
-    /// EventDispatcher will log to the returned EventSource and (optionally) to Scribe if enabled via buckconfig.
-    pub async fn prepare_events(
+    /// The source of a command's events for its client, and the dispatcher that sends them
+    /// there, to Scribe, and to `event_log` if the daemon writes one of the command.
+    pub(crate) async fn prepare_events(
         &self,
         trace_id: TraceId,
+        event_log: Option<DaemonEventLogSender>,
     ) -> buck2_error::Result<(ChannelEventSource, EventDispatcher)> {
         // facebook only: logging events to Scribe.
         facebook_only();
         let (events, sink) = buck2_events::create_source_sink_pair();
         let data = self.data();
-        let dispatcher = if let Some(scribe_sink) = data.scribe_sink.dupe() {
-            EventDispatcher::new(
-                trace_id,
-                self.data.daemon_id.dupe(),
-                TeeSink::new(scribe_sink.to_event_sync(), sink),
-            )
-        } else {
-            EventDispatcher::new(trace_id, self.data.daemon_id.dupe(), sink)
-        };
+        let mut sink: Arc<dyn EventSink> = Arc::new(sink);
+        if let Some(event_log) = event_log {
+            sink = Arc::new(event_log.tee(sink));
+        }
+        if let Some(scribe_sink) = data.scribe_sink.dupe() {
+            sink = Arc::new(TeeSink::new(scribe_sink.to_event_sync(), sink));
+        }
+        let dispatcher = EventDispatcher::new(trace_id, self.data.daemon_id.dupe(), sink);
         Ok((events, dispatcher))
     }
 

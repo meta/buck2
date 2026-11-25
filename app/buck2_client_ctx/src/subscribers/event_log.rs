@@ -36,7 +36,7 @@ use crate::ticker::Tick;
 /// that is every file there, so a copy in that directory has to be created after. The copies
 /// are ended before the log, which waits for its upload when it is ended.
 pub(crate) struct EventLog {
-    /// `None` once the log could not be written.
+    /// `None` if the daemon writes the log, and once the log could not be written.
     log: Option<WriteEventLog>,
     copies: Option<WriteEventLog>,
     /// The process that uploads the log, from when the log is opened.
@@ -44,9 +44,10 @@ pub(crate) struct EventLog {
 }
 
 impl EventLog {
-    /// `log` is the command's event log, and `copies` its copies, if any.
+    /// `log` is the command's event log, unless the daemon writes it, and `copies` its
+    /// copies, if any.
     pub(crate) fn new(
-        log: EventLogFiles,
+        log: Option<EventLogFiles>,
         copies: Option<EventLogFiles>,
         working_dir: AbsWorkingDir,
         sanitized_argv: SanitizedArgv,
@@ -63,15 +64,17 @@ impl EventLog {
                 log_size_counter_bytes.clone(),
             )
         });
-        let log = WriteEventLog::new(
-            log,
-            working_dir,
-            sanitized_argv,
-            start_time,
-            log_size_counter_bytes,
-        );
+        let log = log.map(|files| {
+            WriteEventLog::new(
+                files,
+                working_dir,
+                sanitized_argv,
+                start_time,
+                log_size_counter_bytes,
+            )
+        });
         Self {
-            log: Some(log),
+            log,
             copies,
             uploader: None,
         }

@@ -10,9 +10,9 @@ load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 load("@prelude//rust:arch_action.bzl", "rust_arch_program_action")
 load(
     "@prelude//rust:rust_toolchain.bzl",
-    "RustArchToolchainInfo",
     "RustToolchainInfo",
     "get_rust_arch_toolchain_info",
+    "multi_arch_toolchain_attr",
 )
 
 def _get_rustc_cfg_impl(ctx: AnalysisContext) -> list[Provider]:
@@ -72,13 +72,7 @@ get_rustc_cfg = rule(
     impl = _get_rustc_cfg_impl,
     attrs = {
         "enable_nightly_cfgs": attrs.bool(default = False),
-        "multi_arch_toolchain": attrs.option(
-            attrs.dep(providers = [RustArchToolchainInfo]),
-            default = select({
-                "DEFAULT": None,
-                "prelude//rust/tools:dual-arch-qualification[enabled]": "prelude//rust/tools:dual-arch-stage2-toolchain",
-            }),
-        ),
+        "multi_arch_toolchain": multi_arch_toolchain_attr(),
         "_rust_toolchain": toolchains_common.rust(),
     },
 )
@@ -112,13 +106,7 @@ def _get_rustc_host_tuple_impl(ctx: AnalysisContext) -> list[Provider]:
 get_rustc_host_tuple = rule(
     impl = _get_rustc_host_tuple_impl,
     attrs = {
-        "multi_arch_toolchain": attrs.option(
-            attrs.dep(providers = [RustArchToolchainInfo]),
-            default = select({
-                "DEFAULT": None,
-                "prelude//rust/tools:dual-arch-qualification[enabled]": "prelude//rust/tools:dual-arch-stage2-toolchain",
-            }),
-        ),
+        "multi_arch_toolchain": multi_arch_toolchain_attr(),
         "_rust_toolchain": toolchains_common.rust(),
     },
 )

@@ -34,9 +34,9 @@ load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup", "ScriptLanguage")
 load(
     "@prelude//rust:rust_toolchain.bzl",
     "RustArchRunInfo",
-    "RustArchToolchainInfo",
     "RustToolchainInfo",
     "get_rust_arch_toolchain_info",
+    "multi_arch_toolchain_attr",
     "require_rust_arch_variants",
 )
 load("@prelude//rust:targets.bzl", "targets")
@@ -477,13 +477,7 @@ _cargo_buildscript_rule = rule(
         "features": attrs.list(attrs.string(), default = []),
         "filegroup_for_manifest_dir": attrs.option(attrs.dict(key = attrs.string(), value = attrs.source()), default = None),
         "manifest_dir": attrs.option(attrs.dep(), default = None),
-        "multi_arch_toolchain": attrs.option(
-            attrs.dep(providers = [RustArchToolchainInfo]),
-            default = select({
-                "DEFAULT": None,
-                "prelude//rust/tools:dual-arch-qualification[enabled]": "prelude//rust/tools:dual-arch-stage2-toolchain",
-            }),
-        ),
+        "multi_arch_toolchain": multi_arch_toolchain_attr(),
         "package_name": attrs.string(),
         "runner": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//rust/tools:buildscript_run")),
         # *IMPORTANT* rustc_cfg must be a `dep` and not an `exec_dep` because

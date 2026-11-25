@@ -6,6 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
+
 # Typically, rustc has access to a "sysroot," which is a directory tree with a known layout that
 # contains a number of pre-compiled rlibs that are available by default. This includes, for example,
 # the standard library. If explicit sysroot deps are passed on the toolchain, the sysroot is not
@@ -79,6 +81,17 @@ def get_rust_arch_toolchain_info(multi_arch_toolchain: Dependency | None, owner:
     arch_info = multi_arch_toolchain[RustArchToolchainInfo]
     require_rust_arch_variants(arch_info.arch_variants, owner)
     return arch_info
+
+def multi_arch_toolchain_attr() -> Attr:
+    # The dual-arch toolchain is in Meta's repository. Unconfigured queries
+    # follow every branch of a `select`, so elsewhere they would fail on it.
+    default = None
+    if is_full_meta_repo():
+        default = select({
+            "DEFAULT": None,
+            "prelude//rust/tools:dual-arch-qualification[enabled]": "prelude//rust/tools:dual-arch-stage2-toolchain",
+        })
+    return attrs.option(attrs.dep(providers = [RustArchToolchainInfo]), default = default)
 
 # FIXME(JakobDegen): These all have default values for historical reasons. Some of them certainly
 # should, but some of them probably shouldn't?

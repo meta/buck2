@@ -14,7 +14,7 @@ load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 load("@prelude//linking:execution_preference.bzl", "link_execution_preference_attr")
 load("@prelude//rust:clippy_configuration.bzl", "ClippyConfiguration")
 load("@prelude//rust:link_info.bzl", "RustProcMacroPlugin")
-load("@prelude//rust:rust_toolchain.bzl", "RustArchToolchainInfo")
+load("@prelude//rust:rust_toolchain.bzl", "multi_arch_toolchain_attr")
 load("@prelude//rust:sources.bzl", "mapped_srcs_arg", "srcs_arg", "srcs_filegroup_arg")
 
 def rust_target_dep(is_binary: bool) -> Attr:
@@ -273,13 +273,7 @@ def rust_common_attributes(is_binary: bool):
             "default_platform": attrs.option(attrs.string(), default = None),
             "flagged_deps": attrs.list(attrs.tuple(rust_target_dep(is_binary), attrs.list(attrs.string())), default = []),
             "incremental_enabled": attrs.bool(default = False),
-            "multi_arch_toolchain": attrs.option(
-                attrs.dep(providers = [RustArchToolchainInfo]),
-                default = select({
-                    "DEFAULT": None,
-                    "prelude//rust/tools:dual-arch-qualification[enabled]": "prelude//rust/tools:dual-arch-stage2-toolchain",
-                }),
-            ),
+            "multi_arch_toolchain": multi_arch_toolchain_attr(),
             "resources": attrs.named_set(attrs.one_of(attrs.dep(), attrs.source()), sorted = True, default = []),
             "rustdoc_flags": attrs.list(attrs.arg(), default = []),
             "separate_debug_info": attrs.bool(default = False),

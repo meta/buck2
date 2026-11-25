@@ -1,0 +1,43 @@
+load("@prelude//rust:cargo_buildscript.bzl", "buildscript_run")
+
+rust_library(
+    name = "greeting",
+    srcs = ["greeting.rs"],
+    env = {
+        "OUT_DIR": "$(location :greeting-build-script-run[out_dir])",
+    },
+)
+
+rust_binary(
+    name = "greeting-build-script",
+    srcs = ["build.rs"],
+    crate_root = "build.rs",
+)
+
+buildscript_run(
+    name = "greeting-build-script-run",
+    buildscript_rule = ":greeting-build-script",
+    package_name = "greeting",
+    version = "0.1.0",
+)
+
+rust_library(
+    name = "answer",
+    srcs = ["answer.rs"],
+    proc_macro = True,
+)
+
+rust_binary(
+    name = "main",
+    srcs = ["main.rs"],
+    deps = [
+        ":answer",
+        ":greeting",
+    ],
+)
+
+rust_test(
+    name = "test",
+    srcs = ["test.rs"],
+    deps = [":greeting"],
+)

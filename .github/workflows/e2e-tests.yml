@@ -38,12 +38,14 @@ jobs:
     # completion tests run fish and zsh, `debug thread-dump` LLDB, and the file
     # watcher tests make Sapling repositories and use Watchman. The tests and
     # `debug trace-io` run Sapling as `hg` too, which is Mercurial on the runner.
+    # `test_new_project_build` builds C++ and Rust with the demo toolchains,
+    # which use clang and lld.
     - name: Install the tools the tests run
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         sudo apt-get update
-        sudo apt-get install -y clang fish zsh lldb
+        sudo apt-get install -y clang lld fish zsh lldb
         gh release download --repo meta/sapling --pattern "sapling-*-linux-x64.tar.xz" --dir "$RUNNER_TEMP"
         mkdir -p "$RUNNER_TEMP/sapling" "$RUNNER_TEMP/bin"
         tar -xJf "$RUNNER_TEMP"/sapling-*-linux-x64.tar.xz -C "$RUNNER_TEMP/sapling"

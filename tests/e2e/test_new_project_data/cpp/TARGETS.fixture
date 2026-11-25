@@ -1,0 +1,17 @@
+cxx_library(
+    name = "greeting",
+    srcs = ["greeting.cpp"],
+    exported_headers = ["greeting.h"],
+)
+
+cxx_binary(
+    name = "main",
+    srcs = ["main.cpp"],
+    deps = [":greeting"],
+)
+
+cxx_test(
+    name = "test",
+    srcs = ["test.cpp"],
+    deps = [":greeting"],
+)

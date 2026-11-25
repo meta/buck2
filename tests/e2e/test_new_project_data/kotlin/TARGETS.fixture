@@ -1,0 +1,4 @@
+kotlin_library(
+    name = "greeting",
+    srcs = ["Greeting.kt"],
+)

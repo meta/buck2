@@ -1,0 +1,11 @@
+go_library(
+    name = "greeting",
+    srcs = ["greeting.go"],
+    package_name = "example/greeting",
+)
+
+go_binary(
+    name = "main",
+    srcs = ["main.go"],
+    deps = [":greeting"],
+)

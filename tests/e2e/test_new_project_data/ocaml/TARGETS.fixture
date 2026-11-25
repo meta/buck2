@@ -1,0 +1,10 @@
+ocaml_library(
+    name = "greeting",
+    srcs = ["greeting.ml"],
+)
+
+ocaml_binary(
+    name = "main",
+    srcs = ["main.ml"],
+    deps = [":greeting"],
+)

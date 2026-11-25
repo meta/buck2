@@ -1,0 +1,25 @@
+sh_binary(
+    name = "hello",
+    main = "hello.sh",
+)
+
+sh_test(
+    name = "test",
+    test = "test.sh",
+)
+
+genrule(
+    name = "generated",
+    out = "generated.txt",
+    cmd = "cat $(location :exported) > $OUT",
+)
+
+export_file(
+    name = "exported",
+    src = "greeting.txt",
+)
+
+filegroup(
+    name = "files",
+    srcs = glob(["*.sh"]),
+)

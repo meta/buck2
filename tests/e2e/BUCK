@@ -9,6 +9,14 @@ buck2_e2e_test(
 )
 
 buck2_e2e_test(
+    name = "test_new_project",
+    srcs = ["test_new_project.rs"],
+    data_dir = "test_new_project_data",
+)
+
+buck2_e2e_test(name = "test_new_project_build", srcs = ["test_new_project_build.rs"], env = {"TEST_REPO_DATA": "$(location :test_new_project_data)/test_new_project_data"}, require_nano_prelude = True) # @oss-enable
+
+buck2_e2e_test(
     name = "test_prelude_python_launcher",
     srcs = ["test_prelude_python_launcher.rs"],
     data_dir = "test_prelude_python_launcher_data",

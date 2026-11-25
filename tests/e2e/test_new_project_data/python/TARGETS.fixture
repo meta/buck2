@@ -1,0 +1,16 @@
+python_library(
+    name = "greeting",
+    srcs = ["greeting.py"],
+)
+
+python_binary(
+    name = "main",
+    main = "main.py",
+    deps = [":greeting"],
+)
+
+python_test(
+    name = "test",
+    srcs = ["test_greeting.py"],
+    deps = [":greeting"],
+)

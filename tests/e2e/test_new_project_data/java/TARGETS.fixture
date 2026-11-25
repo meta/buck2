@@ -1,0 +1,10 @@
+java_library(
+    name = "greeting",
+    srcs = ["Greeting.java"],
+)
+
+java_binary(
+    name = "main",
+    main_class = "Greeting",
+    deps = [":greeting"],
+)

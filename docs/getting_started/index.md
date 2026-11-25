@@ -53,6 +53,12 @@ Dive deeper into Buck2's core concepts by revisiting what you built in the
 tutorials with a focus on understanding the underlying terminology and
 architecture.
 
+### 7. [Setting Up a New Project](./new_project.md)
+
+Go from the tutorial project to one of your own: what `buck2 init` creates and
+why, and what to decide about toolchains, the prelude and the Buck2 version
+before a codebase depends on it.
+
 ## Prerequisites
 
 - Basic familiarity with command line tools

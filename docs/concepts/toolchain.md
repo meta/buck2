@@ -25,8 +25,10 @@ Defining those in a toolchain lets us decouple those project-specific concerns
 from generic build rules.
 
 When running `buck2 init`, Buck2 sets up some demo toolchains via the
-`system_demo_toolchains` macro. Those expect to find the relevant tools in the
-user's `PATH`.
+`system_demo_toolchains` macro. Most of those expect to find the relevant tools
+in the user's `PATH`.
+[Setting Up a New Project](../getting_started/new_project.md#toolchains) shows
+how to replace them with toolchains for the languages a project uses.
 
 For more information about defining toolchains, see the
 [relevant page in the Rule Authors section](../rule_authors/writing_toolchains.md).

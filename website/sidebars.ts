@@ -68,6 +68,7 @@ export const sidebars: SidebarsConfig = {
             'getting_started/tutorial_adding_dependencies',
             'getting_started/tutorial_adding_tests',
             'getting_started/tutorial_to_concepts',
+            'getting_started/new_project',
         ]
     },
     {

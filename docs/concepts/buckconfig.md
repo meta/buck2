@@ -57,6 +57,9 @@ With `--git`, it also adds:
   ignore = .git
 ```
 
+[Setting Up a New Project](../getting_started/new_project.md) goes through
+this file section by section.
+
 The cells and aliases are what the prelude expects to find; the `none` cell
 exists only so that the prelude's references to Meta-internal cells resolve to
 an empty cell. `[build] execution_platforms` is what the

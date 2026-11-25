@@ -46,6 +46,7 @@ use crate::values::function::SpecialBuiltinFunction;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::layout::avalue::TrailingValues;
+use crate::values::none::NoneOr;
 use crate::values::tuple::StarlarkTuple;
 use crate::values::typing::StarlarkIter;
 
@@ -225,14 +226,18 @@ impl<'v> StarlarkType<'v> for StarlarkTuple<'v> {
 
     fn slice(
         this: Self,
-        start: Option<Value>,
-        stop: Option<Value>,
-        stride: Option<Value>,
+        start: NoneOr<i32>,
+        stop: NoneOr<i32>,
+        stride: NoneOr<i32>,
         heap: Heap<'v>,
-    ) -> crate::Result<Value<'v>> {
-        Ok(heap
-            .alloc_tuple(&apply_slice(this.content(), start, stop, stride)?)
-            .to_value())
+    ) -> crate::Result<ValueOf<'v, StarlarkTuple<'v>>> {
+        let res = apply_slice(
+            this.content(),
+            start.into_option(),
+            stop.into_option(),
+            stride.into_option(),
+        )?;
+        Ok(heap.alloc_tuple(&res))
     }
 
     unsafe fn iterate(this: Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {

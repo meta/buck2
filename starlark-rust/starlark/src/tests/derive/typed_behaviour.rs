@@ -51,6 +51,7 @@ use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::list::AllocList;
 use crate::values::list::StarlarkList;
+use crate::values::none::NoneOr;
 use crate::values::string::StarlarkStr;
 
 fn hash_of(value: Value) -> crate::Result<u64> {
@@ -929,8 +930,8 @@ fn test_operators_view() {
     );
 }
 
-/// `at`, `is_in` and `length` typed, without a heap and without a `Result` where there is
-/// nothing to fail.
+/// `at`, `is_in`, `length` and `slice` typed, without a heap and without a `Result` where
+/// there is nothing to fail.
 #[derive(
     Debug,
     Display,
@@ -963,7 +964,25 @@ impl<'v> StarlarkValue<'v> for Word {
     fn length(this: &Self) -> i32 {
         this.0.len() as i32
     }
+
+    fn slice(
+        this: &Self,
+        start: NoneOr<i32>,
+        stop: NoneOr<i32>,
+        stride: NoneOr<i32>,
+    ) -> starlark::Result<Word> {
+        if stride.into_option().is_some() {
+            return Err(starlark::Error::new_other(NoStride));
+        }
+        let start = start.into_option().map_or(0, |i| i as usize);
+        let stop = stop.into_option().map_or(this.0.len(), |i| i as usize);
+        Ok(Word(this.0[start..stop].to_owned()))
+    }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("a word is not sliced with a stride")]
+struct NoStride;
 
 #[test]
 fn test_at_is_in_length() {
@@ -1010,6 +1029,47 @@ fn test_at_is_in_operand_of_another_type() {
         assert!(e.contains("Operation `[]` not supported"), "{e}");
         let e = default.is_in(int).unwrap_err().to_string();
         assert!(e.contains("Operation `in` not supported"), "{e}");
+    });
+}
+
+/// A bound of a slice that is left out is `None` to a typed `slice`, and a value that is not
+/// of a bound's type is the error of a conversion that expected one.
+#[test]
+fn test_slice() {
+    Heap::temp(|heap| {
+        let word = heap.alloc_simple(Word("word".to_owned())).to_value();
+        let default = heap.alloc_simple(NoOperators).to_value();
+        let int = |n: i32| Some(heap.alloc(n).to_value());
+        let none = Some(Value::new_none());
+        let str = Some(heap.alloc("x").to_value());
+
+        let slice = |start, stop, stride| word.slice(start, stop, stride, heap);
+        assert_eq!("word(or)", slice(int(1), int(3), None).unwrap().to_str());
+        assert_eq!("word(wo)", slice(None, int(2), None).unwrap().to_str());
+        assert_eq!("word(wo)", slice(none, int(2), none).unwrap().to_str());
+        assert_eq!("word(rd)", slice(int(2), None, None).unwrap().to_str());
+
+        // The body's error.
+        let e = slice(None, None, int(2)).unwrap_err().to_string();
+        assert!(e.contains("a word is not sliced with a stride"), "{e}");
+        // A value of a bound's type that does not convert.
+        let big = Some(heap.alloc(1i64 << 40).to_value());
+        let e = slice(None, big, None).unwrap_err().to_string();
+        assert!(e.contains("too big to fit in i32"), "{e}");
+        // A value that is not of a bound's type, for each bound.
+        for (start, stop, stride) in [(str, None, None), (None, str, None), (None, None, str)] {
+            let e = slice(start, stop, stride).unwrap_err().to_string();
+            assert!(
+                e.contains("Expected `None | int`, but got `string (repr: \"x\")`"),
+                "{e}"
+            );
+        }
+
+        let e = default.slice(None, None, None, heap).unwrap_err();
+        assert!(
+            e.to_string().contains("Operation `[::]` not supported"),
+            "{e}"
+        );
     });
 }
 

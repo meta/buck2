@@ -318,8 +318,53 @@ where
     )
 }
 
-/// The error for an index, or the left operand of `in`, that is not of the type `O` converts
-/// from.
+/// [`StarlarkType::slice`] from a typed body. A bound that is left out is `None`, as `xs[1:]` is
+/// `xs[1:None]`, so the type of a bound is one that takes `None`, such as
+/// [`NoneOr<i32>`](crate::values::none::NoneOr). A value that is not of a bound's type is the
+/// error of a conversion that expected one ([`operand_type_error`]), as for [`typed_at`].
+#[inline(always)]
+pub fn typed_slice<'v, A, B, C, R>(
+    start: Option<Value<'v>>,
+    stop: Option<Value<'v>>,
+    stride: Option<Value<'v>>,
+    heap: Heap<'v>,
+    typed: impl FnOnce(A, B, C, Heap<'v>) -> R,
+) -> crate::Result<Value<'v>>
+where
+    A: UnpackValue<'v>,
+    B: UnpackValue<'v>,
+    C: UnpackValue<'v>,
+    R: TypedOperatorResult<'v>,
+{
+    let start = start.unwrap_or(Value::new_none());
+    let stop = stop.unwrap_or(Value::new_none());
+    let stride = stride.unwrap_or(Value::new_none());
+    unpack_then(
+        start,
+        |typed_start| {
+            unpack_then(
+                stop,
+                |typed_stop| {
+                    unpack_then(
+                        stride,
+                        |typed_stride| {
+                            typed(typed_start, typed_stop, typed_stride, heap).alloc_result(heap)
+                        },
+                        || Err(operand_type_error::<C>(stride)),
+                        Err,
+                    )
+                },
+                || Err(operand_type_error::<B>(stop)),
+                Err,
+            )
+        },
+        || Err(operand_type_error::<A>(start)),
+        Err,
+    )
+}
+
+/// The error for an index, a bound of a slice, or the left operand of `in`, that is not of the
+/// type `O` converts from.
 #[cold]
 pub fn operand_type_error<'v, O: UnpackValue<'v>>(value: Value<'v>) -> crate::Error {
     expected_type_error(value, O::Type::starlark_type_repr)

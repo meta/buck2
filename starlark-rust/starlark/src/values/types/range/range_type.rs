@@ -37,6 +37,7 @@ use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::index::convert_index;
 use crate::values::index::convert_slice_indices;
+use crate::values::none::NoneOr;
 
 /// Representation of `range()` type.
 #[derive(
@@ -229,12 +230,16 @@ impl<'v> StarlarkValue<'v> for Range {
 
     fn slice(
         this: &Self,
-        start: Option<Value>,
-        stop: Option<Value>,
-        stride: Option<Value>,
-        heap: Heap<'v>,
-    ) -> crate::Result<Value<'v>> {
-        let (start, stop, step) = convert_slice_indices(this.len()?, start, stop, stride)?;
+        start: NoneOr<i32>,
+        stop: NoneOr<i32>,
+        stride: NoneOr<i32>,
+    ) -> crate::Result<Range> {
+        let (start, stop, step) = convert_slice_indices(
+            this.len()?,
+            start.into_option(),
+            stop.into_option(),
+            stride.into_option(),
+        )?;
         // The stop index is one past the last element, so the raw endpoint can leave `i32`
         // although every element of the result is an element of `self`: compute in `i64` and
         // build an equal range that fits.
@@ -274,7 +279,7 @@ impl<'v> StarlarkValue<'v> for Range {
                 Range::new(first, stop, NonZeroI32::new(step).unwrap())
             }
         };
-        Ok(heap.alloc(range).to_value())
+        Ok(range)
     }
 
     unsafe fn iterate(this: ValueOf<'v, Self>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {

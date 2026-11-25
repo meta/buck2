@@ -597,6 +597,28 @@ pub trait StarlarkType<'v>:
     /// 'banana'[4::-2] == 'nnb'  # Select one element out of 2 in reverse order, starting at index 4
     /// # "#);
     /// ```
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// The method is written with the three bounds it takes and what it returns, as
+    /// [`at`](Self::at) is with its index, and may leave out the heap the same way. A bound
+    /// that is left out is `None`, as `xs[1:]` is `xs[1:None]`, so the type of a bound is one
+    /// that takes `None`:
+    ///
+    /// ```ignore
+    /// fn slice(
+    ///     this: &Self,
+    ///     start: NoneOr<i32>,
+    ///     stop: NoneOr<i32>,
+    ///     stride: NoneOr<i32>,
+    /// ) -> starlark::Result<Self> {
+    ///     ..
+    /// }
+    /// ```
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it. A
+    /// value that is not of a bound's type is the error of a conversion that expected one
+    /// ("Expected `None | int`, but got ..").
     fn slice(
         _this: Self::Get,
         _start: Option<Value<'v>>,

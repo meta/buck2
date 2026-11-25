@@ -50,6 +50,9 @@ enum Shape {
     IsIn,
     /// `(Self::Get) -> Result<i32>`.
     Length,
+    /// `(Self::Get, Option<Value>, Option<Value>, Option<Value>, Heap) -> Result<Value>`: the
+    /// three bounds of a slice, each of which may be left out.
+    Slice,
 }
 
 impl Shape {
@@ -63,6 +66,7 @@ impl Shape {
             | Shape::UnaryOperator
             | Shape::IsIn => 1,
             Shape::OperatorOrNone | Shape::Operator | Shape::At => 2,
+            Shape::Slice => 4,
         }
     }
 }
@@ -87,6 +91,7 @@ impl Method {
             "at" => Shape::At,
             "is_in" => Shape::IsIn,
             "length" => Shape::Length,
+            "slice" => Shape::Slice,
             _ => return None,
         };
         Some(Method { name, shape })
@@ -144,6 +149,14 @@ impl Method {
                 .to_owned(),
             Shape::Length => "`fn length(this: &Self) -> i32` for a length that cannot fail, or the \
                  trait's own form `fn length(this: &Self) -> starlark::Result<i32>`"
+                .to_owned(),
+            Shape::Slice => "`fn slice(this: &Self, start: Bound, stop: Bound, stride: Bound, \
+                 heap: Heap<'v>) -> Made`, where `Bound` is an `UnpackValue` that takes `None`, \
+                 such as `NoneOr<i32>`, because a bound that is left out is `None`, `Made` is an \
+                 `AllocValue` or a `starlark::Result` of one, and `heap` may be left out; \
+                 `fn slice(this: &Self, start: Option<Value<'v>>, stop: Option<Value<'v>>, \
+                 stride: Option<Value<'v>>, heap: Heap<'v>) -> starlark::Result<Value<'v>>` is \
+                 the trait's own form"
                 .to_owned(),
         }
     }
@@ -283,8 +296,9 @@ fn heap_parameter(typed: Option<&syn::PatType>) -> (syn::Ident, proc_macro2::Tok
 /// A signature is the trait's by its spelling, as `#[starlark_module]` recognises a `Value`
 /// parameter: the operand's type is named `Value` and the result's is spelled as the trait's
 /// (`Result` for `equals`, `compare`, `is_in` and `length`, `Option` for `add` and its like,
-/// `Result<Value>` for the other operators and `at`). The trait's operators and `at` take the
-/// heap, which a typed one may leave out, so one without it is typed whatever its types are.
+/// `Result<Value>` for the other operators, `at` and `slice`). The trait's operators, `at` and
+/// `slice` take the heap, which a typed one may leave out, so one without it is typed whatever
+/// its types are. The bounds of the trait's `slice` are each named `Option`.
 pub(crate) fn derive_from_typed(
     f: &syn::ImplItemFn,
     lt: &syn::Lifetime,
@@ -345,6 +359,13 @@ pub(crate) fn derive_from_typed(
             !(operand_is_value && every_parameter && returns_result_of_value(&sig.output))
         }
         Shape::UnaryOperator => !(every_parameter && returns_result_of_value(&sig.output)),
+        Shape::Slice => {
+            let bounds_are_options = params
+                .iter()
+                .take(3)
+                .all(|bound| is_type_name(&bound.ty, "Option"));
+            !(bounds_are_options && every_parameter && returns_result_of_value(&sig.output))
+        }
     };
     if !typed {
         return Ok(None);
@@ -490,6 +511,37 @@ pub(crate) fn derive_from_typed(
                 result: Box::new(result.clone()),
             };
             (derived, Some(typing))
+        }
+        (Shape::Slice, [start, stop, stride, typed_heap @ ..]) if typed_heap.len() <= 1 => {
+            if matches!(sig.output, syn::ReturnType::Default) {
+                return method.error(sig, "a typed `slice` returns what it makes");
+            }
+            let untyped_start = derived_parameter(Some(start), "start");
+            let untyped_stop = derived_parameter(Some(stop), "stop");
+            let untyped_stride = derived_parameter(Some(stride), "stride");
+            let (heap, typed_heap) = heap_parameter(typed_heap.first().copied());
+            let call = quote_spanned! { sig.span() =>
+                starlark::__derive_refs::behaviour::#glue(
+                    #untyped_start,
+                    #untyped_stop,
+                    #untyped_stride,
+                    #heap,
+                    |#start, #stop, #stride, #typed_heap| #output #block,
+                )
+            };
+            let derived = syn::parse_quote! {
+                #( #attrs )*
+                fn #name(
+                    #receiver,
+                    #untyped_start: std::option::Option<starlark::values::Value<#lt>>,
+                    #untyped_stop: std::option::Option<starlark::values::Value<#lt>>,
+                    #untyped_stride: std::option::Option<starlark::values::Value<#lt>>,
+                    #heap: starlark::values::Heap<#lt>,
+                ) -> starlark::Result<starlark::values::Value<#lt>> {
+                    #call
+                }
+            };
+            (derived, None)
         }
         (Shape::IsIn, [operand]) => {
             let other = derived_parameter(Some(operand), "other");

@@ -60,6 +60,7 @@ use crate::values::index::convert_index;
 use crate::values::list::AllocList;
 use crate::values::list::StarlarkList;
 use crate::values::list::globals::ListFunctionTy;
+use crate::values::none::NoneOr;
 use crate::values::typing::StarlarkIter;
 
 #[derive(Clone, Default, Trace, Debug, ProvidesStaticType, Allocative)]
@@ -530,14 +531,18 @@ impl<'v> StarlarkType<'v> for StarlarkList<'v> {
 
     fn slice(
         this: Self,
-        start: Option<Value>,
-        stop: Option<Value>,
-        stride: Option<Value>,
+        start: NoneOr<i32>,
+        stop: NoneOr<i32>,
+        stride: NoneOr<i32>,
         heap: Heap<'v>,
-    ) -> crate::Result<Value<'v>> {
-        let xs = this.content();
-        let res = apply_slice(xs, start, stop, stride)?;
-        Ok(heap.alloc_list(&res).to_value())
+    ) -> crate::Result<ValueOf<'v, StarlarkList<'v>>> {
+        let res = apply_slice(
+            this.content(),
+            start.into_option(),
+            stop.into_option(),
+            stride.into_option(),
+        )?;
+        Ok(heap.alloc_list(&res))
     }
 
     unsafe fn iterate(this: Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {

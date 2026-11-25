@@ -36,6 +36,7 @@ use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
+use crate::values::none::NoneOr;
 
 /// The result of calling `type()` on bytes.
 pub const BYTES_TYPE: &str = "bytes";
@@ -263,13 +264,17 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
     /// `bytes[i:j:k]` returns a new bytes object.
     fn slice(
         this: &Self,
-        start: Option<Value<'v>>,
-        stop: Option<Value<'v>>,
-        stride: Option<Value<'v>>,
-        heap: Heap<'v>,
-    ) -> crate::Result<Value<'v>> {
-        let sliced = apply_slice(&this.content, start, stop, stride)?;
-        Ok(heap.alloc(StarlarkBytes::from_vec(sliced)).to_value())
+        start: NoneOr<i32>,
+        stop: NoneOr<i32>,
+        stride: NoneOr<i32>,
+    ) -> crate::Result<StarlarkBytes> {
+        let sliced = apply_slice(
+            &this.content,
+            start.into_option(),
+            stop.into_option(),
+            stride.into_option(),
+        )?;
+        Ok(StarlarkBytes::from_vec(sliced))
     }
 
     /// `x in bytes`: supports both int (byte value) and bytes (subsequence).

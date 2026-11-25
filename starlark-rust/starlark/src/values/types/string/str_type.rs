@@ -40,6 +40,7 @@ use starlark_syntax::fast_string::CharIndex;
 use starlark_syntax::fast_string::StrIndices;
 
 use crate as starlark;
+use crate::__derive_refs::behaviour::operand_type_error;
 use crate::collections::aligned_padded_str::AlignedPaddedStr;
 use crate::eval::Evaluator;
 use crate::private::Private;
@@ -49,7 +50,6 @@ use crate::values::Freezer;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
@@ -58,6 +58,7 @@ use crate::values::index::apply_slice;
 use crate::values::none::NoneOr;
 use crate::values::string::interpolation;
 use crate::values::string::repr::string_repr;
+use crate::values::unpack_then;
 
 /// The result of calling `type()` on strings.
 pub const STRING_TYPE: &str = "string";
@@ -328,6 +329,12 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         fast_string::contains(this, other)
     }
 
+    // In the trait's own form, and not with bounds typed `NoneOr<i32>` as the other sequences
+    // write theirs. Typed, `s[1:3]` is 18 instructions more and `s[:]` 8, with the crate as
+    // one codegen unit: all three bounds are converted before the body runs, a bound is
+    // tested for `None` before it is tested for an integer, and the body then tells again
+    // which bounds were left out. Here a bound is converted where the fast path first needs
+    // it, and one that is not an integer is looked at out of line.
     fn slice(
         this: &Self,
         start: Option<Value<'v>>,
@@ -335,25 +342,39 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         stride: Option<Value<'v>>,
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
-        let s = this;
-        if matches!(stride, Some(stride) if stride.unpack_i32() != Some(1)) {
-            // The stride case is super rare and super complex, so let's do something inefficient but safe
-            let xs = s.chars().collect::<Vec<_>>();
-            let xs = apply_slice(&xs, start, stop, stride)?;
-            return Ok(heap.alloc(xs.into_iter().collect::<String>()).to_value());
-        }
-
-        #[inline(always)]
-        fn start_stop_to_none_or(v: Option<Value>) -> crate::Result<NoneOr<i32>> {
-            match v {
-                None => Ok(NoneOr::None),
-                Some(v) => Ok(NoneOr::Other(i32::unpack_value_err(v)?)),
+        /// A bound that is not an integer: `None` is a bound that is left out, and anything
+        /// else is not a bound.
+        #[cold]
+        #[inline(never)]
+        fn none_or_not_a_bound(bound: Value) -> crate::Result<Option<i32>> {
+            if bound.is_none() {
+                Ok(None)
+            } else {
+                Err(operand_type_error::<NoneOr<i32>>(bound))
             }
         }
 
-        let (start, stop) = (start_stop_to_none_or(start)?, start_stop_to_none_or(stop)?);
+        #[inline(always)]
+        fn bound(bound: Option<Value>) -> crate::Result<Option<i32>> {
+            match bound {
+                None => Ok(None),
+                Some(bound) => unpack_then(
+                    bound,
+                    |bound: i32| Ok(Some(bound)),
+                    || none_or_not_a_bound(bound),
+                    Err,
+                ),
+            }
+        }
 
-        match fast_string::convert_str_indices(this, start.into_option(), stop.into_option()) {
+        if matches!(stride, Some(stride) if stride.unpack_i32() != Some(1)) {
+            // The stride case is super rare and super complex, so let's do something inefficient but safe
+            let xs = this.chars().collect::<Vec<_>>();
+            let xs = apply_slice(&xs, bound(start)?, bound(stop)?, bound(stride)?)?;
+            return Ok(heap.alloc(xs.into_iter().collect::<String>()).to_value());
+        }
+
+        match fast_string::convert_str_indices(this, bound(start)?, bound(stop)?) {
             Some(StrIndices { haystack, .. }) => Ok(heap.alloc_str(haystack).to_value()),
             None => Ok(heap.alloc_str("").to_value()),
         }
@@ -506,22 +527,27 @@ len("😿") == 1
     }
 
     #[test]
+    fn test_slice_bound_that_is_none() {
+        assert::all_true(
+            r#"
+"abcd"[None:2] == "ab"
+"abcd"[1:None] == "bcd"
+"abcd"[::None] == "abcd"
+"abcd"[None:None:-1] == "dcba"
+"#,
+        );
+        assert::fail(r#""abcd"["1":]"#, "Expected `None | int`, but got `string");
+    }
+
+    #[test]
     fn test_slice_string() {
         Heap::temp(|heap| {
             for example in EXAMPLES {
                 let s = heap.alloc_str(example).to_value();
                 for i in -5..=6 {
                     for j in -5..=6 {
-                        let start = if i == 6 {
-                            None
-                        } else {
-                            Some(Value::testing_new_int(i))
-                        };
-                        let stop = if j == 6 {
-                            None
-                        } else {
-                            Some(Value::testing_new_int(j))
-                        };
+                        let start = if i == 6 { None } else { Some(i) };
+                        let stop = if j == 6 { None } else { Some(j) };
                         // Compare list slicing (comparatively simple) to string slicing (complex unicode)
                         let res1 =
                             apply_slice(&example.chars().collect::<Vec<_>>(), start, stop, None)
@@ -529,7 +555,12 @@ len("😿") == 1
                                 .iter()
                                 .collect::<String>();
                         let res2 = s
-                            .slice(start, stop, None, heap)
+                            .slice(
+                                start.map(Value::testing_new_int),
+                                stop.map(Value::testing_new_int),
+                                None,
+                                heap,
+                            )
                             .unwrap()
                             .unpack_str()
                             .unwrap();

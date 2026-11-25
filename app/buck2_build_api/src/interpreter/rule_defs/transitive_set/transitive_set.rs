@@ -106,6 +106,10 @@ impl TypeMatcher for TransitiveSetMatcher {
         // Ids, not pointers: page-in can leave two allocations of one logical definition alive.
         exported.set_type_instance_id == self.type_instance_id
     }
+
+    fn is_stable(&self) -> bool {
+        true
+    }
 }
 
 /// Compact bitfield for per-projection boolean flags, stored as a u64.

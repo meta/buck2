@@ -40,6 +40,7 @@ use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
 use crate::values::dict::value::DictGen;
 use crate::values::dict::value::DictRepr;
+use crate::values::dict::value::MutableDict;
 use crate::values::dict::value::VALUE_EMPTY_FROZEN_DICT;
 use crate::values::type_expr::Accepts;
 use crate::values::type_expr::StarlarkTypeExpr;
@@ -176,9 +177,9 @@ impl<'v> From<ValueTyped<'v, DictGen<Dict<'v>>>> for StarlarkDict<'v> {
     }
 }
 
-impl<'v> From<ValueTyped<'v, DictGen<std::cell::RefCell<Dict<'v>>>>> for StarlarkDict<'v> {
+impl<'v> From<ValueTyped<'v, MutableDict<'v>>> for StarlarkDict<'v> {
     #[inline]
-    fn from(dict: ValueTyped<'v, DictGen<std::cell::RefCell<Dict<'v>>>>) -> Self {
+    fn from(dict: ValueTyped<'v, MutableDict<'v>>) -> Self {
         StarlarkDict::of_repr(DictRepr::Unfrozen(dict))
     }
 }

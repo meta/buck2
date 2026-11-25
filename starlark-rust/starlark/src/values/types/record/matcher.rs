@@ -48,4 +48,8 @@ impl TypeMatcher for RecordTypeMatcher {
             Some(record) => record.record_type_id() == self.id,
         }
     }
+
+    fn is_stable(&self) -> bool {
+        true
+    }
 }

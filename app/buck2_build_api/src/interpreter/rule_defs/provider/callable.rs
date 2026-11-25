@@ -384,6 +384,10 @@ impl TypeMatcher for UserProviderMatcher {
             None => false,
         }
     }
+
+    fn is_stable(&self) -> bool {
+        true
+    }
 }
 
 /// A provider callable in either of its representations.

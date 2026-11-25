@@ -263,9 +263,9 @@ pub trait TypeMatcherAlloc: Sized {
     {
         match (k.is_wildcard(), v.is_wildcard()) {
             (true, true) => self.dict(),
-            (true, false) => self.alloc(IsDictOf(IsAny, v)),
-            (false, true) => self.alloc(IsDictOf(k, IsAny)),
-            (false, false) => self.alloc(IsDictOf(k, v)),
+            (true, false) => self.alloc(IsDictOf::new(IsAny, v)),
+            (false, true) => self.alloc(IsDictOf::new(k, IsAny)),
+            (false, false) => self.alloc(IsDictOf::new(k, v)),
         }
     }
 

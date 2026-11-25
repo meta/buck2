@@ -16,7 +16,6 @@
  */
 
 use std::cell::Ref;
-use std::cell::RefCell;
 use std::cell::RefMut;
 use std::ops::Deref;
 
@@ -27,6 +26,7 @@ use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::dict::Dict;
 use crate::values::dict::value::DictGen;
+use crate::values::dict::value::MutableDict;
 
 /// A dict, borrowed: it cannot be changed while this is alive. What is public borrows a dict
 /// inside [`StarlarkDict`](crate::values::dict::StarlarkDict)'s methods and iterators.
@@ -64,7 +64,7 @@ impl<'v> DictRef<'v> {
                 aref: Either::Right(&x.0),
             })
         } else {
-            let ptr = x.downcast_ref::<DictGen<RefCell<Dict<'v>>>>()?;
+            let ptr = x.downcast_ref::<MutableDict<'v>>()?;
             Some(DictRef {
                 aref: Either::Left(ptr.0.borrow()),
             })
@@ -90,7 +90,7 @@ impl<'v> DictMut<'v> {
             }
         }
 
-        let ptr = x.downcast_ref::<DictGen<RefCell<Dict<'v>>>>();
+        let ptr = x.downcast_ref::<MutableDict<'v>>();
         match ptr {
             None => Err(error(x)),
             Some(ptr) => match ptr.0.try_borrow_mut() {

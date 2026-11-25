@@ -52,6 +52,10 @@ impl TypeMatcher for StructMatcher {
     fn matches(&self, value: Value) -> bool {
         Struct::is_instance(value)
     }
+
+    fn is_stable(&self) -> bool {
+        true
+    }
 }
 
 /// Struct type.

@@ -579,6 +579,27 @@ noop(by_annotation)(1)
     );
 }
 
+/// A dict that `dict[str, Shape]` accepted is rejected once it holds something that is no
+/// shape.
+#[test]
+fn test_dict_of_the_type_is_checked_again_after_a_mutation() {
+    let mut a = Assert::new();
+    a.globals_add(shape_globals);
+    let accepted = r#"
+def f(d: dict[str, Shape]):
+    pass
+d = noop({"k" + str(i): square() for i in range(40)})
+f(d)
+d["s"] = "a string"
+f(d)
+"#;
+    a.pass(accepted);
+    a.fail(
+        &format!("{accepted}\nd[\"k0\"] = blot()\nf(d)\n"),
+        "does not match the type annotation `dict[str, Shape]` for argument `d`",
+    );
+}
+
 /// The typechecker takes a nominal type that says it is a member, an upstream member, a
 /// `TyUser` that names the type as a supertype, and anything it does not know the type of; it
 /// does not take a nominal type that is none of these.

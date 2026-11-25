@@ -61,6 +61,10 @@ impl TypeMatcher for IsPredicate {
     fn matches(&self, value: Value) -> bool {
         self.predicate.matches(value)
     }
+
+    fn is_stable(&self) -> bool {
+        true
+    }
 }
 
 /// A predicate type: a named type whose members are the nominal types that say so, or that its

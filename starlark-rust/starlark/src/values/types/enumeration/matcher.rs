@@ -42,4 +42,8 @@ impl TypeMatcher for EnumTypeMatcher {
             Some(en) => en.id == self.id,
         }
     }
+
+    fn is_stable(&self) -> bool {
+        true
+    }
 }

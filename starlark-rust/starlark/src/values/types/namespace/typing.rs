@@ -55,6 +55,10 @@ impl TypeMatcher for NamespaceMatcher {
     fn matches(&self, value: Value) -> bool {
         value.starlark_type_id() == StarlarkTypeId::of::<Namespace<'static>>()
     }
+
+    fn is_stable(&self) -> bool {
+        true
+    }
 }
 
 #[derive(

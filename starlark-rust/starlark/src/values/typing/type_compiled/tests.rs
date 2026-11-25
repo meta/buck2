@@ -18,8 +18,17 @@
 #![cfg(test)]
 
 use crate::assert;
+use crate::collections::SmallMap;
 use crate::values::Heap;
+use crate::values::dict::Dict;
+use crate::values::dict::DictMut;
+use crate::values::dict::DictRef;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
+use crate::values::typing::type_compiled::matcher::TypeMatcher;
+use crate::values::typing::type_compiled::matchers::IsAnyOfTwo;
+use crate::values::typing::type_compiled::matchers::IsDictOf;
+use crate::values::typing::type_compiled::matchers::IsInt;
+use crate::values::typing::type_compiled::matchers::IsStr;
 
 #[test]
 fn test_types() {
@@ -327,4 +336,189 @@ def f(x: tuple[int, str]) -> tuple[str, int]:
 f((1, "a"))
 "#,
     );
+}
+
+/// `accepted` runs; followed by `then`, it fails with `error`.
+fn passes_then_fails(a: &assert::Assert, accepted: &str, then: &str, error: &str) {
+    a.pass(accepted);
+    a.fail(&format!("{accepted}\n{then}\n"), error);
+}
+
+#[test]
+fn test_dict_type_is_checked_again_after_a_mutation() {
+    let a = assert::Assert::new();
+    let rejected = "does not match the type annotation `dict[str, int]` for argument `d`";
+    // `f` accepts the dict, a mutation breaks its type, and `f` must then reject it.
+    let accepted = r#"
+def f(d: dict[str, int]):
+    pass
+d = noop({"a": 1, "b": 2})
+for i in range(40):
+    d["k" + str(i)] = i
+f(d)
+f(d)
+d["z"] = 26
+f(d)
+"#;
+    for mutation in [
+        r#"d["c"] = "x""#,
+        r#"d["a"] = "x""#,
+        r#"d[1] = 2"#,
+        r#"d.update({"c": "x"})"#,
+        r#"d.setdefault("c", "x")"#,
+        r#"d |= {"c": "x"}"#,
+        r#"d.pop("a"); d["a"] = "x""#,
+        r#"d.clear(); d[1] = 2"#,
+    ] {
+        passes_then_fails(&a, accepted, &format!("{mutation}\nf(d)"), rejected);
+    }
+    // What one annotation accepted is nothing to another.
+    passes_then_fails(
+        &a,
+        r#"
+def f(d: dict[str, int]):
+    pass
+def g(d: dict[str, int | str]):
+    pass
+d = noop({"k" + str(i): i for i in range(40)})
+f(d)
+g(d)
+d["b"] = "x"
+g(d)
+"#,
+        "f(d)",
+        rejected,
+    );
+    // Nor is it anything to another annotation of the same type.
+    passes_then_fails(
+        &a,
+        r#"
+def f(d: dict[str, int]):
+    pass
+def g(d: dict[str, int]):
+    pass
+d = noop({"k" + str(i): i for i in range(40)})
+f(d)
+g(d)
+"#,
+        r#"d["k0"] = "x"
+g(d)"#,
+        rejected,
+    );
+    // A value a dict holds can change without the dict changing.
+    for (value_type, value, mutation) in [
+        ("list[int]", "[i]", r#"d["k0"].append("x")"#),
+        (
+            "tuple[list[int], int]",
+            "([i], 2)",
+            r#"d["k0"][0].append("x")"#,
+        ),
+        ("list[int] | None", "[i]", r#"d["k0"].append("x")"#),
+        ("list[int] | None | str", "[i]", r#"d["k0"].append("x")"#),
+        (
+            "tuple[list[int], ...]",
+            "([i], [i])",
+            r#"d["k0"][1].append("x")"#,
+        ),
+        ("(list[int],)", "([i],)", r#"d["k0"][0].append("x")"#),
+        (
+            "(list[int], int, str)",
+            r#"([i], 2, "s")"#,
+            r#"d["k0"][0].append("x")"#,
+        ),
+        // The value that can change is not the first the type names.
+        ("(int, list[int])", "(2, [i])", r#"d["k0"][1].append("x")"#),
+        (
+            "(int, str, list[int])",
+            r#"(2, "s", [i])"#,
+            r#"d["k0"][2].append("x")"#,
+        ),
+        ("list[int] | (int, int)", "[i]", r#"d["k0"].append("x")"#),
+        ("(int, int) | list[int]", "[i]", r#"d["k0"].append("x")"#),
+        ("dict[str, int]", r#"{"a": i}"#, r#"d["k0"]["b"] = "x""#),
+        ("set[int]", "set([i])", r#"d["k0"].add("x")"#),
+    ] {
+        passes_then_fails(
+            &a,
+            &format!(
+                r#"
+def f(d: dict[str, {value_type}]):
+    pass
+d = noop({{"k" + str(i): {value} for i in range(40)}})
+f(d)
+"#
+            ),
+            &format!("{mutation}\nf(d)"),
+            "for argument `d`",
+        );
+    }
+    a.pass(
+        r#"
+Rec = record(x = int)
+def f(d: dict[(str, int), Rec | None]):
+    pass
+d = noop({})
+for i in range(100):
+    d[("k", i)] = Rec(x = i) if i % 2 == 0 else None
+    f(d)
+assert_true(isinstance(d, dict[(str, int), Rec | None]))
+d[("k", 0)] = 1
+assert_false(isinstance(d, dict[(str, int), Rec | None]))
+"#,
+    );
+}
+
+#[test]
+fn test_dict_type_agrees_with_testing_every_entry() {
+    // Random edits of one dict; after each, `dict[str, int]` must say what looking at every
+    // entry says. `dict[str, int | str]`, which accepts every one of these dicts, takes turns
+    // with it, so each finds what the other left behind.
+    Heap::temp(|heap| {
+        let d = heap.alloc(Dict::new(SmallMap::new())).to_value();
+        let narrow = IsDictOf::new(IsStr, IsInt);
+        let wide = IsDictOf::new(IsStr, IsAnyOfTwo(IsInt, IsStr));
+        let mut seed = 0x2545f4914f6cdd1du64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let mut rejected = 0;
+        for step in 0..20000i32 {
+            let key = heap.alloc(format!("k{}", next(40))).to_value();
+            // One edit in twenty breaks the type.
+            let value = if next(20) == 0 {
+                heap.alloc("not an int").to_value()
+            } else {
+                heap.alloc(step).to_value()
+            };
+            match next(10) {
+                0 => {
+                    let mut dict = DictMut::from_value(d).unwrap();
+                    dict.aref.remove_hashed(key.get_hashed().unwrap());
+                }
+                1 if next(4) == 0 => DictMut::from_value(d).unwrap().aref.clear(),
+                2 => {
+                    let mut dict = DictMut::from_value(d).unwrap();
+                    dict.aref.insert_hashed(key.get_hashed().unwrap(), value);
+                }
+                _ => d.set_at(key, value).unwrap(),
+            }
+            let expected = DictRef::from_value(d)
+                .unwrap()
+                .iter()
+                .all(|(k, v)| k.unpack_str().is_some() && v.unpack_i32().is_some());
+            rejected += !expected as usize;
+            for _ in 0..next(3) {
+                if next(2) == 0 {
+                    assert_eq!(expected, narrow.matches(d), "step {step}");
+                } else {
+                    assert!(wide.matches(d), "step {step}");
+                }
+            }
+        }
+        // Both answers are well represented.
+        assert!(rejected > 2000 && rejected < 18000, "{rejected}");
+    });
 }

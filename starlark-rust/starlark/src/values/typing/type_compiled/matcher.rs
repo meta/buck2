@@ -77,6 +77,15 @@ pub trait TypeMatcher: TypeMatcherBase + Pagable + PagableTagged + PagableStable
     fn is_wildcard(&self) -> bool {
         false
     }
+    /// True if the answer for a value can never change while the value lives: the matcher looks
+    /// at nothing a mutation can alter. `list[int]` is not stable, appending to the list can
+    /// change its answer.
+    ///
+    /// A matcher that says true and whose answer does change makes `dict[K, V]` accept dicts
+    /// it must reject.
+    fn is_stable(&self) -> bool {
+        false
+    }
 }
 
 #[pagable_typetag]
@@ -84,6 +93,7 @@ pub trait TypeMatcher: TypeMatcherBase + Pagable + PagableTagged + PagableStable
 pub trait TypeMatcherDyn: Debug + Allocative + PagableTagged + Send + Sync + 'static {
     fn matches_dyn(&self, value: Value) -> bool;
     fn is_wildcard_dyn(&self) -> bool;
+    fn is_stable_dyn(&self) -> bool;
 
     fn to_box(&self) -> TypeMatcherBox;
 }
@@ -95,6 +105,10 @@ impl<T: TypeMatcher> TypeMatcherDyn for T {
 
     fn is_wildcard_dyn(&self) -> bool {
         TypeMatcher::is_wildcard(self)
+    }
+
+    fn is_stable_dyn(&self) -> bool {
+        TypeMatcher::is_stable(self)
     }
 
     fn to_box(&self) -> TypeMatcherBox {
@@ -127,6 +141,10 @@ impl TypeMatcher for TypeMatcherBox {
 
     fn is_wildcard(&self) -> bool {
         self.0.is_wildcard_dyn()
+    }
+
+    fn is_stable(&self) -> bool {
+        self.0.is_stable_dyn()
     }
 }
 

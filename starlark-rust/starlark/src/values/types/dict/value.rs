@@ -16,6 +16,8 @@
  */
 
 use std::any::TypeId;
+use std::cell::BorrowMutError;
+use std::cell::Cell;
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;
@@ -70,6 +72,7 @@ use crate::values::dict::StarlarkDict;
 use crate::values::error::ValueError;
 use crate::values::function::SpecialBuiltinFunction;
 use crate::values::string::str_type::hash_string_value;
+use crate::values::typing::type_compiled::matchers::DictMatcherId;
 
 #[derive(
     Clone,
@@ -110,13 +113,107 @@ pub struct Dict<'v> {
     pub(crate) content: SmallMap<Value<'v>, Value<'v>>,
 }
 
-/// A frozen dict is a `Dict` without the `RefCell`: the two variants differ only in whether
+/// A frozen dict is a `Dict` without the `DictCell`: the two variants differ only in whether
 /// mutation is possible, and nothing ever hands out a `&mut` to the frozen one.
 ///
 /// Alias is used in `StarlarkDocs` derive.
 pub(crate) type FrozenDict = DictGen<Dict<'static>>;
 
-pub(crate) type MutableDict<'v> = DictGen<RefCell<Dict<'v>>>;
+pub(crate) type MutableDict<'v> = DictGen<DictCell<'v>>;
+
+/// A mutable dict, and how much of it a `dict[K, V]` matcher is known to accept.
+#[derive(Clone, Default, Trace, ProvidesStaticType, Allocative)]
+pub(crate) struct DictCell<'v> {
+    dict: RefCell<Dict<'v>>,
+    /// A matcher and the number of leading entries it accepted, none of which has been replaced
+    /// or removed since: entries are only ever added at the end.
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    checked: Cell<Option<(DictMatcherId, u32)>>,
+}
+
+// One word, because every mutable dict carries it.
+const _: () = assert!(mem::size_of::<DictCell>() == mem::size_of::<RefCell<Dict>>() + 8);
+
+/// The dict alone: what was checked depends on what else the process has run.
+impl Debug for DictCell<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Debug::fmt(&self.dict, f)
+    }
+}
+
+/// Testing a dict shorter than this costs less than remembering that it was tested.
+const REMEMBER_FROM: usize = 16;
+
+impl<'v> DictCell<'v> {
+    fn new(dict: Dict<'v>) -> DictCell<'v> {
+        DictCell {
+            dict: RefCell::new(dict),
+            checked: Cell::new(None),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn borrow(&self) -> Ref<'_, Dict<'v>> {
+        self.dict.borrow()
+    }
+
+    /// A caller may do anything to the dict, so what was checked is forgotten.
+    #[inline]
+    pub(crate) fn try_borrow_mut(&self) -> Result<RefMut<'_, Dict<'v>>, BorrowMutError> {
+        let dict = self.dict.try_borrow_mut()?;
+        self.checked.set(None);
+        Ok(dict)
+    }
+
+    /// Whether every entry passes `entry_matches`, the test of the matcher `by` names. Entries
+    /// the matcher has accepted before are not tested again; `by` must name no matcher whose
+    /// answer for an entry can change.
+    #[inline]
+    fn all_match(
+        &self,
+        by: impl FnOnce() -> Option<DictMatcherId>,
+        entry_matches: impl Fn(Value<'v>, Value<'v>) -> bool,
+    ) -> bool {
+        let dict = self.dict.borrow();
+        let len = dict.content.len();
+        let by = if len < REMEMBER_FROM { None } else { by() };
+        let Some(by) = by else {
+            return dict.iter().all(|(k, v)| entry_matches(k, v));
+        };
+        let checked = match self.checked.get() {
+            Some((checked_by, checked)) if checked_by == by && checked as usize <= len => {
+                checked as usize
+            }
+            _ => 0,
+        };
+        let matches = dict.iter().skip(checked).all(|(k, v)| entry_matches(k, v));
+        if matches {
+            // A dict too long for the count is one this cannot remember.
+            self.checked
+                .set(u32::try_from(len).ok().map(|len| (by, len)));
+        }
+        matches
+    }
+}
+
+/// Whether `value` is a dict whose every entry passes `entry_matches`, the test of a
+/// `dict[K, V]` matcher. `matcher` names it if its answer for an entry can never change; a
+/// mutable dict then remembers the entries it accepted.
+#[inline]
+pub(crate) fn dict_entries_all_match<'v>(
+    value: Value<'v>,
+    matcher: impl FnOnce() -> Option<DictMatcherId>,
+    entry_matches: impl Fn(Value<'v>, Value<'v>) -> bool,
+) -> bool {
+    if let Some(dict) = value.downcast_ref::<DictGen<Dict<'v>>>() {
+        return dict.0.iter().all(|(k, v)| entry_matches(k, v));
+    }
+    match value.downcast_ref::<MutableDict<'v>>() {
+        Some(dict) => dict.0.all_match(matcher, entry_matches),
+        None => false,
+    }
+}
 
 crate::register_simple_vtable_entry!(FrozenDict);
 // SAFETY: The vtable entry is registered above. The deser type id is
@@ -133,7 +230,7 @@ impl<'v> AllocValue<'v> for Dict<'v> {
     type Type = StarlarkDict<'v>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc(heap, DictGen(RefCell::new(self)))
+        ValueOf::alloc(heap, DictGen(DictCell::new(self)))
     }
 }
 
@@ -148,13 +245,14 @@ impl<'fv> AllocFrozenValue<'fv> for Dict<'fv> {
 impl<'v> Dict<'v> {
     pub(crate) fn is_dict_type(x: TypeId) -> bool {
         x == TypeId::of::<DictGen<Dict<'static>>>()
-            || x == TypeId::of::<DictGen<RefCell<Dict<'static>>>>()
+            || x == TypeId::of::<DictGen<DictCell<'static>>>()
     }
 
     pub(crate) unsafe fn from_value_unchecked_mut(x: Value<'v>) -> RefMut<'v, Self> {
         unsafe {
-            let dict = &x.downcast_ref_unchecked::<DictGen<RefCell<Dict<'v>>>>().0;
-            dict.borrow_mut()
+            let dict = &x.downcast_ref_unchecked::<DictGen<DictCell<'v>>>().0;
+            dict.checked.set(None);
+            dict.dict.borrow_mut()
         }
     }
 }
@@ -308,11 +406,11 @@ impl<'v> Dict<'v> {
 /// A free function: naming the static's rebrand inside the early-bound
 /// `prepare_freeze` trait method trips a spurious rustc bound failure; the
 /// identical expression resolves here.
-fn empty_dict_plan<'v, 'fv>() -> StaticFreezePlan<'v, 'fv, DictGen<RefCell<Dict<'v>>>> {
+fn empty_dict_plan<'v, 'fv>() -> StaticFreezePlan<'v, 'fv, DictGen<DictCell<'v>>> {
     StaticFreezePlan::direct(VALUE_EMPTY_FROZEN_DICT.at())
 }
 
-impl<'v> Freeze<'v> for DictGen<RefCell<Dict<'v>>> {
+impl<'v> Freeze<'v> for DictGen<DictCell<'v>> {
     type Frozen<'fv> = DictGen<Dict<'fv>>;
 
     fn prepare_freeze<'fv>(
@@ -330,7 +428,7 @@ impl<'v> Freeze<'v> for DictGen<RefCell<Dict<'v>>> {
     }
 
     fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
-        let entries = self.0.into_inner().content;
+        let entries = self.0.dict.into_inner().content;
         let mut content = SmallMap::with_capacity(entries.len());
         for (key, value) in entries.into_iter_hashed() {
             // Freezing does not change the hash.
@@ -355,7 +453,7 @@ trait DictLike<'v>: Debug + Allocative {
     fn set_at(&self, index: Hashed<Value<'v>>, value: Value<'v>) -> crate::Result<()>;
 }
 
-impl<'v> DictLike<'v> for RefCell<Dict<'v>> {
+impl<'v> DictLike<'v> for DictCell<'v> {
     type ContentRef<'a>
         = Ref<'a, SmallMap<Value<'v>, Value<'v>>>
     where
@@ -363,14 +461,14 @@ impl<'v> DictLike<'v> for RefCell<Dict<'v>> {
         'v: 'a;
 
     fn content<'a>(&'a self) -> Ref<'a, SmallMap<Value<'v>, Value<'v>>> {
-        Ref::map(self.borrow(), |x| &x.content)
+        Ref::map(self.dict.borrow(), |x| &x.content)
     }
 
     #[inline]
     unsafe fn iter_start(&self) -> crate::Result<()> {
         // A method may hold this value mutably borrowed while it iterates one of its
         // arguments, e.g. `d.update([d])`; that is an error, not a panic.
-        match self.try_borrow() {
+        match self.dict.try_borrow() {
             Ok(borrow) => {
                 mem::forget(borrow);
                 Ok(())
@@ -382,7 +480,7 @@ impl<'v> DictLike<'v> for RefCell<Dict<'v>> {
     #[inline]
     unsafe fn iter_stop(&self) {
         unsafe {
-            unleak_borrow(self);
+            unleak_borrow(&self.dict);
         }
     }
 
@@ -390,14 +488,22 @@ impl<'v> DictLike<'v> for RefCell<Dict<'v>> {
     unsafe fn content_unchecked(&self) -> &SmallMap<Value<'v>, Value<'v>> {
         unsafe {
             // SAFETY: this function contract is, caller must ensure that the value is borrowed.
-            &self.try_borrow_unguarded().ok().unwrap_unchecked().content
+            &self
+                .dict
+                .try_borrow_unguarded()
+                .ok()
+                .unwrap_unchecked()
+                .content
         }
     }
 
     fn set_at(&self, index: Hashed<Value<'v>>, alloc_value: Value<'v>) -> crate::Result<()> {
-        match self.try_borrow_mut() {
+        match self.dict.try_borrow_mut() {
             Ok(mut xs) => {
-                xs.content.insert_hashed(index, alloc_value);
+                // A new key goes to the end and leaves what was checked as it was.
+                if xs.content.insert_hashed(index, alloc_value).is_some() {
+                    self.checked.set(None);
+                }
                 Ok(())
             }
             Err(_) => Err(crate::Error::new_other(ValueError::MutationDuringIteration)),
@@ -439,7 +545,7 @@ impl<'v> DictLike<'v> for Dict<'v> {
 #[derive(Debug, Clone, Copy, Dupe)]
 pub(crate) enum DictRepr<'v> {
     Frozen(ValueTyped<'v, DictGen<Dict<'v>>>),
-    Unfrozen(ValueTyped<'v, DictGen<RefCell<Dict<'v>>>>),
+    Unfrozen(ValueTyped<'v, DictGen<DictCell<'v>>>),
 }
 
 /// `$e` with `$x` bound to the representation's `DictLike`.
@@ -738,7 +844,7 @@ impl<'v> StarlarkType<'v> for StarlarkDict<'v> {
 }
 
 #[starlark_value]
-impl<'v> StarlarkValue<'v> for DictGen<RefCell<Dict<'v>>> {
+impl<'v> StarlarkValue<'v> for DictGen<DictCell<'v>> {
     type Type = StarlarkDict<'v>;
 }
 
@@ -771,10 +877,19 @@ impl<'v, T: DictLike<'v>> Serialize for DictGen<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use crate::assert;
     use crate::collections::SmallMap;
     use crate::values::Heap;
     use crate::values::dict::Dict;
+    use crate::values::dict::DictMut;
+    use crate::values::dict::DictRef;
+    use crate::values::dict::value::MutableDict;
+    use crate::values::typing::type_compiled::matcher::TypeMatcher;
+    use crate::values::typing::type_compiled::matchers::DictMatcherId;
+    use crate::values::typing::type_compiled::matchers::IsDictOf;
+    use crate::values::typing::type_compiled::matchers::IsInt;
 
     #[test]
     fn test_mutate_dict() {
@@ -809,6 +924,107 @@ b1 and b2 and b3
             assert_eq!(d.get_str("hello").unwrap().unpack_i32(), Some(12));
             assert_eq!(d.get_str("foo"), None);
             Ok(())
+        })
+    }
+
+    #[test]
+    fn test_entries_a_matcher_accepted_are_not_tested_again() {
+        Heap::temp(|heap| {
+            let d = heap.alloc(Dict::new(SmallMap::new())).to_value();
+            let cell = &d.downcast_ref::<MutableDict>().unwrap().0;
+            // How many entries a check by `by` tests.
+            let tested = |by: DictMatcherId| {
+                let n = Cell::new(0);
+                assert!(cell.all_match(
+                    || Some(by),
+                    |_, _| {
+                        n.set(n.get() + 1);
+                        true
+                    }
+                ));
+                n.get()
+            };
+            let set = |k: i32, v: i32| {
+                d.set_at(heap.alloc(k).to_value(), heap.alloc(v).to_value())
+                    .unwrap()
+            };
+            let by = DictMatcherId::try_new().unwrap();
+            let other = DictMatcherId::try_new().unwrap();
+
+            // A short dict is tested whole every time.
+            for i in 0..5 {
+                set(i, i);
+            }
+            assert_eq!(5, tested(by));
+            assert_eq!(5, tested(by));
+
+            for i in 5..50 {
+                set(i, i);
+            }
+            assert_eq!(50, tested(by));
+            assert_eq!(0, tested(by));
+            // New keys are the only entries to test.
+            set(50, 50);
+            set(51, 51);
+            assert_eq!(2, tested(by));
+            // A rejected entry is tested again, and so is everything after it.
+            set(52, 52);
+            assert!(!cell.all_match(|| Some(by), |_, _| false));
+            assert_eq!(1, tested(by));
+            // Another matcher starts over, and takes the place of the first.
+            assert_eq!(53, tested(other));
+            assert_eq!(53, tested(by));
+            // Replacing a value, or any other way to change the dict, forgets it all.
+            set(0, 100);
+            assert_eq!(53, tested(by));
+            let first = heap.alloc(0i32).to_value().get_hashed().unwrap();
+            DictMut::from_value(d).unwrap().aref.remove_hashed(first);
+            set(53, 53);
+            assert_eq!(53, tested(by));
+            assert_eq!(0, tested(by));
+        })
+    }
+
+    #[test]
+    fn test_a_dict_type_is_remembered_from_sixteen_entries() {
+        Heap::temp(|heap| {
+            let d = heap.alloc(Dict::new(SmallMap::new())).to_value();
+            let cell = &d.downcast_ref::<MutableDict>().unwrap().0;
+            let set = |k: i32, v: i32| {
+                d.set_at(heap.alloc(k).to_value(), heap.alloc(v).to_value())
+                    .unwrap()
+            };
+            let ints = IsDictOf::new(IsInt, IsInt);
+
+            for i in 0..15 {
+                set(i, i);
+            }
+            assert!(ints.matches(d));
+            assert_eq!(None, cell.checked.get());
+
+            set(15, 15);
+            assert!(ints.matches(d));
+            let (id, checked) = cell.checked.get().unwrap();
+            assert_eq!(16, checked);
+
+            // Reading the dict changes nothing, and neither does asking again.
+            assert_eq!(16, DictRef::from_value(d).unwrap().iter().count());
+            assert!(d.at(heap.alloc(3i32).to_value(), heap).is_ok());
+            assert_eq!(Some((id, 16)), cell.checked.get());
+            assert!(ints.matches(d));
+            assert!(ints.clone().matches(d));
+            assert_eq!(Some((id, 16)), cell.checked.get());
+
+            set(16, 16);
+            assert_eq!(Some((id, 16)), cell.checked.get());
+            assert!(ints.matches(d));
+            assert_eq!(Some((id, 17)), cell.checked.get());
+
+            // Another matcher of the same type is another matcher.
+            assert!(IsDictOf::new(IsInt, IsInt).matches(d));
+            let (other, checked) = cell.checked.get().unwrap();
+            assert_eq!(17, checked);
+            assert_ne!(id, other);
         })
     }
 

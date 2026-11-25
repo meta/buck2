@@ -198,6 +198,15 @@ fn test_opts_parent_after_prefix() {
 }
 
 #[test]
+fn test_opts_parent_down_to_one_component_and_none() {
+    use CmdArgsOpt::*;
+    check_cmd_args("a/b.h", &[], &["a/b.h"]);
+    check_cmd_args("a/b.h", &[&[Parent(1)]], &["./a"]);
+    check_cmd_args("a/b.h", &[&[Parent(2)]], &["."]);
+    check_cmd_args("b.h", &[], &["./b.h"]);
+}
+
+#[test]
 fn test_opts_parent_error_too_many() {
     use CmdArgsOpt::*;
     check_cmd_args_error("foo/qux.h", &[&[Parent(3)]], "does not have 3 parent");

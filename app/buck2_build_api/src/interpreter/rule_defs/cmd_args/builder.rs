@@ -673,14 +673,16 @@ impl<'v> CommandLineBuilderRegular<'v, '_> {
             .last()
             .unwrap_or(&DEFAULT_ARTIFACT_OPTIONS);
 
-        let components = path.iter().count();
-        if (components as u32) < *parent {
-            return Err(
-                CommandLineOptionsError::TooManyParentCalls(path.to_string(), *parent).into(),
-            );
-        }
-        for _ in 0..*parent {
-            path.pop();
+        if *parent != 0 {
+            let components = path.iter().count();
+            if (components as u32) < *parent {
+                return Err(
+                    CommandLineOptionsError::TooManyParentCalls(path.to_string(), *parent).into(),
+                );
+            }
+            for _ in 0..*parent {
+                path.pop();
+            }
         }
 
         let mut rendered = if let Some(relative_to) = relative_to {
@@ -694,7 +696,7 @@ impl<'v> CommandLineBuilderRegular<'v, '_> {
             // `relative_to` provided
             path_format_absolute(&path, self.fs.path_separator(), self.fs.fs().fs()).into_owned()
         } else {
-            path_format(path.as_ref(), self.fs.path_separator()).into_owned()
+            path_format_owned(path, self.fs.path_separator())
         };
 
         if let Some(absolute_prefix) = absolute_prefix {
@@ -767,6 +769,17 @@ impl<'v> CommandLineBuilderRegular<'v, '_> {
     }
 }
 
+/// `path_format` for an owned path, without a copy when the rendering is the path itself.
+fn path_format_owned(path: ProjectRelativePathBuf, sep: PathSeparatorKind) -> String {
+    if sep == PathSeparatorKind::Unix && path.as_str().contains('/') {
+        // Project-relative paths are normalized, so a slash implies at least two
+        // components.
+        path.into_forward_relative_path_buf().into_string()
+    } else {
+        path_format(path.as_ref(), sep).into_owned()
+    }
+}
+
 /// Returns the path rendered in a way that is appropriate for use in command lines.
 pub fn path_format<'p>(path: &'p RelativePath, sep: PathSeparatorKind) -> Cow<'p, str> {
     let parts = path.components().count();
@@ -820,6 +833,36 @@ mod tests {
     use buck2_fs::paths::RelativePath;
 
     use super::*;
+
+    #[test]
+    fn test_path_format_owned() {
+        for (path, unix, windows) in [
+            ("", ".", "."),
+            ("tool", "./tool", ".\\tool"),
+            ("a/b", "a/b", "a\\b"),
+            ("a/b/c", "a/b/c", "a\\b\\c"),
+            (
+                "dir with spaces/é",
+                "dir with spaces/é",
+                "dir with spaces\\é",
+            ),
+        ] {
+            assert_eq!(
+                path_format_owned(
+                    ProjectRelativePathBuf::try_from(path.to_owned()).unwrap(),
+                    PathSeparatorKind::Unix
+                ),
+                unix,
+            );
+            assert_eq!(
+                path_format_owned(
+                    ProjectRelativePathBuf::try_from(path.to_owned()).unwrap(),
+                    PathSeparatorKind::Windows
+                ),
+                windows,
+            );
+        }
+    }
 
     #[test]
     fn test_path_format() {

@@ -53,6 +53,22 @@ async fn test_configuration_transition_rule_cquery_actual_attr(buck: &Buck) -> a
 
     assert!(config_default_has_attribute_actual);
     assert!(config_transition_has_no_attributes);
+
+    // And `actual` is left out when it is not asked for.
+    let result = buck
+        .cquery(&[
+            "--target-platforms=root//:iphoneos-p",
+            "root//:watchos-resource",
+            "--output-attribute=^name$",
+        ])
+        .await?;
+    let q: BTreeMap<String, serde_json::Map<String, Value>> = serde_json::from_str(&result.stdout)?;
+    assert_eq!(2, q.len());
+    assert!(
+        q.values()
+            .all(|attributes| !attributes.contains_key("actual"))
+    );
+    assert!(q.values().any(|attributes| attributes.contains_key("name")));
     Ok(())
 }
 

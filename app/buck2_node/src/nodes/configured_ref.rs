@@ -169,9 +169,10 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        filter: &dyn Fn(&str) -> bool,
         mut func: F,
     ) -> Result<(), E> {
-        for (name, attr) in self.0.body()?.special_attrs() {
+        for (name, attr) in self.0.body()?.filter_special_attrs(filter) {
             func(name, &attr)?;
         }
         Ok(())
@@ -182,9 +183,14 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        filter: &dyn Fn(&str) -> bool,
         mut func: F,
     ) -> Result<(), E> {
-        for a in self.0.body()?.attrs(AttrInspectOptions::All) {
+        let attrs = self
+            .0
+            .body()?
+            .filter_attrs(AttrInspectOptions::All, |name, _| filter(name));
+        for a in attrs {
             func(a.name, &a.value)?;
         }
         Ok(())

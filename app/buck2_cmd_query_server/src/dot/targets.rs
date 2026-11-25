@@ -72,23 +72,22 @@ impl<T: QueryCommandTarget> DotNode for DotTargetGraphNode<'_, T> {
         let extra = match &self.1.attributes {
             Some(attr_regex) => {
                 let mut extra = BuckMutInsertionMap::new();
-                QueryTargets::for_all_attrs::<buck2_error::Error, _, _>(
+                QueryTargets::for_filtered_attrs::<buck2_error::Error, _, _>(
                     self.0,
+                    &|attr_name| attr_regex.is_match(attr_name),
                     |attr_name, attr_value| {
-                        if attr_regex.is_match(attr_name) {
-                            extra.insert(
-                                format!("buck_{attr_name}"),
-                                format!(
-                                    "{}",
-                                    self.0.attr_display(
-                                        attr_value,
-                                        AttrFmtOptions {
-                                            exclude_quotes: true,
-                                        },
-                                    )
-                                ),
-                            );
-                        }
+                        extra.insert(
+                            format!("buck_{attr_name}"),
+                            format!(
+                                "{}",
+                                self.0.attr_display(
+                                    attr_value,
+                                    AttrFmtOptions {
+                                        exclude_quotes: true,
+                                    },
+                                )
+                            ),
+                        );
                         Ok(())
                     },
                 )?;

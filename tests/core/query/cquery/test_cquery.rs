@@ -150,6 +150,89 @@ async fn test_attributes(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The targets and their attributes, in the order a query printed them as JSON.
+fn printed_names(stdout: &str) -> Vec<&str> {
+    stdout
+        .lines()
+        .filter(|line| line.starts_with("  \"") || line.starts_with("    \""))
+        .filter_map(|line| line.trim_start().strip_prefix('"')?.split('"').next())
+        .collect()
+}
+
+#[buck_test(data_dir = "unsorted")]
+async fn test_output_attribute_selects_from_all_attributes(buck: &Buck) -> anyhow::Result<()> {
+    let query = "deps(root//bin:the_binary)";
+    for configured in [true, false] {
+        let run = async |patterns: &[String]| {
+            let mut args = Vec::new();
+            for pattern in patterns {
+                args.extend(["--output-attribute", pattern]);
+            }
+            args.push(query);
+            let out = if configured {
+                buck.cquery(&args).await
+            } else {
+                buck.uquery(&args).await
+            };
+            out.map(|out| out.stdout)
+        };
+
+        let all = run(&[".*".to_owned()]).await?;
+        let all_json: serde_json::Value = serde_json::from_str(&all)?;
+        let all_json = all_json.as_object().expect("should be a map of targets");
+        assert!(all_json.len() > 3);
+        // The `buck.*` attributes come first.
+        let position = |name| {
+            printed_names(&all)
+                .iter()
+                .position(|n| *n == name)
+                .expect("should be printed")
+        };
+        assert!(position("buck.type") < position("name"));
+
+        for names in [
+            &["buck.type"][..],
+            &["buck.deps", "buck.package", "buck.execution_platform"],
+            &["buck.deps", "buck.configuration_deps", "buck.oncall"],
+            &["srcs"],
+            &["name", "deps", "buck.type"],
+            &["no_such_attribute"],
+        ] {
+            let patterns: Vec<String> = names
+                .iter()
+                .map(|name| format!("^{}$", name.replace('.', "\\.")))
+                .collect();
+            let selected = run(&patterns).await?;
+
+            let expected: serde_json::Map<String, serde_json::Value> = all_json
+                .iter()
+                .map(|(target, attrs)| {
+                    let attrs = attrs.as_object().expect("should be a map of attributes");
+                    let attrs = attrs
+                        .iter()
+                        .filter(|(name, _)| names.contains(&name.as_str()))
+                        .map(|(name, value)| (name.clone(), value.clone()))
+                        .collect();
+                    (target.clone(), serde_json::Value::Object(attrs))
+                })
+                .collect();
+            assert_eq!(
+                serde_json::Value::Object(expected),
+                serde_json::from_str::<serde_json::Value>(&selected)?,
+                "{names:?}"
+            );
+
+            // And in the order they have among all the attributes.
+            let expected: Vec<&str> = printed_names(&all)
+                .into_iter()
+                .filter(|name| all_json.contains_key(*name) || names.contains(name))
+                .collect();
+            assert_eq!(expected, printed_names(&selected), "{names:?}");
+        }
+    }
+    Ok(())
+}
+
 // Tests for "%Ss" uses
 #[buck_test(data_dir = "unsorted")]
 async fn test_args_as_set(buck: &Buck) -> anyhow::Result<()> {

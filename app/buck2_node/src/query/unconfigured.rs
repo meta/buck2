@@ -80,9 +80,10 @@ impl QueryTarget for TargetNode {
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        filter: &dyn Fn(&str) -> bool,
         mut func: F,
     ) -> Result<(), E> {
-        for (name, attr) in TargetNode::special_attrs(self) {
+        for (name, attr) in self.as_ref().filter_special_attrs(filter) {
             func(name, &AttrView::Special(attr))?;
         }
         Ok(())
@@ -93,10 +94,13 @@ impl QueryTarget for TargetNode {
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        filter: &dyn Fn(&str) -> bool,
         mut func: F,
     ) -> Result<(), E> {
         for a in self.attrs(AttrInspectOptions::All) {
-            func(a.name, &AttrView::Normal(a.value))?;
+            if filter(a.name) {
+                func(a.name, &AttrView::Normal(a.value))?;
+            }
         }
         Ok(())
     }

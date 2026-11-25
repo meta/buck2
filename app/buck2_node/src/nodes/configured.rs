@@ -896,6 +896,18 @@ impl<'a> ConfiguredTargetNodeBodyRef<'a> {
     }
 
     pub fn special_attrs(self) -> impl Iterator<Item = (&'a str, ConfiguredAttr)> {
+        self.filter_special_attrs(|_| true)
+    }
+
+    /// Like [`special_attrs`](Self::special_attrs), but only builds the attributes whose name
+    /// passes `filter`.
+    pub(crate) fn filter_special_attrs(
+        self,
+        filter: impl Fn(&str) -> bool,
+    ) -> impl Iterator<Item = (&'a str, ConfiguredAttr)> {
+        let execution_group_platforms = filter(EXECUTION_GROUP_PLATFORMS)
+            .then(|| self.execution_group_platforms_as_attr())
+            .flatten();
         [
             TYPE,
             DEPS,
@@ -906,6 +918,7 @@ impl<'a> ConfiguredTargetNodeBodyRef<'a> {
             PLUGINS,
         ]
         .into_iter()
+        .filter(move |key| filter(key))
         .map(move |key| {
             (
                 key,
@@ -913,10 +926,7 @@ impl<'a> ConfiguredTargetNodeBodyRef<'a> {
                 self.special_attr_or_none(key).unwrap(),
             )
         })
-        .chain(
-            self.execution_group_platforms_as_attr()
-                .map(|v| (EXECUTION_GROUP_PLATFORMS, v)),
-        )
+        .chain(execution_group_platforms.map(|v| (EXECUTION_GROUP_PLATFORMS, v)))
     }
 
     /// Not implemented via [`Self::filter_attrs`]: the trivial filter would

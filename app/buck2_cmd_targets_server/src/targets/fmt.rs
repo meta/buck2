@@ -196,6 +196,14 @@ struct JsonFormat {
 }
 
 impl JsonFormat {
+    /// Whether the attribute `k` was asked for.
+    fn prints(&self, k: &str) -> bool {
+        match &self.attributes {
+            Some(filter) => filter.is_match(k),
+            None => true,
+        }
+    }
+
     fn print_attr(
         &self,
         buffer: &mut String,
@@ -203,12 +211,9 @@ impl JsonFormat {
         k: &str,
         v: impl FnOnce() -> QuotedJson,
     ) {
-        if let Some(filter) = &self.attributes {
-            if !filter.is_match(k) {
-                return;
-            }
+        if self.prints(k) {
+            self.writer.entry_item(buffer, is_first_entry, k, v());
         }
-        self.writer.entry_item(buffer, is_first_entry, k, v());
     }
 }
 
@@ -428,11 +433,14 @@ impl ConfiguredTargetFormatter for JsonFormat {
             });
         }
 
-        for a in body.attrs(self.attr_inspect_opts) {
+        for a in body.filter_attrs(self.attr_inspect_opts, |name, _| self.prints(name)) {
             let json_value = configured_value_to_json(&a.value, target_node.label().pkg())?;
-            self.print_attr(buffer, &mut is_first_entry, a.name, || {
-                QuotedJson::from_serde_json_value(json_value)
-            });
+            self.writer.entry_item(
+                buffer,
+                &mut is_first_entry,
+                a.name,
+                QuotedJson::from_serde_json_value(json_value),
+            );
         }
 
         if self.target_call_stacks {

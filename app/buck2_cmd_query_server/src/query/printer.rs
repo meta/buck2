@@ -153,36 +153,34 @@ impl<T: QueryCommandTarget> Serialize for PrintableQueryTarget<'_, T> {
     {
         let mut map = serializer.serialize_map(None)?;
 
-        QueryTargets::for_all_attrs(self.value, |attr_name, attr_value| {
-            if let Some(attr_regex) = self.attributes {
-                if attr_regex.is_match(attr_name) {
-                    struct AttrValueSerialize<'a, 'b, T: QueryCommandTarget> {
-                        target: &'a T,
-                        attr: &'a T::Attr<'b>,
-                    }
-
-                    impl<T: QueryCommandTarget> Serialize for AttrValueSerialize<'_, '_, T> {
-                        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-                        where
-                            S: Serializer,
-                        {
-                            self.target.attr_serialize(self.attr, serializer)
-                        }
-                    }
-
-                    map.serialize_entry(
-                        attr_name,
-                        &AttrValueSerialize {
-                            target: self.value,
-                            attr: attr_value,
-                        },
-                    )
-                    .map_err(AttrWalkError)?;
+        if let Some(attr_regex) = self.attributes {
+            let filter = |attr_name: &str| attr_regex.is_match(attr_name);
+            QueryTargets::for_filtered_attrs(self.value, &filter, |attr_name, attr_value| {
+                struct AttrValueSerialize<'a, 'b, T: QueryCommandTarget> {
+                    target: &'a T,
+                    attr: &'a T::Attr<'b>,
                 }
-            }
-            Ok(())
-        })
-        .map_err(|AttrWalkError(error)| error)?;
+
+                impl<T: QueryCommandTarget> Serialize for AttrValueSerialize<'_, '_, T> {
+                    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                    where
+                        S: Serializer,
+                    {
+                        self.target.attr_serialize(self.attr, serializer)
+                    }
+                }
+
+                map.serialize_entry(
+                    attr_name,
+                    &AttrValueSerialize {
+                        target: self.value,
+                        attr: attr_value,
+                    },
+                )
+                .map_err(AttrWalkError)
+            })
+            .map_err(|AttrWalkError(error)| error)?;
+        }
 
         if self.target_call_stacks {
             map.serialize_entry("buck.target_call_stack", &self.call_stack)?;

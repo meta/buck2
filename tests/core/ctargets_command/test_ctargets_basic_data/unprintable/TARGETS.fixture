@@ -1,0 +1,4 @@
+load(":defs.bzl", "int_keys")
+
+# JSON has no way to write a dict whose keys are not strings.
+int_keys(name = "numbered", by_number = {1: "one"})

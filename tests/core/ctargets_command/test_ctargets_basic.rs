@@ -80,6 +80,100 @@ async fn test_ctargets_multi_json(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The attributes of each target, in the order `ctargets --json` printed them.
+fn printed_names(stdout: &str) -> Vec<Vec<&str>> {
+    let mut targets = Vec::new();
+    for line in stdout.lines() {
+        if line == "  {" {
+            targets.push(Vec::new());
+        } else if let Some(attribute) = line.strip_prefix("    \"") {
+            let name = attribute.split('"').next().expect("should have a name");
+            targets
+                .last_mut()
+                .expect("should be in a target")
+                .push(name);
+        }
+    }
+    targets
+}
+
+#[buck_test]
+async fn test_ctargets_output_attribute_selects_from_all_attributes(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    let all = buck.ctargets(&["root//:", "--json"]).await?.stdout;
+    let all_names = printed_names(&all);
+    let all: Vec<serde_json::Map<String, Value>> = serde_json::from_str(&all)?;
+    assert_eq!(3, all.len());
+
+    for names in [
+        &["buck.type"][..],
+        &["buck.deps", "buck.inputs", "buck.package"],
+        &["name", "visibility", "buck.type"],
+        &["default_target_platform"],
+        &["no_such_attribute"],
+    ] {
+        let patterns: Vec<String> = names
+            .iter()
+            .map(|name| format!("--output-attribute=^{}$", name.replace('.', "\\.")))
+            .collect();
+        let mut args = vec!["root//:", "--json"];
+        args.extend(patterns.iter().map(String::as_str));
+        let selected = buck.ctargets(&args).await?.stdout;
+
+        let expected: Vec<serde_json::Map<String, Value>> = all
+            .iter()
+            .map(|attributes| {
+                attributes
+                    .iter()
+                    .filter(|(name, _)| names.contains(&name.as_str()))
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            expected,
+            serde_json::from_str::<Vec<serde_json::Map<String, Value>>>(&selected)?,
+            "{names:?}"
+        );
+
+        // And in the order they have among all the attributes.
+        let expected: Vec<Vec<&str>> = all_names
+            .iter()
+            .map(|target| {
+                let selected = target.iter().filter(|name| names.contains(name));
+                selected.copied().collect()
+            })
+            .collect();
+        assert_eq!(expected, printed_names(&selected), "{names:?}");
+    }
+    Ok(())
+}
+
+/// An attribute that cannot be printed fails the command only if it is asked for.
+#[buck_test]
+async fn test_ctargets_output_attribute_skips_what_it_cannot_print(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    let target = "root//unprintable:numbered";
+    let error = "Cannot serialize dict attr with non-string key type";
+    buck.ctargets(&[target, "--json"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(error);
+    buck.ctargets(&[target, "--json", "--output-attribute=^by_number$"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(error);
+
+    let result = buck
+        .ctargets(&[target, "--json", "--output-attribute=^name$"])
+        .await?;
+    let outputs: Vec<Value> = serde_json::from_str(&result.stdout)?;
+    assert_eq!(outputs, [json!({"name": "numbered"})]);
+    Ok(())
+}
+
 #[buck_test]
 async fn test_ctargets_output_attribute(buck: &Buck) -> anyhow::Result<()> {
     let result = buck

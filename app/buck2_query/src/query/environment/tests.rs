@@ -107,6 +107,7 @@ impl QueryTarget for TestTarget {
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        _filter: &dyn Fn(&str) -> bool,
         _func: F,
     ) -> Result<(), E> {
         unimplemented!()
@@ -117,6 +118,7 @@ impl QueryTarget for TestTarget {
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        _filter: &dyn Fn(&str) -> bool,
         _func: F,
     ) -> Result<(), E> {
         unimplemented!()

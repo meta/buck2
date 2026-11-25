@@ -117,6 +117,31 @@ fn test_run_executors(entries: &[Value]) -> Vec<&str> {
 }
 
 #[buck_test]
+async fn test_group_platforms_are_printed_when_asked_for(buck: &Buck) -> anyhow::Result<()> {
+    let all = cquery_node(buck, "root//groups:bundle", &[]).await?;
+    let platforms = &all["buck.exec_group_platforms"];
+    assert!(platforms.is_object(), "{all:?}");
+
+    let selected = async |pattern: &str| {
+        let result = buck
+            .cquery(&["--output-attribute", pattern, "root//groups:bundle"])
+            .await?;
+        let nodes: BTreeMap<String, Value> = serde_json::from_str(&result.stdout)?;
+        assert_eq!(nodes.len(), 1, "{nodes:?}");
+        anyhow::Ok(nodes.into_values().next().unwrap())
+    };
+    assert_eq!(
+        serde_json::json!({"buck.exec_group_platforms": platforms}),
+        selected("^buck\\.exec_group_platforms$").await?
+    );
+    assert_eq!(
+        serde_json::json!({"buck.package": all["buck.package"]}),
+        selected("^buck\\.package$").await?
+    );
+    Ok(())
+}
+
+#[buck_test]
 async fn test_toolchains_select_only_their_group_platform(buck: &Buck) -> anyhow::Result<()> {
     let node = cquery_node(buck, "root//groups:bundle", &[]).await?;
     // The macOS-only and remote-only toolchains constrain only their own groups, so the default

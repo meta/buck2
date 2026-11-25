@@ -404,6 +404,7 @@ impl QueryTarget for ActionQueryNode {
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        _filter: &dyn Fn(&str) -> bool,
         mut _func: F,
     ) -> Result<(), E> {
         Ok(())
@@ -414,8 +415,16 @@ impl QueryTarget for ActionQueryNode {
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        filter: &dyn Fn(&str) -> bool,
         mut func: F,
     ) -> Result<(), E> {
+        let mut func = |name: &str, attr: &ActionAttr| {
+            if filter(name) {
+                func(name, attr)
+            } else {
+                Ok(())
+            }
+        };
         func("kind", ActionAttr::new(&self.rule_type()))?;
 
         let action = match &self.data {
@@ -447,7 +456,7 @@ impl QueryTarget for ActionQueryNode {
         &self,
         func: F,
     ) -> Result<(), E> {
-        self.attrs_for_each(func)
+        self.attrs_for_each(&|_| true, func)
     }
 
     fn map_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
@@ -457,10 +466,8 @@ impl QueryTarget for ActionQueryNode {
     ) -> buck2_error::Result<R> {
         let mut res = None;
 
-        self.attrs_for_each(|k, attr| {
-            if k == key {
-                res = Some(func(Some(attr)));
-            }
+        self.attrs_for_each(&|k| k == key, |_, attr| {
+            res = Some(func(Some(attr)));
             Ok::<(), buck2_error::Error>(())
         })?;
         Ok(match res {

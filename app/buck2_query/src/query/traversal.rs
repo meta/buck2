@@ -319,6 +319,7 @@ mod tests {
             F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
         >(
             &self,
+            _filter: &dyn Fn(&str) -> bool,
             _func: F,
         ) -> Result<(), E> {
             unimplemented!()
@@ -336,6 +337,7 @@ mod tests {
             F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
         >(
             &self,
+            _filter: &dyn Fn(&str) -> bool,
             _func: F,
         ) -> Result<(), E> {
             unimplemented!()

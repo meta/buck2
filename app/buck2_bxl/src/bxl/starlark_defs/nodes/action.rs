@@ -146,7 +146,7 @@ fn action_query_node_value_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn attrs<'v>(this: StarlarkActionQueryNode, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let mut result = Vec::new();
-        this.0.attrs_for_each(|k, v| {
+        this.0.attrs_for_each(&|_| true, |k, v| {
             result.push((
                 k.to_owned(),
                 heap.alloc(StarlarkActionAttr(v.to_owned())).to_value(),

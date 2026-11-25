@@ -62,19 +62,20 @@ impl QueryEnvironmentError {
 pub struct QueryTargets {}
 
 impl QueryTargets {
-    /// Used to process all the attrs of a node (both the normal rule attrs and the "special" attrs). Applies
-    /// a function to the attrs instead of returning an iterator as some of them are owned and some are refs
-    /// into the node.
-    pub fn for_all_attrs<
+    /// Used to process the attrs of a node (both the normal rule attrs and the "special" attrs) whose
+    /// name passes `filter`. Applies a function to the attrs instead of returning an iterator as some of
+    /// them are owned and some are refs into the node.
+    pub fn for_filtered_attrs<
         E: From<buck2_error::Error>,
         T: QueryTarget,
         F: FnMut(&str, &T::Attr<'_>) -> Result<(), E>,
     >(
         target: &T,
+        filter: &dyn Fn(&str) -> bool,
         mut func: F,
     ) -> Result<(), E> {
-        target.special_attrs_for_each(&mut func)?;
-        target.attrs_for_each(&mut func)?;
+        target.special_attrs_for_each(filter, &mut func)?;
+        target.attrs_for_each(filter, &mut func)?;
         Ok(())
     }
 }
@@ -150,19 +151,25 @@ pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
         })?
     }
 
+    /// Applies `func` to the special attributes whose name passes `filter`. Taking the test
+    /// lets a target skip building the ones that fail it.
     fn special_attrs_for_each<
         E: From<buck2_error::Error>,
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        filter: &dyn Fn(&str) -> bool,
         func: F,
     ) -> Result<(), E>;
 
+    /// Applies `func` to the attributes whose name passes `filter`. Taking the test lets a
+    /// target skip producing the ones that fail it, which a configured target would configure.
     fn attrs_for_each<
         E: From<buck2_error::Error>,
         F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
     >(
         &self,
+        filter: &dyn Fn(&str) -> bool,
         func: F,
     ) -> Result<(), E>;
 

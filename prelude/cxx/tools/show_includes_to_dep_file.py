@@ -14,6 +14,15 @@ import dep_file_utils
 DEP_PREFIX = "Note: including file:"
 
 
+def _without_source_file_line(output):
+    # cl.exe first prints the name of the file we're generating deps for. We
+    # manually include it later so let's ignore it. clang-cl does not print it.
+    lines = output.splitlines()
+    if lines and DEP_PREFIX not in lines[0]:
+        lines = lines[1:]
+    return lines
+
+
 # output_path -> path to write the dep field to
 # cmd_args -> command to be run to get dependencies from compiler
 # source_file -> Path to the file we're generating the dep file for. We need this since
@@ -46,10 +55,7 @@ def rewrite_dep_file_for_msvc(output, dst_path, input_file):
 
     """
     deps = []
-    # First line is the name of the file we're generating deps for.
-    # We manually include it later so let's ignore it.
-    lines = output.splitlines()[1:]
-    for line in lines:
+    for line in _without_source_file_line(output):
         if DEP_PREFIX in line:
             line = line.replace(DEP_PREFIX, "").strip()
             deps.append(line)
@@ -60,7 +66,6 @@ def rewrite_dep_file_for_msvc(output, dst_path, input_file):
 
 
 def parse_stdout_error_output(output):
-    lines = output.splitlines()[1:]
-    for line in lines:
+    for line in _without_source_file_line(output):
         if DEP_PREFIX not in line:
             print(line, file=sys.stderr)

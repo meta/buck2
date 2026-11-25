@@ -132,6 +132,7 @@ prelude.python_library(
         "dep_file_utils.py",
         "makefile_to_dep_file.py",
         "show_headers_to_dep_file.py",
+        "show_includes_to_dep_file.py",
     ],
     base_module = "",
     visibility = ["prelude//cxx/tools/..."],

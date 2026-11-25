@@ -56,6 +56,15 @@ buck2_bundle(
     visibility = ["PUBLIC"],
 )
 
+# What buck2's own end-to-end tests run in place of `:buck2` and `:buck2_bundle`. Never ship
+# these; see `//buck2/app/buck2:buck2_e2e-bin`.
+pagable_transition_alias(
+    name = "buck2_e2e",
+    actual = "//buck2/app/buck2:buck2_e2e-bin",
+    labels = [],
+    modifiers = buck2_modifiers(),
+)
+
 # For backcompat with bash aliases and so forth
 # You can use this target to test custom builds of buck2.
 #

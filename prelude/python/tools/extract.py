@@ -21,6 +21,7 @@ import configparser
 import glob
 import json
 import os
+import re
 import shutil
 import stat
 import tarfile
@@ -54,6 +55,13 @@ def strip_soabi_tag(path: Path) -> Path | None:
         return None
 
     return path.with_suffix("").with_suffix(ext)
+
+
+# An entry point's object reference, `module[:qualname] [extras]`, as matched by
+# `importlib.metadata.EntryPoint`.
+_ENTRY_POINT_RE = re.compile(
+    r"(?P<module>[\w.]+)\s*(:\s*(?P<attr>[\w.]+)\s*)?((?P<extras>\[.*\])\s*)?$"
+)
 
 
 # shutil.unpack_archive calls zipfile.extract which does *not* preserve file attributes
@@ -158,10 +166,21 @@ def main() -> None:
         if entry_points:
             (entry_points,) = entry_points
             config = configparser.ConfigParser()
+            # Keep the case of script names, as `pip` does.
+            config.optionxform = str
             config.read(entry_points)
             if config.has_section("console_scripts"):
                 for name, entry_point in config.items("console_scripts"):
-                    mod, func = entry_point.split(":")
+                    match = _ENTRY_POINT_RE.match(entry_point)
+                    if match is None or match.group("attr") is None:
+                        raise SystemExit(
+                            "Invalid console script entry point {}: {}, a"
+                            " 'module:callable' reference is required".format(
+                                name, entry_point
+                            )
+                        )
+                    mod = match.group("module")
+                    func = match.group("attr")
                     path = os.path.join(args.entry_points, name)
                     manifest.append(
                         (name, path, os.path.relpath(entry_points, source_root))
@@ -173,11 +192,11 @@ def main() -> None:
 # -*- coding: utf-8 -*-
 import re
 import sys
-from {mod} import {func}
+from {mod} import {name}
 if __name__ == '__main__':
     sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])
     sys.exit({func}())
-""".format(mod=mod, func=func)
+""".format(mod=mod, name=func.split(".")[0], func=func)
                         )
                     os.chmod(path, 0o777)
         with open(args.entry_points_manifest, mode="w") as f:

@@ -32,7 +32,10 @@ rust_library(
                     },
                 },
             },
-            "extra_check_cfgs": ["cfg(buck2_memfrag)"],
+            "extra_check_cfgs": [
+                "cfg(buck2_memfrag)",
+                "cfg(buck2_test_settings)",
+            ],
         },
     },
     rustc_flags = select({

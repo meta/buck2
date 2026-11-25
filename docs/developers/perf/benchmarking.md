@@ -45,6 +45,8 @@ buck run @fbcode//mode/opt fbcode//buck2/scripts/abtest:abtest -- \
   `opt-win`); only the benchmark shards move, so pick a workload and mode that evaluate there,
   e.g. `audit providers --quiet @fbcode//mode/opt-mac-arm64 <target>`. `--unicastle-size` is
   Linux-only.
+- `--release` builds every row the way a Linux release is built, with ThinLTO and a PGO profile
+  trained for that row, instead of in opt mode.
 - Scheduling prints the workflow URL; `analyze` waits for the workflow, so it can be run
   immediately after.
 - Start with the default `--samples 100 --shards 50`. All shards run at once and each runs its

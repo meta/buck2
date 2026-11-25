@@ -23,8 +23,8 @@ Settings files are [TOML](https://toml.io). Each table is a section, and each
 key in it is one setting:
 
 ```toml
-[log_download]
-log_use_manifold = true
+[http]
+connect_timeout_ms = 2000
 
 [event_log]
 retained_logs = 20
@@ -158,13 +158,18 @@ Layers, lowest priority first:
   local       /home/user/.bucksettings.local.toml
   local       /repo/.bucksettings.local.toml  (absent)
 
+[http]  daemon scope, version 0
+  connect_timeout_ms = 2000       (repository)
+  read_timeout_ms = null          (unset)
+  write_timeout_ms = null         (unset)
+  http2 = true                    (default)
+  max_redirects = null            (unset)
+  max_concurrent_requests = null  (unset)
+  proxy_env_allowlist = null      (unset)
+
 [event_log]  invocation scope, version 0
   retained_logs = 20    (local /home/user/.bucksettings.local.toml)
   action_graph = false  (default)
-
-[log_download]  daemon scope, version 0
-  log_use_manifold = true  (repository)
-  log_url = null           (unset)
 ```
 
 - `--detailed` adds each setting's documentation, type, defaults and where it

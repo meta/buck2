@@ -412,7 +412,7 @@ this section.
 
 ## [cell_aliases]
 
-Defines additional names for cells, so that `fbcode//foo:bar` below refers to
+Defines additional names for cells, so that `app//foo:bar` below refers to
 the same cell as `root//foo:bar`. The target of an alias is a name from
 `[cells]`. The root cell's aliases are available in every cell; another cell's
 `[cell_aliases]` add to them, and override them, for the build files in that
@@ -420,7 +420,7 @@ cell.
 
 ```ini
 [cell_aliases]
-    fbcode = root
+    app = root
 ```
 
 `[repository_aliases]` is additionally supported as a deprecated alternative

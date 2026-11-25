@@ -32,9 +32,9 @@ Build files are written in Starlark and follow these core principles:
 In order to enforce a clean separation between code and data, build files have
 the following restrictions:
 
-- Cannot contain arbitrary function definitions or conditional/for statements.
-- Do not support `*args` and `**kwargs` arguments; all arguments must be listed
-  explicitly.
+- Cannot contain function definitions (`def`) or top-level `for` and `if`
+  statements. Comprehensions, conditional expressions and `**kwargs` in calls
+  are allowed.
 - Custom functions must be defined in `.bzl` files and loaded explicitly at the
   top of the build file.
 
@@ -72,10 +72,8 @@ Each [target](build_target.md) has a name, identifying it uniquely in the same
 build file. Additionally, it has a set of named attributes depending on the type
 of the target.
 
-**Target naming rules:**
-
-- Attribute names can only have alphanumeric characters and underscores
-- Attribute names cannot start with a digit
+Attributes are written as keyword arguments, whose names are Starlark
+identifiers: letters, digits and underscores, not starting with a digit.
 
 ### Build file naming configuration
 
@@ -159,14 +157,17 @@ java_library(
 
 #### Invalid referencing example
 
-The following **would be invalid** because `java/com/facebook/common/collect/`
-has its own build file, so `//java/com/facebook/common/collect:concurrent`
-cannot list `java/com/facebook/common/collect/*.java` in its `srcs`.
+The following **is invalid** because `java/com/facebook/common/collect/` has
+its own build file, so `//java/com/facebook/common:concurrent` cannot list a
+file of `java/com/facebook/common/collect/` in its `srcs`.
 
 ```python
 java_library(
   name = 'concurrent',
-  srcs = glob(['collect/*.java', 'concurrent/*.java']),  # Invalid reference
+  srcs = ['collect/Lists.java'] + glob(['concurrent/*.java']),  # Invalid reference
   deps = ['//java/com/facebook/base:base',],
 )
 ```
+
+A `glob` does not report this error: `glob(['collect/*.java'])` matches no
+files, because `glob` only looks at the files of its own package.

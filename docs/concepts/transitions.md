@@ -21,22 +21,26 @@ authors](../rule_authors/configuration_transitions.md) for how to define
 one), it can be used in the following way:
 
 ```python
-cxx_library(
-    name = "lib1",
-    exported_headers = ["lib1.h"],
-    exported_deps = [":lib2"],
-    incoming_transition = [":my_transition"],
+rust_binary(
+    name = "bin",
+    srcs = ["main.rs"],
+    deps = [":lib"],
+    incoming_transition = ":my_transition",
 )
 
-cxx_library(
-    name = "lib2",
-    exported_headers = ["lib2.h"],
+rust_library(
+    name = "lib",
+    srcs = ["lib.rs"],
 )
 ```
 
-When building `lib1`, whatever the current configuration is will be
+When building `bin`, whatever the current configuration is will be
 passed to `my_transition`, which will return a new configuration. This
-new configuration will be used to build both `lib1` and `lib2`.
+new configuration will be used to build both `bin` and `lib`.
+
+Only rules declared with `supports_incoming_transition = True` accept
+the `incoming_transition` attribute. In the prelude, these include
+`rust_binary`, `rust_library` and `rust_test`.
 
 The transition is given the current configuration and returns a new one.
 For example, it could:

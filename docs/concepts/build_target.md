@@ -34,27 +34,26 @@ A fully-qualified build target has three components:
    rule.
 
 Note that the name of the build file itself—usually BUCK—does _not_ occur in the
-build target. All build files within a given Buck2 project must have the same
-name—defined in the `[buildfile].name` entry of `.buckconfig`. Therefore, it is
-unnecessary to include the name in the target. The full regular expression for a
-fully-qualified build target is as follows:
+build target. A package has exactly one build file, so it is unnecessary to
+include the name in the target. The names that Buck2 accepts for build files
+are `BUCK.v2` and `BUCK` by default, and each cell can change them in the
+`[buildfile]` section of its `.buckconfig`. A fully-qualified build target has
+this form, in which the last part shows the characters that a target name can
+have:
 
 ```
-[A-Za-z0-9._-]*//[A-Za-z0-9/._-]*:[A-Za-z0-9_/.=,@~+-]+
-|- cell name -|  | package path | |--- target name ----|
+[A-Za-z0-9._-]*//[A-Za-z0-9/._-]*:[A-Za-z0-9_/.=,@~+!$\\-]+
+|- cell name -|  | package path | |----- target name ------|
 ```
 
 In Buck2, a _cell_ defines a directory tree of one or more Buck2 packages. For
 more information about Buck2 cells and their relationship to packages and
-projects, see the [Key Concepts](key_concepts.md) topic. **NOTE:** All target
-paths are assumed to start from the root of the Buck2 project. Buck2 does not
-support specifying a target path that starts from a directory below the root.
-Although the double forward slash (`//`) that prefixes target paths can be
-omitted when specifying a target from the command line (see **Pro Tips** below),
-Buck2 still assumes that the path is from the root. Buck2 does support
-_relative_ build paths, but in Buck2, that concept refers to specifying build
-targets _from within_ a build file. See **Relative build targets** below for
-more details.
+projects, see the [Key Concepts](key_concepts.md) topic. **NOTE:** A target
+path that starts with a double forward slash (`//`) is relative to the root of
+the current cell. On the command line, a target path without the `//` is
+relative to the current directory (see **Pro Tips** below). In a build file,
+the only _relative_ build targets are the ones that start with a colon. See
+**Package relative build targets** below for more details.
 
 #### Cell relative build targets
 
@@ -94,8 +93,9 @@ buck2 build cell//java/com/facebook/share:share
 ```
 
 Although Buck2 is always strict when parsing build targets in build files, Buck2
-is flexible when parsing build targets on the command-line. Specifically, the
-leading `//` is optional on the command line, so the above could be:
+is flexible when parsing build targets on the command-line. Specifically, a
+target without the leading `//` is relative to the current directory, so from
+the root of `cell` the above could be:
 
 ```sh
 buck2 build java/com/facebook/share:share
@@ -108,12 +108,7 @@ also be written as:
 buck2 build java/com/facebook/share/:share
 ```
 
-which enables you to produce the red text shown below using tab-completion,
-which dramatically reduces how much you need to type:
-
-```sh
-buck2 build java/com/facebook/share/:share
-```
+which is the form that tab-completion of the directory produces.
 
 Finally, if the final path element matches the value specified after the colon,
 it can be omitted:

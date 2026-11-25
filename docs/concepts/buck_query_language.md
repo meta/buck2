@@ -34,9 +34,6 @@ buck2 uquery app
 In addition to target parameters, some Buck query operators take string
 parameters such as filenames (`owner()`) or regular expressions (`filter()`).
 
-**Note:** Hover over parameters in query operator syntax to see their
-descriptions in the command documentation.
-
 ## Quoting Arguments
 
 It is not necessary to quote arguments if they comprise sequences of characters

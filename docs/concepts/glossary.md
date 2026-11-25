@@ -9,13 +9,20 @@ The root of your [project](#project) must contain a configuration file named
 `.buckconfig`. Before executing, Buck2 reads this file to incorporate specified
 customizations. See [.buckconfig](buckconfig.md) for more info.
 
+## .buckroot
+
+A file that stops the search for the root of the [project](#project): Buck2 does
+not look for a [.buckconfig](#buckconfig) in directories above the one that
+contains a `.buckroot`. The contents of the file are ignored. `buck2 init`
+creates one. See [Key Concepts](key_concepts.md#projects).
+
 ## Action
 
-An individual, cacheable, ideally hermetic command that's run during the
-[build](#buck-file). It takes [artifacts](#artifact) as inputs and produces
-other artifacts as outputs. An example command could be `gcc -o main main.c`,
-which takes the artifact `main.c` (a source file) and produces the artifact
-called `main` (the compiled binary).
+An individual, cacheable, ideally hermetic command that's run during the build.
+It takes [artifacts](#artifact) as inputs and produces other artifacts as
+outputs. An example command could be `gcc -o main main.c`, which takes the
+artifact `main.c` (a source file) and produces the artifact called `main` (the
+compiled binary).
 
 ## Action digest
 
@@ -67,7 +74,7 @@ BXL scripts can query the [action graph](#action-graph),
 ## Cell
 
 Originally intended to allow for migration of repositories with different setups
-into one monorepo. The cell root always contains a [.buckconfig](#buckconfig),
+into one monorepo. The cell root may contain a [.buckconfig](#buckconfig),
 although the presence of a .buckconfig file doesn't in itself define a cell.
 Cells are specified in the .buckconfig for the Buck [project](#project).
 
@@ -75,8 +82,9 @@ Cells are specified in the .buckconfig for the Buck [project](#project).
 
 Configurations consist of a set of 'constraint values' that are used to resolve
 `select` [attributes](#attribute) prior to evaluating [rule](#rule)
-implementations: the attribute takes the value of the first branch in the
-`select` that matches the configuration.
+implementations: the attribute takes the value of the most specific branch in
+the `select` that matches the configuration (see
+[Configurations](configurations.md#using-configuration-select)).
 
 Configurations are instantiated by rules that produce a `PlatformInfo`
 [provider](#provider). Once created, targets can receive their configuration
@@ -172,9 +180,10 @@ implicitly loads all the symbols defined in the prelude whenever it loads a
 [`BUCK`](#buck-file) file. Symbols defined outside the prelude can be imported
 via a `load()` statement.
 
-When you create a Buck2 project using `buck2 init --git`, it will contain the
-same prelude used internally at Meta by Buck2 users. It is viewable at
-https://github.com/facebook/buck2/tree/main/prelude.
+A project created with `buck2 init` uses the prelude bundled in the `buck2`
+binary (`[external_cells] prelude = bundled` in its `.buckconfig`). It is the
+same prelude used internally at Meta by Buck2 users. Its source is at
+https://github.com/meta/buck2/tree/main/prelude.
 
 ## Project
 
@@ -253,7 +262,7 @@ instantiating a [rule](#rule) with attributes. A target has
 
 The identifier for a [target](#target). Structured as
 `cell_alias//path/to/package:target`, where `cell_alias//` maps to a
-[cell root](#cell) path (as defined in the [./buckconfig](#buckconfig) of the
+[cell root](#cell) path (as defined in the [.buckconfig](#buckconfig) of the
 cell this target belongs to), `path/to/package` is the [package](#package)
 directory that contains the [BUCK file](#buck-file) declaring the target
 (relative to the mapped cell alias), and `:target` is the target's name.
@@ -285,7 +294,8 @@ deps) within the query string for cquery.
 Allows the [configuration](#configuration) to change across a
 [dependency](#dependency) edge. That is, normally, if [target](#target) A
 depends on target B, then if the configuration for A is X, then B is configured
-using X too. By using a transition, you can produce X to configure B instead.
+using X too. By using a transition, B can be configured using a different
+configuration, Y, instead.
 
 ## Unconfigured graph
 

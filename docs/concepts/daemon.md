@@ -140,13 +140,13 @@ run. Note that they won't kill the daemon associated with custom isolation dirs.
 To do that, run using the `--isolation-dir` option
 (`buck2 --isolation-dir <dir> <command>`)
 
+The `buck2 killall` command also kills the daemon. By default it kills every
+buck2 process on the machine; pass `--in-isolation-dir <dir>` and/or `--repo` to
+only kill processes using that isolation dir and/or running in the current
+repository.
+
 <FbInternalOnly>
 
-The Daemon is also killed when:
-
-- The `buck2 killall` command is run. By default it kills every buck2 process
-  on the machine; pass `--in-isolation-dir <dir>` and/or `--repo` to only kill
-  processes using that isolation dir and/or running in the current repository.
-- A new buck2 version is available.
+The Daemon is also killed when a new buck2 version is available.
 
 </FbInternalOnly>

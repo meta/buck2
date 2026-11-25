@@ -41,11 +41,11 @@ The isolation directory exists as a subdirectory within the `buck-out` folder:
 project_root/
 └── buck-out/
     ├── v2/            # Default isolation directory
-    │   ├── artifacts/
+    │   ├── art/
     │   ├── cache/
     │   └── ...
     ├── custom_name/   # Custom isolation directory
-    │   ├── artifacts/
+    │   ├── art/
     │   ├── cache/
     │   └── ...
     └── ...
@@ -62,7 +62,9 @@ outputs and metadata within `$PROJECT_ROOT/buck-out/v2`.
      directories
 
 2. **Command Execution Isolation**:
-   - A single Buck2 daemon can generally execute only one command at a time
+   - A single Buck2 daemon runs commands that see the same files and
+     configuration concurrently; a command that changes that state waits for
+     the running commands to finish
    - Different daemons with different isolation directories can execute commands
      concurrently
 
@@ -100,7 +102,7 @@ isolation directories prevents deadlocks and conflicts.
 $ buck2 build //some:target
 
 # Within this build, Buck2 might make another call using a different isolation dir
-$ buck2 --isolation-dir recursive_dir //dependency:target
+$ buck2 --isolation-dir recursive_dir build //dependency:target
 ```
 
 ### 3. Parallel Workflows
@@ -125,9 +127,8 @@ There are two ways to specify which isolation directory to use:
 $ buck2 --isolation-dir DIRECTORY_NAME COMMAND [ARGS]
 ```
 
-**Important**: The `--isolation-dir` argument must always appear immediately
-after `buck2`. For example, `buck2 build --isolation-dir v2 target` is not
-valid.
+The `--isolation-dir` argument can also follow the command:
+`buck2 COMMAND --isolation-dir DIRECTORY_NAME [ARGS]`.
 
 ### 2. Environment Variable
 

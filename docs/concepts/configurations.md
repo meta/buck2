@@ -37,6 +37,7 @@ constraint(
         "debug",
         "release",
     ],
+    visibility = ["PUBLIC"],
 )
 ```
 
@@ -121,10 +122,8 @@ fastmode = true
 
 This feature only allows reading buckconfig values, not writing them.
 
-They are also incompatible with
-[configuration modifiers](./modifiers.md):
-`--modifier :fastmode_enabled` does nothing (and will be an error in the
-future).
+A `config_setting` that reads a buckconfig value cannot be used as a
+[configuration modifier](./modifiers.md).
 
 ## Using configuration: `select()`
 
@@ -268,10 +267,13 @@ buck2 build :my_target
 # Build it with an entirely different configuration.
 buck2 build :my_target --target-platforms //my/other:platform
 # Build it with the default configuration, plus release mode.
-buck2 build :my_target?release
+buck2 build ':my_target?release'
 # Equivalent to the above, but applies to all targets if multiple were built.
 buck2 build :my_target -m release
 ```
+
+The last two commands work once the project has
+[enabled modifiers and defined a `release` alias](../users/how_tos/modifiers_setup.md).
 
 See the [configurations for rule authors](../rule_authors/configurations.md)
 page for information on how to define a platform.
@@ -372,67 +374,65 @@ target's attributes with the configuration applied. The `uquery` command
 will not apply a configuration.
 
 Here is a heavily trimmed version of the outputs of invoking `uquery`
-and `cquery` on `//buck2/app/buck2_core:buck2_core`.
+and `cquery` on `//app:app`, a `rust_library`, on a Linux machine.
 
 ```sh
-> buck2 uquery -A '"//buck2/app/buck2_core:buck2_core"'
+> buck2 uquery -A '"//app:app"'
 {
-  "fbcode//buck2/app/buck2_core:buck2_core": {
+  "root//app:app": {
     "buck.type": "rust_library",
-    "buck.package": "fbcode//buck2/app/buck2_core:TARGETS",
-    "name": "buck2_core",
+    "buck.package": "root//app:BUCK",
+    "name": "app",
     "visibility": [
       "PUBLIC"
     ],
     "deps": {
-      "fbsource//third-party/rust:anyhow",
-      "fbsource//third-party/rust:arc-swap",
-      "fbsource//third-party/rust:blake3",
-      "fbsource//third-party/rust:compact_str",
-      "fbsource//third-party/rust:dashmap",
-      {
-        "__type": "selector",
-        "entries": {
-          "DEFAULT": [],
-          "ovr_config//os:windows": [
-            "fbsource//third-party/rust:common-path"
-          ]
+      "__type": "concat",
+      "items": [
+        [
+          "root//app:common"
+        ],
+        {
+          "__type": "selector",
+          "entries": {
+            "DEFAULT": [],
+            "prelude//os:windows": [
+              "root//app:windows_support"
+            ]
+          }
+        },
+        {
+          "__type": "selector",
+          "entries": {
+            "DEFAULT": [],
+            "prelude//os:linux": [
+              "root//app:linux_support"
+            ]
+          }
         }
-      },
-      {
-        "__type": "selector",
-        "entries": {
-          "DEFAULT": [],
-          "ovr_config//os:linux": [
-            "fbsource//third-party/rust:nix"
-          ]
-        }
-      },
-    },
+      ]
+    }
   }
 }
 ```
 
 ```sh
-> buck2 cquery -A '"//buck2/app/buck2_core:buck2_core"'
+> buck2 cquery -A '"//app:app"'
 {
-  "fbcode//buck2/app/buck2_core:buck2_core (ovr_config//platform/linux:<OMITTED>)": {
+  "root//app:app (prelude//platforms:default#a8ac7ec86a6bee54)": {
     "buck.type": "rust_library",
-    "buck.package": "fbcode//buck2/app/buck2_core:TARGETS",
-    "buck.target_configuration": "ovr_config//platform/linux:<OMITTED>",
-    "buck.execution_platform": "fbcode//buck2/platform/<OMITTED>",
-    "name": "buck2_core",
+    "buck.package": "root//app:BUCK",
+    "buck.target_configuration": "prelude//platforms:default#a8ac7ec86a6bee54",
+    "buck.execution_platform": "prelude//platforms:default",
+    "name": "app",
     "visibility": [
       "PUBLIC"
     ],
     "deps": [
-      "fbsource//third-party/rust:anyhow (ovr_config//platform/linux:<OMITTED>)",
-      "fbsource//third-party/rust:arc-swap (ovr_config//platform/linux:<OMITTED>)",
-      "fbsource//third-party/rust:blake3 (ovr_config//platform/linux:<OMITTED>)",
-      "fbsource//third-party/rust:compact_str (ovr_config//platform/linux:<OMITTED>)",
-      "fbsource//third-party/rust:dashmap (ovr_config//platform/linux:<OMITTED>)",
-      "fbsource//third-party/rust:nix (ovr_config//platform/linux:<OMITTED>)"
+      "root//app:common (prelude//platforms:default#a8ac7ec86a6bee54)",
+      "root//app:linux_support (prelude//platforms:default#a8ac7ec86a6bee54)"
     ]
+  }
 }
 ```
 
@@ -442,12 +442,12 @@ being built for and what it's being built on, respectively. `uquery`
 doesn't have those.
 
 The deps in `uquery` also have a number of selects; these indicate that
-the `common-path` dependency should only be included when building for
-Windows, while the `nix` dependency is needed only for Linux. In
-`cquery` that distinction has been resolved; because the target has been
-configured for Linux, the `nix` dependency is present and
-indistinguishable from any other, while the `common-path` dependency is
-gone.
+the `windows_support` dependency should only be included when building
+for Windows, while the `linux_support` dependency is needed only for
+Linux. In `cquery` that distinction has been resolved; because the
+target has been configured for Linux, the `linux_support` dependency is
+present and indistinguishable from any other, while the
+`windows_support` dependency is gone.
 
 ## Execution groups
 

@@ -182,7 +182,7 @@ handled.
 At this point, the build is complete.
 
 If a user ran `buck2 test`, then there is a final transformation for Buck2 to
-construct a command for TPX to execute the actual test.
+construct a command for the test runner to execute the actual test.
 
 ### Phase E: Execute tests
 

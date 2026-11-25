@@ -19,7 +19,7 @@ Buck2 has a number of fundamental concepts:
 - A [**_build target_**](build_target.md) is a string that uniquely identifies a
   build rule. It can be thought of as a URI for the build rule within the Buck2
   project.
-- A [**_build file_**](build_rule.md) defines one or more build rules. In Buck2,
+- A [**_build file_**](build_file.md) defines one or more build rules. In Buck2,
   build files are typically named `BUCK`. A `BUCK` file is analogous to the
   `Makefile` used by the Make utility. In your project, you will usually have a
   separate `BUCK` file for each buildable unit of software—such as a binary or
@@ -54,7 +54,8 @@ subdirectory of `app-dir-1`, it is _not_ part of Package A.
 A Buck2 **_cell_** is:
 
 - A directory tree containing one or more Buck2 packages
-- Configured by a [**`.buckconfig`**](buckconfig.md) file at **its root**
+- Declared in the `[cells]` section of the project's
+  [**`.buckconfig`**](buckconfig.md)
   ```
   [cells]
   cell_name = path_to_cell
@@ -62,24 +63,30 @@ A Buck2 **_cell_** is:
   ```
 - Often (but not necessarily) corresponding to a repository
 
-Note that although the cell root should contain a `.buckconfig`, the presence of
-a `.buckconfig` file doesn't in itself define a cell. Rather, _the cells
-involved in a build are defined at the time Buck2 is invoked_; they are
-specified in the `.buckconfig` for the Buck2 _project_ (see below).
+Note that a cell may have its own `.buckconfig` at its root, but does not need
+one, and the presence of a `.buckconfig` file doesn't in itself define a cell.
+Rather, _the cells involved in a build are defined at the time Buck2 is
+invoked_; they are specified in the `.buckconfig` for the Buck2 _project_ (see
+below).
 
 ### Projects
 
 A Buck2 **_project_** is:
 
 - The entry point for Buck2 builds
-- Defined by the `.buckconfig` file in the directory where Buck2 is invoked (or
-  in the nearest ancestor directory),
+- Defined by the `.buckconfig` file in the _project root_: the outermost
+  directory, at or above the directory where Buck2 is invoked, that contains a
+  `.buckconfig`
 - The container that specifies which cells are part of the build
 
+A file named `.buckroot` stops the search for the project root: Buck2 does not
+look in directories above the one that contains it. Its contents are ignored.
+`buck2 init` creates one, so that a new project inside another project gets its
+own root. `buck2 root --kind project` prints the project root.
+
 **_How cells and projects relate._** The project's `.buckconfig` specifies all
-cells in the [cells](buckconfig.md#cells) section. The directory containing the
-project's `.buckconfig` is automatically considered a cell. While not required,
-it's good practice to explicitly list the project cell in the configuration.
+cells in the [cells](buckconfig.md#cells) section. The project root is itself a
+cell and must be listed there with the path `.` (for example, `root = .`).
 
 ### Buck2's dependency graph
 

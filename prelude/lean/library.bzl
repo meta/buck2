@@ -91,6 +91,60 @@ def lean_module_name(src: Artifact, package: str, root: str) -> str:
         fail("Lean source `{}` does not end with `.lean`".format(path))
     return path[: -len(".lean")].replace("/", ".")
 
+def _import_arts(direct: list[(str, bool, bool, bool)], modules: dict[str, LeanModule]) -> (dict[str, list[list[Artifact]]], list[typing.Any]):
+    """The import artifacts of a module of the module system, as Lean loads
+    them on the command line (`importModulesCore`, and Lake's
+    `fetchTransImportArts`): the exported `.olean` of every module reachable
+    through `public import`, all `.olean` levels for `import all`, and the IR
+    for `meta import`, transitively. Returns the `importArts` of the module's
+    `--setup` file and the transitive sets of the modules that resolve
+    through `LEAN_PATH` instead: those of libraries without `import_cutoff`
+    (the core library, third-party packages), which rarely change, and
+    modules without the module system, whose imports Lean loads at every
+    level.
+    """
+    levels = {}
+    order = []
+    fallback = {}
+    queue = [(m, a, meta) for m, a, _e, meta in reversed(direct)]
+
+    # Starlark has no `while`. The walk ends: a module is visited once and
+    # widened at most twice, and only a visit or a widening queues imports.
+    for _ in range(0x7FFFFFFF):
+        if not queue:
+            break
+        name, import_all, meta = queue.pop()
+        module = modules[name]
+        if not module.import_cutoff or not module.is_module:
+            fallback[name] = module.artifacts
+            continue
+        old = levels.get(name)
+        if old != None:
+            if (old[0] or not import_all) and (old[1] or not meta):
+                continue
+            import_all = import_all or old[0]
+            meta = meta or old[1]
+        else:
+            order.append(name)
+        levels[name] = (import_all, meta)
+        for child, child_all, child_exported, child_meta in reversed(module.imports):
+            reachable = import_all or child_exported
+            child_meta = meta or (reachable and child_meta)
+            if reachable or child_meta:
+                queue.append((child, import_all and child_all, child_meta))
+
+    arts = {}
+    for name in order:
+        module = modules[name]
+        import_all, meta = levels[name]
+        if import_all:
+            arts[name] = [[module.olean, module.olean_server, module.olean_private], [module.ir_sig, module.ir]]
+        elif meta:
+            arts[name] = [[module.olean], [module.ir_sig, module.ir]]
+        else:
+            arts[name] = [[module.olean]]
+    return arts, fallback.values()
+
 def _compile_impl(
     actions: AnalysisActions,
     label: Label,
@@ -106,6 +160,7 @@ def _compile_impl(
     c_compile: cmd_args,
     c_export_flags: list[typing.Any],
     object_extension: str,
+    import_cutoff: bool,
     archive_cmd: cmd_args,
     archiver_supports_argfiles: bool,
     archive: OutputArtifact,
@@ -146,6 +201,7 @@ def _compile_impl(
 
     own = {}
     imports = {}
+    import_flags = {}
     is_module = {}
     for name, src, header in zip(src_names, src_files, headers):
         if header["errors"]:
@@ -157,11 +213,14 @@ def _compile_impl(
         own[name] = src
         is_module[name] = header["result"]["isModule"]
         own_imports = []
+        flags = []
         for imp in header["result"]["imports"]:
             module = imp["module"]
             if module not in own_imports:
                 own_imports.append(module)
+            flags.append((module, imp.get("importAll", False), imp.get("isExported", True), imp.get("isMeta", False)))
         imports[name] = own_imports
+        import_flags[name] = flags
 
     for name in src_names:
         for module in imports[name]:
@@ -201,6 +260,22 @@ def _compile_impl(
         import_sets = [modules[m].artifacts for m in imports[name]]
         root = cmd_args(olean, parent = depth, ignore_artifacts = True)
 
+        # With `import_cutoff`, a module of the module system gets only the
+        # levels of its imports that it can see, so a change that keeps them
+        # (a proof, a private declaration, a position) does not rerun it:
+        # Buck keys the action on those files alone.
+        if is_module[name] and import_cutoff:
+            import_arts, fallback = _import_arts(import_flags[name], modules)
+            setup = actions.write_json(
+                "setup/" + path + ".json",
+                {"dynlibs": [], "importArts": import_arts, "isModule": True, "name": name, "options": {}, "plugins": []},
+            )
+            setup_args = ["--setup", setup]
+            inputs = [f for levels in import_arts.values() for files in levels for f in files] + [s.project_as_args("artifacts") for s in fallback]
+        else:
+            setup_args = []
+            inputs = [s.project_as_args("artifacts") for s in import_sets]
+
         actions.run(
             cmd_args(
                 lean,
@@ -213,8 +288,9 @@ def _compile_impl(
                 ilean.as_output(),
                 "-c",
                 c_file.as_output(),
+                setup_args,
                 lean_flags,
-                hidden = [part.as_output() for part in parts] + [s.project_as_args("artifacts") for s in import_sets] + resources,
+                hidden = [part.as_output() for part in parts] + inputs + resources,
             ),
             env = {"LEAN_PATH": cmd_args([root] + dep_roots.values(), delimiter = lean_path_separator)},
             category = "lean",
@@ -249,6 +325,14 @@ def _compile_impl(
             ),
             object = obj,
             export_object = export_obj,
+            is_module = is_module[name],
+            olean = olean,
+            olean_server = parts[0] if parts else None,
+            olean_private = parts[1] if parts else None,
+            ir_sig = parts[2] if parts else None,
+            ir = parts[3] if parts else None,
+            imports = import_flags[name],
+            import_cutoff = import_cutoff,
         )
 
     if archiver_supports_argfiles:
@@ -283,6 +367,7 @@ _compile = dynamic_actions(
         "c_export_flags": dynattrs.value(list[typing.Any]),
         "dep_values": dynattrs.list(dynattrs.dynamic_value()),
         "deps_json": dynattrs.artifact_value(),
+        "import_cutoff": dynattrs.value(bool),
         "label": dynattrs.value(Label),
         "lean": dynattrs.value(RunInfo),
         "lean_dir": dynattrs.output(),
@@ -389,6 +474,7 @@ def compile_lean_library(ctx: AnalysisContext, link_whole: bool) -> struct:
             c_compile = _c_compile_cmd(ctx, cxx, toolchain),
             c_export_flags = toolchain.c_export_flags,
             object_extension = cxx.linker_info.object_file_extension,
+            import_cutoff = ctx.attrs.import_cutoff,
             archive_cmd = _archive_cmd(cxx),
             archiver_supports_argfiles = bool(cxx.linker_info.archiver_supports_argfiles),
             archive = archive.as_output(),
@@ -502,6 +588,10 @@ lean_library_attrs = {
         doc = 'Source files of the package that the modules model, for example the code that a specification is about. They make the target an owner of the files for queries: `buck2 uquery "owner(<file>)"` returns it. No action that compiles the modules reads them, so a change to one recompiles nothing. A list without files is an error, so that a `glob` that matches nothing does not pass unseen; so are the label of a target, and a file that does not exist, when the target is built. The `[covers]` sub-target is a directory of symlinks to the files.',
     ),
     "deps": attrs.list(attrs.dep(providers = [LeanLibraryInfo]), default = [], doc = "`lean_library` targets whose modules `srcs` import."),
+    "import_cutoff": attrs.bool(
+        default = False,
+        doc = "Compile each module of the module system against only the import levels it can see: the exported `.olean` of a `public import` chain, all levels for `import all`, the IR for `meta import`, passed with `lean --setup`. A change to a module that keeps its exported `.olean` (a proof, a private or unexposed body, a position) then reruns no module that imports it. Imports from libraries without the attribute, and modules without the module system, keep their full transitive files.",
+    ),
     "labels": attrs.list(attrs.string(), default = []),
     "lean_flags": attrs.list(attrs.arg(), default = [], doc = "Extra flags for `lean`, for example `-DmaxHeartbeats=0`."),
     "lean_toolchain": attrs.toolchain_dep(

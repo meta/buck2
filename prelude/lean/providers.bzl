@@ -27,6 +27,21 @@ LeanModule = record(
     # The same C compiled with the `c_export_flags` of the toolchain, which
     # export every symbol of the module. `None` when the toolchain has none.
     export_object = field(Artifact | None),
+    # Whether the module uses the module system (`module` header).
+    is_module = field(bool, False),
+    # The module's own files, by level: `olean` is the exported `.olean`;
+    # `olean_server`, `olean_private`, `ir_sig` and `ir` are set only for a
+    # module of the module system.
+    olean = field(Artifact | None, None),
+    olean_server = field(Artifact | None, None),
+    olean_private = field(Artifact | None, None),
+    ir_sig = field(Artifact | None, None),
+    ir = field(Artifact | None, None),
+    # The direct imports of the module, as `(module, import_all, is_exported,
+    # is_meta)` tuples, in header order.
+    imports = field(list[(str, bool, bool, bool)], []),
+    # Whether the library of the module has `import_cutoff`.
+    import_cutoff = field(bool, False),
 )
 
 # The value of the `LeanLibraryInfo.modules` dynamic value.

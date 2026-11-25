@@ -166,12 +166,12 @@ impl StarFun {
                     "methods cannot have a `ty_custom_function` attribute",
                 ));
             }
+            let speculative_exec_safe = self.speculative_exec_safe;
             Ok(syn::parse_quote! {
-                #[allow(clippy::redundant_closure)]
                 globals_builder.set_method(
                     #name_str,
-                    #components,
-                    |__heap| #param_spec,
+                    #speculative_exec_safe,
+                    || #components,
                     __starlark_invoke_outer,
                 );
             })
@@ -201,6 +201,9 @@ pub(crate) fn render_fun(x: StarFun) -> syn::Result<syn::Stmt> {
     let (binding_params, prepare, binding_args) = x.binding_params_arg()?;
 
     let builder_set = x.builder_set()?;
+    let is_method = x.is_method();
+    let binds_through_signature = matches!(x.source, StarFunSource::Signature { .. });
+    let method_signature = render_signature(&x)?;
 
     let StarFun {
         attrs,
@@ -257,15 +260,46 @@ pub(crate) fn render_fun(x: StarFun) -> syn::Result<syn::Stmt> {
         }
     };
 
+    // A function is handed its signature, which is stored with it. A method's is a static
+    // that only the methods that bind through one have.
+    let (signature_param, signature_static, signature_local): (
+        Option<syn::FnArg>,
+        Option<syn::ItemStatic>,
+        Option<syn::Stmt>,
+    ) = if !is_method {
+        (
+            Some(syn::parse_quote! {
+                signature: &starlark::eval::ParametersSpec<starlark::values::Value<'v>>
+            }),
+            None,
+            None,
+        )
+    } else if binds_through_signature {
+        (
+            None,
+            Some(syn::parse_quote! {
+                static __STARLARK_SIGNATURE: starlark::__derive_refs::sig::NativeSignature =
+                    starlark::__derive_refs::sig::NativeSignature::new(|| #method_signature);
+            }),
+            Some(syn::parse_quote! {
+                let signature = __STARLARK_SIGNATURE.get();
+            }),
+        )
+    } else {
+        (None, None, None)
+    };
+    let signature_param = signature_param.into_iter();
+
     let impl_invoke_outer: syn::ItemFn = syn::parse_quote! {
         #[allow(non_snake_case)] // Starlark doesn't have this convention
         fn __starlark_invoke_outer<'v>(
             eval: &mut starlark::eval::Evaluator<'v, '_, '_>,
             #(#this_outer_param,)*
-            signature: &starlark::eval::ParametersSpec<starlark::values::Value<'v>>,
+            #(#signature_param,)*
             parameters: &starlark::eval::Arguments<'v, '_>,
         ) -> starlark::Result<starlark::values::Value<'v>> {
             #this_prepare
+            #signature_local
             #prepare
             match __starlark_invoke_impl(#( #invoke_args, )*) {
                 Ok(v) => Ok(eval.heap().alloc(v).to_value()),
@@ -278,6 +312,7 @@ pub(crate) fn render_fun(x: StarFun) -> syn::Result<syn::Stmt> {
         {
             #item_invoke_impl
             #item_return_type_repr
+            #signature_static
             #impl_invoke_outer
             #builder_set
         }

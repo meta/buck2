@@ -26,10 +26,8 @@ use crate::collections::symbol::map::SymbolMap;
 use crate::collections::symbol::symbol::Symbol;
 use crate::docs::DocType;
 use crate::environment::common_documentation;
-use crate::eval::ParametersSpec;
 use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
-use crate::values::FrozenHeap;
 use crate::values::FrozenValueTyped;
 use crate::values::Heap;
 use crate::values::OwnedFrozen;
@@ -37,7 +35,6 @@ use crate::values::OwnedFrozenHeap;
 use crate::values::OwnedFrozenRef;
 use crate::values::Value;
 use crate::values::function::NativeAttribute;
-use crate::values::function::NativeMeth;
 use crate::values::function::NativeMethFn;
 use crate::values::function::NativeMethod;
 use crate::values::layout::heap::name::FrozenHeapName;
@@ -102,8 +99,8 @@ impl Methods {
     /// of a method, this is the `TyCallable`
     pub(crate) fn get_ty(&'static self, name: &str) -> Option<Ty> {
         match self.members.get_str(name)? {
-            UnboundValue::Attr(attr) => Some(attr.typ.dupe()),
-            UnboundValue::Method(method) => Some(method.ty.dupe()),
+            UnboundValue::Attr(attr) => Some(attr.ty()),
+            UnboundValue::Method(method) => Some(method.ty().dupe()),
         }
     }
 
@@ -209,31 +206,24 @@ impl MethodsBuilder {
         &'v mut self,
         name: &str,
         value: V,
-        docstring: Option<String>,
+        docstring: Option<&'static str>,
     ) {
-        let typ =
-            <<V as AllocFrozenValue<'static>>::Type as StarlarkTypeExpr<'static>>::starlark_type_repr();
-        self.set_attribute_with(name, typ, docstring, |heap| heap.alloc(value).to_value())
-    }
-
-    fn set_attribute_with(
-        &mut self,
-        name: &str,
-        typ: Ty,
-        docstring: Option<String>,
-        alloc: impl for<'fv> FnOnce(FrozenHeap<'fv>) -> Value<'fv>,
-    ) {
-        // We want to build an attribute, that ignores its self argument, and does no subsequent allocation.
+        fn typ<V: for<'fv> AllocFrozenValue<'fv>>() -> Ty {
+            <<V as AllocFrozenValue<'static>>::Type as StarlarkTypeExpr<'static>>::starlark_type_repr()
+        }
+        // An attribute that ignores its `this` and allocates nothing.
         let attr = self.heap.with(|heap| {
-            let value = alloc(heap);
-            let attr = heap.alloc_simple_typed(NativeAttribute {
-                speculative_exec_safe: true,
+            // SAFETY: Allocated in `self.heap`, which the attribute lives in as well.
+            let value =
+                unsafe { OwnedFrozen::<Value<'static>>::erase_brand(heap.alloc(value).to_value()) };
+            let attr = heap.alloc_simple_typed(NativeAttribute::new(
+                true,
                 docstring,
-                typ,
-                data: Some(value),
+                typ::<V>,
+                Some(value),
                 // SAFETY: Set to `Some` immediately above
-                callable: |value, _, _| Ok(unsafe { value.unwrap_unchecked() }),
-            });
+                |value, _, _| Ok(unsafe { value.unwrap_unchecked() }),
+            ));
             let attr = FrozenValueTyped::from_typed(attr).expect("allocated in a frozen heap");
             // SAFETY: Allocated in `self.heap` just above.
             unsafe { erase_member(UnboundValue::Attr(attr)) }
@@ -247,19 +237,19 @@ impl MethodsBuilder {
         &mut self,
         name: &str,
         speculative_exec_safe: bool,
-        docstring: Option<String>,
-        typ: Ty,
+        docstring: Option<&'static str>,
+        typ: fn() -> Ty,
         // The first argument is always `None`
         f: for<'v> fn(Option<Value<'v>>, Value<'v>, Heap<'v>) -> crate::Result<Value<'v>>,
     ) {
         let attr = self.heap.with(|heap| {
-            let attr = heap.alloc_simple_typed(NativeAttribute {
+            let attr = heap.alloc_simple_typed(NativeAttribute::new(
                 speculative_exec_safe,
                 docstring,
                 typ,
-                data: None,
-                callable: f,
-            });
+                None,
+                f,
+            ));
             let attr = FrozenValueTyped::from_typed(attr).expect("allocated in a frozen heap");
             // SAFETY: Allocated in `self.heap` just above.
             unsafe { erase_member(UnboundValue::Attr(attr)) }
@@ -269,26 +259,23 @@ impl MethodsBuilder {
 
     /// Set a method. Only used by `starlark_module` macro
     ///
-    /// `sig` builds the signature at the brand of this builder's heap. It is a function pointer
-    /// and not a closure type, so that this is one function and not one per native function.
+    /// `components` says what the method's parameters and result are. It is called whenever
+    /// the method's type or documentation is asked for.
     #[doc(hidden)]
     pub fn set_method(
         &mut self,
-        name: &str,
-        components: NativeCallableComponents,
-        sig: for<'fh> fn(FrozenHeap<'fh>) -> ParametersSpec<Value<'fh>>,
+        name: &'static str,
+        speculative_exec_safe: bool,
+        components: fn() -> NativeCallableComponents,
         f: NativeMethFn,
     ) {
-        let ty = components.make_type(None);
-
         let method = self.heap.with(|heap| {
-            let method = heap.alloc_simple_typed(NativeMethod {
-                function: NativeMeth(f, sig(heap)),
-                name: name.to_owned(),
-                speculative_exec_safe: components.speculative_exec_safe,
-                docs: components.into_docs(None),
-                ty,
-            });
+            let method = heap.alloc_simple_typed(NativeMethod::new(
+                name,
+                speculative_exec_safe,
+                components,
+                f,
+            ));
             let method = FrozenValueTyped::from_typed(method).expect("allocated in a frozen heap");
             // SAFETY: Allocated in `self.heap` just above.
             unsafe { erase_member(UnboundValue::Method(method)) }

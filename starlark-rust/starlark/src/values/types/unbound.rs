@@ -41,9 +41,9 @@ use crate::values::function::NativeMethod;
 #[derive(Clone, Copy, Dupe, ProvidesStaticType, crate::StarlarkPagable)]
 pub(crate) enum UnboundValue<'v> {
     /// A method with `this` unbound.
-    Method(FrozenValueTyped<'v, NativeMethod<'v>>),
+    Method(FrozenValueTyped<'v, NativeMethod>),
     /// An attribute with `this` unbound.
-    Attr(FrozenValueTyped<'v, NativeAttribute<'v>>),
+    Attr(FrozenValueTyped<'v, NativeAttribute>),
 }
 
 impl<'v> Debug for UnboundValue<'v> {
@@ -92,7 +92,7 @@ impl<'v> UnboundValue<'v> {
     ) -> crate::Result<Value<'v>> {
         match self {
             UnboundValue::Method(m) => eval.with_call_stack(m.to_value(), Some(span), |eval| {
-                m.function.invoke(eval, this, args)
+                (m.function)(eval, this, args)
             }),
             UnboundValue::Attr(a) => {
                 let value = a.invoke(this, eval.heap())?;

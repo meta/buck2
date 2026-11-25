@@ -32,7 +32,7 @@ use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueTyped;
 use crate::values::dict::value::FrozenDict;
-use crate::values::function::NativeMeth;
+use crate::values::function::NativeMethFn;
 use crate::values::function::NativeMethod;
 use crate::values::list::value::FrozenList;
 use crate::values::set::value::FrozenSet;
@@ -42,22 +42,25 @@ use crate::values::string::StarlarkStr;
 ///
 /// The method comes from a `&'static Methods`, so it is immortal and is brought to the brand of
 /// the heap in use through [`HeapEdge::immortal`].
-#[derive(Clone, Copy, Dupe)]
+#[derive(Clone, Copy)]
 pub(crate) struct KnownMethod {
     /// An object where the method is defined.
     pub(crate) type_methods: &'static Methods,
     /// The method.
-    method: ValueTyped<'static, NativeMethod<'static>>,
+    method: ValueTyped<'static, NativeMethod>,
     /// Copied here from `method` to faster invocation (one fewer deref).
-    imp: &'static NativeMeth<'static>,
+    imp: NativeMethFn,
 }
+
+// Not derived: the derive does not see through the function pointer's lifetimes.
+impl Dupe for KnownMethod {}
 
 // `type_methods` and `imp` are `'static` pointers tied to the in-process
 // known-methods table. Round-trip the method name only and re-resolve via
 // `get_known_method` on deserialize.
 impl StarlarkSerialize for KnownMethod {
     fn starlark_serialize(&self, ctx: &mut dyn StarlarkSerializeContext) -> crate::Result<()> {
-        self.method.as_ref().name.starlark_serialize(ctx)
+        self.method.as_ref().name.to_owned().starlark_serialize(ctx)
     }
 }
 
@@ -87,8 +90,7 @@ impl KnownMethod {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        let imp: &NativeMeth<'v> = HeapEdge::immortal().rebrand(self.imp);
-        imp.invoke(eval, this, args)
+        (self.imp)(eval, this, args)
     }
 }
 
@@ -114,7 +116,7 @@ impl KnownMethods {
                     methods.entry(name).or_insert(KnownMethod {
                         type_methods,
                         method,
-                        imp: &method.as_ref().function,
+                        imp: method.as_ref().function,
                     });
                     has_at_least_one_method = true;
                 }

@@ -15,9 +15,41 @@
  * limitations under the License.
  */
 
+use std::sync::OnceLock;
+
 use crate::eval::ParametersSpec;
 use crate::eval::ParametersSpecParam;
+use crate::values::HeapEdge;
 use crate::values::Value;
+
+/// The signature of a native method: a `static` next to the method's glue, built the first
+/// time a call needs it. A method whose parameters are all positional-only binds without one
+/// and has none.
+///
+/// The defaults in it are values that exist without a heap, which is what lets it be a
+/// `static` and be handed out at any heap's brand.
+pub struct NativeSignature {
+    spec: OnceLock<ParametersSpec<Value<'static>>>,
+    build: fn() -> ParametersSpec<Value<'static>>,
+}
+
+impl NativeSignature {
+    pub const fn new(build: fn() -> ParametersSpec<Value<'static>>) -> NativeSignature {
+        NativeSignature {
+            spec: OnceLock::new(),
+            build,
+        }
+    }
+
+    #[inline]
+    pub fn get<'v>(&'static self) -> &'v ParametersSpec<Value<'v>> {
+        let spec = match self.spec.get() {
+            Some(spec) => spec,
+            None => self.spec.get_or_init(self.build),
+        };
+        HeapEdge::immortal().rebrand_ref(spec)
+    }
+}
 
 pub enum NativeSigArg<'v> {
     Required(&'static str),

@@ -191,7 +191,7 @@ fn render_attr(x: StarAttr, generics: &StarGenerics) -> syn::Stmt {
     let name_str = ident_string(&name);
     let name_inner = syn::Ident::new(&format!("{name_str}__inner"), name.span());
     let docstring: syn::Expr = match docstring {
-        Some(d) => render_some(syn::parse_quote! { #d.to_owned() }),
+        Some(d) => render_some(syn::parse_quote! { #d }),
         None => render_none(),
     };
 
@@ -251,7 +251,7 @@ fn render_attr(x: StarAttr, generics: &StarGenerics) -> syn::Stmt {
                 #name_str,
                 #speculative_exec_safe,
                 #docstring,
-                starlark::values::type_expr::type_repr_from_attr_impl(#name_inner #turbofish),
+                || starlark::values::type_expr::type_repr_from_attr_impl(#name_inner #turbofish),
                 #name #turbofish
             );
         }

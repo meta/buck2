@@ -51,6 +51,9 @@ struct StarlarkValueAttrs {
     /// `StarlarkTypeExprStable` and `UnionPayload` impls. A container does: its Rust type is
     /// generic over the item type and is the `StarlarkType` at one instantiation only.
     type_expr_by_hand: bool,
+    /// `methods = path`: the `#[starlark_module]` function whose members are the type's
+    /// methods and attributes.
+    methods: Option<syn::Path>,
 }
 
 /// How the representation is allocated, which decides the `AllocRepresentation` and
@@ -130,6 +133,7 @@ impl syn::parse::Parse for StarlarkValueAttrs {
             vtable: VtableMode::Default,
             alloc: AllocMode::Default,
             type_expr_by_hand: false,
+            methods: None,
         };
 
         loop {
@@ -151,6 +155,11 @@ impl syn::parse::Parse for StarlarkValueAttrs {
                 attrs.set_alloc_mode(&name, AllocMode::ComplexNoFreeze)?;
             } else if name == "frozen_vtable" {
                 attrs.set_vtable_mode(&name, VtableMode::Frozen)?;
+            } else if name == "methods" {
+                input.parse::<syn::Token![=]>()?;
+                if attrs.methods.replace(input.parse::<syn::Path>()?).is_some() {
+                    return Err(syn::Error::new_spanned(name, "`methods` is given twice"));
+                }
             } else if name == "alloc" {
                 input.parse::<syn::Token![=]>()?;
                 let kind = input.parse::<syn::Ident>()?;
@@ -179,7 +188,7 @@ impl syn::parse::Parse for StarlarkValueAttrs {
             } else {
                 return Err(syn::Error::new_spanned(
                     name,
-                    "unknown attribute, allowed attributes are `skip_vtable`, `no_freeze`, `frozen_vtable`, `alloc = ...`, `type_expr = by_hand`",
+                    "unknown attribute, allowed attributes are `skip_vtable`, `no_freeze`, `frozen_vtable`, `alloc = ...`, `methods = ...`, `type_expr = by_hand`",
                 ));
             }
         }
@@ -429,6 +438,40 @@ impl ImplStarlarkValue {
             {
             }
         })
+    }
+
+    /// `methods = path` names the `#[starlark_module]` function that declares the type's
+    /// members. That macro declares the table of them as the static `<PATH>_MEMBERS`, which
+    /// is the type's `MEMBERS`, and `<PATH>_STATICS`, which fills what `get_methods` returns
+    /// from the same table.
+    fn methods(&self) -> Vec<syn::ImplItem> {
+        let Some(module) = &self.attrs.methods else {
+            return Vec::new();
+        };
+        let sibling = |suffix: &str| {
+            let mut path = module.clone();
+            let last = path.segments.last_mut().expect("a path has a segment");
+            last.ident = quote::format_ident!(
+                "{}_{}",
+                last.ident.to_string().to_uppercase(),
+                suffix,
+                span = last.ident.span()
+            );
+            path
+        };
+        let members = sibling("MEMBERS");
+        let statics = sibling("STATICS");
+        vec![
+            syn::parse_quote! {
+                const MEMBERS: std::option::Option<&'static starlark::environment::MemberTable> =
+                    std::option::Option::Some(&#members);
+            },
+            syn::parse_quote! {
+                fn get_methods() -> std::option::Option<&'static starlark::environment::Methods> {
+                    std::option::Option::Some(#statics.methods())
+                }
+            },
+        ]
     }
 
     fn get_type_value_static(&self) -> syn::Result<syn::ImplItem> {
@@ -986,6 +1029,7 @@ impl ImplStarlarkValue {
             0..0,
             [self.const_type()?, self.get_type_value_static()?]
                 .into_iter()
+                .chain(self.methods())
                 .chain(self.get_type_starlark_repr()?)
                 .chain(self.attr_ty()?)
                 .chain(self.bit_or()?)

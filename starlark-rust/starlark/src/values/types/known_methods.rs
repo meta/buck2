@@ -15,11 +15,13 @@
  * limitations under the License.
  */
 
+use std::ptr;
 use std::sync::LazyLock;
 
 use dupe::Dupe;
 use hashbrown::HashMap;
 
+use crate::environment::MemberTable;
 use crate::environment::Methods;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
@@ -28,12 +30,14 @@ use crate::pagable::StarlarkDeserializeContext;
 use crate::pagable::StarlarkSerialize;
 use crate::pagable::StarlarkSerializeContext;
 use crate::values::HeapEdge;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueTyped;
 use crate::values::dict::value::FrozenDict;
 use crate::values::function::NativeMethFn;
 use crate::values::function::NativeMethod;
+use crate::values::layout::vtable::AValueVTable;
 use crate::values::list::value::FrozenList;
 use crate::values::set::value::FrozenSet;
 use crate::values::string::StarlarkStr;
@@ -44,8 +48,11 @@ use crate::values::string::StarlarkStr;
 /// the heap in use through [`HeapEdge::immortal`].
 #[derive(Clone, Copy)]
 pub(crate) struct KnownMethod {
-    /// An object where the method is defined.
-    pub(crate) type_methods: &'static Methods,
+    /// The table of the type the method is defined by, as the type's vtable names it: the
+    /// address of its static table, or else, with zero here, the table it builds at run
+    /// time. A receiver whose vtable names the same table has this method under this name.
+    type_members: usize,
+    type_methods: &'static Methods,
     /// The method.
     method: ValueTyped<'static, NativeMethod>,
     /// Copied here from `method` to faster invocation (one fewer deref).
@@ -78,6 +85,22 @@ impl<'fv> StarlarkDeserialize<'fv> for KnownMethod {
 }
 
 impl KnownMethod {
+    /// Whether a value with this vtable has this method under its name: whether the vtable
+    /// names the table the method was taken from. That is a comparison of pointers, where a
+    /// lookup by name would probe the table.
+    #[inline(always)]
+    pub(crate) fn is_method_of(&self, vtable: &'static AValueVTable) -> bool {
+        match vtable.members() {
+            Some(members) => ptr::from_ref(members).addr() == self.type_members,
+            // Two types with the same run-time table have the same members, whichever of
+            // them the method was taken from.
+            None => match vtable.methods_unconditionally() {
+                Some(methods) => ptr::eq(methods, self.type_methods),
+                None => false,
+            },
+        }
+    }
+
     #[inline]
     pub(crate) fn to_value<'v>(&self) -> Value<'v> {
         HeapEdge::immortal().rebrand(self.method).to_value()
@@ -105,6 +128,7 @@ impl KnownMethods {
 
         fn add_methods(
             methods: &mut HashMap<&'static str, KnownMethod>,
+            type_members: Option<&'static MemberTable>,
             type_methods: Option<&'static Methods>,
         ) {
             let type_methods = type_methods.unwrap();
@@ -114,6 +138,7 @@ impl KnownMethods {
                 if let Some(method) = ValueTyped::<NativeMethod>::new(member) {
                     // First wins, e. g. `list.clear` is hit, and `dict.clear` is miss.
                     methods.entry(name).or_insert(KnownMethod {
+                        type_members: type_members.map_or(0, |table| ptr::from_ref(table).addr()),
                         type_methods,
                         method,
                         imp: method.as_ref().function,
@@ -125,11 +150,19 @@ impl KnownMethods {
             assert!(has_at_least_one_method);
         }
 
+        fn add<T: StarlarkValue<'static>>(methods: &mut HashMap<&'static str, KnownMethod>) {
+            add_methods(
+                methods,
+                <T::Type as StarlarkType<'static>>::MEMBERS,
+                T::get_methods(),
+            );
+        }
+
         // We don't need to add all the methods, only the most common ones. This is fine.
-        add_methods(&mut methods, FrozenList::get_methods());
-        add_methods(&mut methods, FrozenDict::get_methods());
-        add_methods(&mut methods, FrozenSet::get_methods());
-        add_methods(&mut methods, StarlarkStr::get_methods());
+        add::<FrozenList>(&mut methods);
+        add::<FrozenDict>(&mut methods);
+        add::<FrozenSet>(&mut methods);
+        add::<StarlarkStr>(&mut methods);
 
         KnownMethods { methods }
     }

@@ -19,7 +19,6 @@
 
 use std::cmp::Ordering;
 use std::marker;
-use std::ptr;
 
 use starlark_derive::StarlarkPagable;
 use starlark_syntax::eval_exception::EvalException;
@@ -1611,17 +1610,12 @@ fn call_maybe_known_method_common<'v>(
     span: &'v FrameSpan<'v>,
     target: BcSlotOut,
 ) -> crate::Result<()> {
-    if let Some(methods) = this.vtable().methods() {
-        // Instead of method lookup by name, we compare `Methods` pointers.
-        // If pointers are equal, getattr would return the same method
-        // we already have.
-        if ptr::eq(methods, known_method.type_methods) {
-            let r = eval.with_call_stack(known_method.to_value(), Some(span), |eval| {
-                known_method.invoke_method(this, arguments, eval)
-            })?;
-            frame.set_bc_slot(target, r);
-            return Ok(());
-        }
+    if known_method.is_method_of(this.vtable()) {
+        let r = eval.with_call_stack(known_method.to_value(), Some(span), |eval| {
+            known_method.invoke_method(this, arguments, eval)
+        })?;
+        frame.set_bc_slot(target, r);
+        return Ok(());
     }
 
     call_method_common(eval, frame, this, symbol, arguments, span, target)

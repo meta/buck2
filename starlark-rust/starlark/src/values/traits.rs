@@ -348,6 +348,14 @@ pub trait StarlarkType<'v>:
         None
     }
 
+    /// The type's methods and attributes as a `static` table: what
+    /// `#[starlark_value(methods = ..)]` sets, from the module it names. The vtable holds it,
+    /// and a lookup of `x.name` reads it from there, without a call. A type that still
+    /// writes [`get_methods`](Self::get_methods) by hand has `None` here and is looked up
+    /// through that.
+    #[doc(hidden)]
+    const MEMBERS: Option<&'static crate::environment::MemberTable> = None;
+
     /// Return the documentation for this value.
     ///
     /// This should be the doc-item that is expected to be generated when this value appears as a

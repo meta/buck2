@@ -17,15 +17,23 @@
 
 //! The methods and attributes of a type as static data.
 
+use starlark_map::Hashed;
 use starlark_map::StarlarkHashValue;
 
 use crate::__derive_refs::components::NativeCallableComponents;
+use crate::collections::symbol::symbol::Symbol;
+use crate::collections::symbol::symbol::name_head;
+use crate::eval::Arguments;
+use crate::eval::Evaluator;
+use crate::eval::runtime::frame_span::FrameSpan;
 use crate::pagable::StaticValueRegistered;
 use crate::typing::Ty;
 use crate::values::AllocStaticSimple;
 use crate::values::FrozenValueTyped;
 use crate::values::Heap;
+use crate::values::HeapEdge;
 use crate::values::Value;
+use crate::values::function::BoundMethod;
 use crate::values::function::NativeAttribute;
 use crate::values::function::NativeMethFn;
 use crate::values::function::NativeMethod;
@@ -67,6 +75,12 @@ impl MethodStatic {
     pub fn value(&'static self) -> Value<'static> {
         self.0.unpack().to_value()
     }
+
+    /// The method as a value at the brand of the heap in use.
+    #[inline(always)]
+    fn at<'v>(&'static self) -> Value<'v> {
+        HeapEdge::immortal().rebrand(self.value())
+    }
 }
 
 /// A native attribute as a `static`. `#[starlark_module]` declares one for each attribute.
@@ -99,14 +113,26 @@ impl AttributeStatic {
 enum MemberKind {
     /// A slot of a table that holds no member.
     Empty,
-    Method(&'static MethodStatic),
-    Attribute(&'static AttributeStatic),
+    Method {
+        value: &'static MethodStatic,
+        /// The function is here as well as in the value: a call does not read the value.
+        function: NativeMethFn,
+    },
+    Attribute {
+        value: &'static AttributeStatic,
+    },
 }
 
 /// A method or an attribute of a type: one slot of a [`MemberTable`].
+///
+/// A slot is one cache line, and it holds what a lookup compares and what a call needs, so
+/// that finding a member and calling it reads nothing else of the table.
 #[derive(Clone, Copy)]
+#[repr(C, align(64))]
 pub struct Member {
     name: &'static str,
+    /// The first sixteen bytes of `name`: with the length, the whole of a name that short.
+    head: [u64; 2],
     kind: MemberKind,
     /// The position among the members as they were declared.
     index: u32,
@@ -115,16 +141,22 @@ pub struct Member {
 impl Member {
     const EMPTY: Member = Member {
         name: "",
+        head: [0; 2],
         kind: MemberKind::Empty,
         index: 0,
     };
 
-    /// A method.
+    /// A method. `function` is the function `value` was declared with.
     #[doc(hidden)]
-    pub const fn method(name: &'static str, value: &'static MethodStatic) -> Member {
+    pub const fn method(
+        name: &'static str,
+        value: &'static MethodStatic,
+        function: NativeMethFn,
+    ) -> Member {
         Member {
             name,
-            kind: MemberKind::Method(value),
+            head: name_head(name),
+            kind: MemberKind::Method { value, function },
             index: 0,
         }
     }
@@ -134,7 +166,8 @@ impl Member {
     pub const fn attribute(name: &'static str, value: &'static AttributeStatic) -> Member {
         Member {
             name,
-            kind: MemberKind::Attribute(value),
+            head: name_head(name),
+            kind: MemberKind::Attribute { value },
             index: 0,
         }
     }
@@ -148,12 +181,50 @@ impl Member {
     pub(crate) fn unbound(&self) -> UnboundValue<'static> {
         match self.kind {
             MemberKind::Empty => unreachable!("an empty slot is not handed out"),
-            MemberKind::Method(value) => UnboundValue::Method(
+            MemberKind::Method { value, .. } => UnboundValue::Method(
                 FrozenValueTyped::from_typed(value.0.unpack()).expect("a static is frozen"),
             ),
-            MemberKind::Attribute(value) => UnboundValue::Attr(
+            MemberKind::Attribute { value } => UnboundValue::Attr(
                 FrozenValueTyped::from_typed(value.0.unpack()).expect("a static is frozen"),
             ),
+        }
+    }
+
+    /// Calls the member as a method of `this`. An attribute is read and its value called.
+    #[inline(always)]
+    pub(crate) fn invoke_method<'v>(
+        &'static self,
+        this: Value<'v>,
+        span: &'v FrameSpan<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> crate::Result<Value<'v>> {
+        match self.kind {
+            MemberKind::Method { value, function } => {
+                eval.with_call_stack(value.at(), Some(span), |eval| function(eval, this, args))
+            }
+            MemberKind::Attribute { value } => {
+                let value = value.0.as_payload().invoke(this, eval.heap())?;
+                value.invoke_with_loc(Some(span), args, eval)
+            }
+            MemberKind::Empty => unreachable!("an empty slot is not handed out"),
+        }
+    }
+
+    /// What `this.name` is: the method bound to `this`, or the attribute's value.
+    #[inline(always)]
+    pub(crate) fn bind<'v>(
+        &'static self,
+        this: Value<'v>,
+        heap: Heap<'v>,
+    ) -> crate::Result<Value<'v>> {
+        match self.kind {
+            MemberKind::Method { value, .. } => {
+                let method = FrozenValueTyped::new(value.at()).expect("a static method");
+                Ok(heap.alloc_complex(BoundMethod::new(this, method)))
+            }
+            MemberKind::Attribute { value } => value.0.as_payload().invoke(this, heap),
+            MemberKind::Empty => unreachable!("an empty slot is not handed out"),
         }
     }
 }
@@ -161,7 +232,10 @@ impl Member {
 /// The methods and attributes of a type, as a `static`.
 ///
 /// It is a perfect hash table: the multiplier is chosen, when the table is built at compile
-/// time, so that no two of its names share a slot.
+/// time, so that no two of its names share a slot. A lookup therefore reads one slot. A hit
+/// is confirmed by the whole name, because a name that is not in the table can have the hash
+/// of one that is; a name of up to sixteen bytes is compared as two words held in the slot
+/// and in the [`Symbol`], with no pointer followed.
 #[repr(C)]
 pub struct MemberTable<S: ?Sized = [Member]> {
     multiplier: u32,
@@ -240,6 +314,39 @@ impl<const S: usize> MemberTable<[Member; S]> {
 }
 
 impl MemberTable {
+    #[inline(always)]
+    fn slot(&'static self, hash: StarlarkHashValue) -> &'static Member {
+        let slot = (hash.get().wrapping_mul(self.multiplier) >> self.shift) as usize;
+        // SAFETY: `shift` leaves `log2(slots.len())` bits.
+        unsafe { self.slots.get_unchecked(slot) }
+    }
+
+    /// The member called `name`.
+    #[inline(always)]
+    pub(crate) fn get(&'static self, name: &Symbol) -> Option<&'static Member> {
+        let member = self.slot(name.small_hash());
+        if member.name.len() == name.len()
+            && member.head == name.head()
+            && (name.len() <= 16 || member.name == name.as_str())
+            && !matches!(member.kind, MemberKind::Empty)
+        {
+            Some(member)
+        } else {
+            None
+        }
+    }
+
+    /// The member called `name`, for a name that is not a [`Symbol`].
+    #[inline]
+    pub(crate) fn get_str(&'static self, name: Hashed<&str>) -> Option<&'static Member> {
+        let member = self.slot(name.hash());
+        if member.name == *name.key() && !matches!(member.kind, MemberKind::Empty) {
+            Some(member)
+        } else {
+            None
+        }
+    }
+
     /// The members, in the order they were declared.
     pub fn members(&'static self) -> Vec<&'static Member> {
         let mut members: Vec<&'static Member> = self

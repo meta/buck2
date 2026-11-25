@@ -436,6 +436,14 @@ impl Gen {
         }
         trait_item.items.extend(extra_items);
 
+        // The type's table of methods and attributes. It is data, not an entry to call: a
+        // lookup reads the pointer and probes the table.
+        ty_fields.push(Self::parse_named_field(quote! {
+            pub(crate) members: Option<&'static crate::environment::MemberTable>
+        })?);
+        ty_inits.push(syn::parse_quote! { members: T::MEMBERS });
+        ty_uninits.push(syn::parse_quote! { members: None });
+
         // The `StarlarkValue` methods with vtable entries all the same; `StarlarkValue` says why
         // each is not a `StarlarkType` method.
         let representation_methods: [TraitItemFn; 2] = [

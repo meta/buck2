@@ -185,7 +185,11 @@ impl StarFun {
                         || __STARLARK_MEMBER.value(),
                     )
                 }
-                starlark::environment::Member::method(#name_str, &__STARLARK_MEMBER)
+                starlark::environment::Member::method(
+                    #name_str,
+                    &__STARLARK_MEMBER,
+                    __starlark_invoke_outer,
+                )
             })
         } else {
             let as_type = self.as_type_expr();
@@ -247,6 +251,10 @@ pub(crate) fn render_fun(x: StarFun, module_name: &str) -> syn::Result<syn::Expr
         // TODO(nga): copy lifetime parameter from declaration,
         //   so the warning would be precise.
         #[allow(clippy::extra_unused_lifetimes)]
+        // The glue below is its one caller. Without the hint, whether a body ends up in its
+        // glue depends on what else the crate holds: half of `str`'s methods stopped being
+        // inlined when the type began to name its table, 36 instructions per call.
+        #[inline]
         #( #attrs )*
         fn __starlark_invoke_impl<'v>(
             #( #invoke_params, )*

@@ -37,6 +37,7 @@ use thiserror::Error;
 use crate as starlark;
 use crate::codemap::Spanned;
 use crate::collections::symbol::symbol::Symbol;
+use crate::environment::Member;
 use crate::environment::slots::ModuleSlotId;
 use crate::errors::did_you_mean::did_you_mean;
 use crate::eval::Arguments;
@@ -65,6 +66,7 @@ use crate::eval::runtime::slots::LocalCapturedSlotId;
 use crate::eval::runtime::slots::LocalSlotId;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::HeapEdge;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
@@ -929,16 +931,18 @@ impl<'f> ExprCompiled<'f> {
     ) -> Option<Value<'f>> {
         // We assume `getattr` has no side effects.
         let v = get_attr_hashed_raw(ctx.edge().rebrand(left), attr, ctx.heap()).ok()?;
-        match v {
-            MemberOrValue::Member(m) => match m.at() {
-                UnboundValue::Method(m) => Some(
-                    ctx.frozen_heap()
-                        .alloc(BoundMethod::new(left, m))
-                        .to_value(),
-                ),
-                UnboundValue::Attr(..) => None,
-            },
-            MemberOrValue::Value(v) => ctx.demote(v),
+        let member = match v {
+            MemberOrValue::Static(m) => m.unbound(),
+            MemberOrValue::Member(m) => *m,
+            MemberOrValue::Value(v) => return ctx.demote(v),
+        };
+        match HeapEdge::immortal().rebrand(member) {
+            UnboundValue::Method(m) => Some(
+                ctx.frozen_heap()
+                    .alloc(BoundMethod::new(left, m))
+                    .to_value(),
+            ),
+            UnboundValue::Attr(..) => None,
         }
     }
 
@@ -1200,12 +1204,15 @@ fn get_attr_no_attr_error<'v>(x: Value<'v>, attribute: &Symbol) -> crate::Error 
 }
 
 pub(crate) enum MemberOrValue<'v> {
+    /// A member from the static table of a type that names one.
+    Static(&'static Member),
+    /// A member of a type that builds its table at run time.
     Member(&'static UnboundValue<'static>),
     Value(Value<'v>),
 }
 
 impl<'v> MemberOrValue<'v> {
-    #[inline]
+    #[inline(always)]
     pub(crate) fn invoke(
         &self,
         this: Value<'v>,
@@ -1214,6 +1221,7 @@ impl<'v> MemberOrValue<'v> {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
         match self {
+            MemberOrValue::Static(member) => member.invoke_method(this, span, args, eval),
             MemberOrValue::Member(member) => member.at().invoke_method(this, span, args, eval),
             MemberOrValue::Value(value) => value.invoke_with_loc(Some(span), args, eval),
         }
@@ -1227,7 +1235,11 @@ pub(crate) fn get_attr_hashed_raw<'v>(
     heap: Heap<'v>,
 ) -> crate::Result<MemberOrValue<'v>> {
     let aref = x.get_ref();
-    if let Some(methods) = aref.vtable().methods() {
+    if let Some(members) = aref.vtable().members() {
+        if let Some(member) = members.get(attribute) {
+            return Ok(MemberOrValue::Static(member));
+        }
+    } else if let Some(methods) = aref.vtable().methods() {
         if let Some(v) = methods.get_frozen_symbol(attribute) {
             return Ok(MemberOrValue::Member(v));
         }
@@ -1244,7 +1256,11 @@ pub(crate) fn get_attr_hashed_bind<'v>(
     heap: Heap<'v>,
 ) -> crate::Result<Value<'v>> {
     let aref = x.get_ref();
-    if let Some(methods) = aref.vtable().methods() {
+    if let Some(members) = aref.vtable().members() {
+        if let Some(member) = members.get(attribute) {
+            return member.bind(x, heap);
+        }
+    } else if let Some(methods) = aref.vtable().methods() {
         if let Some(v) = methods.get_frozen_symbol(attribute) {
             return v.at().bind(x, heap);
         }

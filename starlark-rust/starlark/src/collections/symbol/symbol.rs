@@ -47,6 +47,23 @@ pub(crate) struct Symbol {
     len: u32,
     payload: Box<[usize]>,
     small_hash: StarlarkHashValue,
+    /// The first sixteen bytes of the string, as [`name_head`] gives them. They are what a
+    /// methods table compares a name by, so that a lookup does not follow `payload`.
+    head: [u64; 2],
+}
+
+/// The first sixteen bytes of `name` as two little-endian words, zero padded. Together with
+/// its length this is the whole of a name of up to sixteen bytes.
+#[inline]
+pub(crate) const fn name_head(name: &str) -> [u64; 2] {
+    let bytes = name.as_bytes();
+    let mut head = [0u64; 2];
+    let mut i = 0;
+    while i < bytes.len() && i < 16 {
+        head[i / 8] |= (bytes[i] as u64) << (8 * (i % 8));
+        i += 1;
+    }
+    head
 }
 
 impl Debug for Symbol {
@@ -95,6 +112,7 @@ impl Symbol {
             len: len.try_into().unwrap(),
             payload: payload.into_boxed_slice(),
             small_hash,
+            head: name_head(x.key()),
         }
     }
 
@@ -122,6 +140,18 @@ impl Symbol {
 
     pub(crate) fn small_hash(&self) -> StarlarkHashValue {
         self.small_hash
+    }
+
+    /// The length of the string, in bytes.
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// The first sixteen bytes of the string: see [`name_head`].
+    #[inline]
+    pub(crate) fn head(&self) -> [u64; 2] {
+        self.head
     }
 }
 

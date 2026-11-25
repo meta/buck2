@@ -1055,7 +1055,13 @@ impl<'v> Value<'v> {
     /// Return the attribute with the given name.
     pub fn get_attr(self, attribute: &str, heap: Heap<'v>) -> crate::Result<Option<Value<'v>>> {
         let aref = self.get_ref();
-        if let Some(methods) = aref.vtable().methods() {
+        if let Some(members) = aref.vtable().members() {
+            let attribute = Hashed::new(attribute);
+            if let Some(member) = members.get_str(attribute) {
+                return Ok(Some(member.bind(self, heap)?));
+            }
+            Ok(aref.get_attr_hashed(attribute, heap))
+        } else if let Some(methods) = aref.vtable().methods() {
             let attribute = Hashed::new(attribute);
             if let Some(v) = methods.get_hashed(attribute) {
                 return Ok(Some(v.at().bind(self, heap)?));

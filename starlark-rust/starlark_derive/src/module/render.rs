@@ -212,7 +212,7 @@ fn render_methods(
             starlark::environment::MemberTable<[starlark::environment::Member; #slots]> =
             starlark::environment::MemberTable::new(#docstring, [ #( #members ),* ]);
 
-        starlark::methods_static!(#statics_name = {
+        starlark::methods_static!(#vis #statics_name = {
             fn build(builder: &mut starlark::environment::MethodsBuilder) {
                 builder.extend(&#table_name);
             }

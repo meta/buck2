@@ -41,7 +41,6 @@ use starlark_syntax::fast_string::StrIndices;
 
 use crate as starlark;
 use crate::collections::aligned_padded_str::AlignedPaddedStr;
-use crate::environment::Methods;
 use crate::private::Private;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
@@ -229,19 +228,13 @@ impl Display for StarlarkStr {
     }
 }
 
-starlark::methods_static!(STRING_METHODS = crate::values::types::string::methods::string_methods);
-
-#[starlark_value(type = STRING_TYPE)]
+#[starlark_value(type = STRING_TYPE, methods = crate::values::types::string::methods::string_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkStr {
     fn is_special(_: Private) -> bool
     where
         Self: Sized,
     {
         true
-    }
-
-    fn get_methods() -> Option<&'static Methods> {
-        Some(STRING_METHODS.methods())
     }
 
     fn collect_repr(this: &Self, buffer: &mut String) {

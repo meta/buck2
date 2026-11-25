@@ -161,8 +161,8 @@ impl<'v> DefaultInfo<'v> {
     pub fn empty(heap: Heap<'v>) -> Self {
         DefaultInfo {
             sub_targets: heap.alloc(AllocDict::empty()),
-            default_outputs: heap.alloc(AllocList::empty()).into(),
-            other_outputs: heap.alloc(AllocList::empty()).into(),
+            default_outputs: heap.alloc(AllocList::empty()),
+            other_outputs: heap.alloc(AllocList::empty()),
         }
     }
 
@@ -329,8 +329,8 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         // support both list and singular options for now until we migrate all the rules.
         let default_outputs = match (default_outputs.into_option(), default_output.into_option()) {
             (Some(list), None) => list,
-            (None, Some(default_output)) => heap.alloc(AllocList([default_output])).into(),
-            (None, None) => heap.alloc(AllocList::empty()).into(),
+            (None, Some(default_output)) => heap.alloc(AllocList([default_output])),
+            (None, None) => heap.alloc(AllocList::empty()),
             (Some(_), Some(_)) => {
                 return Err(
                     buck2_error::Error::from(DefaultOutputError::ConflictingArguments).into(),

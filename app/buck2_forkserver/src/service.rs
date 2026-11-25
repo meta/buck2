@@ -21,6 +21,8 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use buck2_common::convert::ProstDurationExt;
 use buck2_core::logging::LogConfigurationReloadHandle;
@@ -52,6 +54,7 @@ use buck2_resource_control::ActionFreezeEvent;
 use buck2_resource_control::ActionFreezeEventReceiver;
 use buck2_resource_control::path::CgroupPathBuf;
 use buck2_util::process::background_command;
+use dupe::Dupe;
 use futures::FutureExt;
 use futures::pin_mut;
 use futures::stream::Stream;
@@ -147,8 +150,37 @@ impl ValidatedCommand {
     }
 }
 
+/// What the forkserver logs when its connection to the daemon ends, so that a forkserver that
+/// exits under a running daemon says how far it got.
+#[derive(Default)]
+pub(crate) struct ForkserverStats {
+    /// Commands received over the connection.
+    pub(crate) commands: AtomicU64,
+    /// Commands whose request stream the daemon has not yet ended. A command the daemon is done
+    /// with ends its request stream, so at a clean daemon exit only persistent workers are open.
+    pub(crate) open_requests: AtomicU64,
+}
+
+/// Counts an open request stream for as long as it lives.
+struct OpenRequest(Arc<ForkserverStats>);
+
+impl OpenRequest {
+    fn new(stats: Arc<ForkserverStats>) -> Self {
+        stats.open_requests.fetch_add(1, Ordering::Relaxed);
+        Self(stats)
+    }
+}
+
+impl Drop for OpenRequest {
+    fn drop(&mut self) {
+        self.0.open_requests.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 pub(crate) struct UnixForkserverService {
     log_reload_handle: Arc<dyn LogConfigurationReloadHandle>,
+
+    stats: Arc<ForkserverStats>,
 
     /// State for Miniperf.
     miniperf: Option<MiniperfContainer>,
@@ -158,10 +190,12 @@ impl UnixForkserverService {
     pub(crate) fn new(
         log_reload_handle: Arc<dyn LogConfigurationReloadHandle>,
         state_dir: &AbsNormPath,
+        stats: Arc<ForkserverStats>,
     ) -> buck2_error::Result<Self> {
         let miniperf = MiniperfContainer::new(state_dir)?;
         Ok(Self {
             log_reload_handle,
+            stats,
             miniperf,
         })
     }
@@ -229,6 +263,9 @@ impl UnixForkserverService {
         cmd.args(validated_cmd.argv.iter().map(|a| OsStr::from_bytes(a)));
 
         Self::configure_environment(&mut cmd, &validated_cmd.env)?;
+
+        #[cfg(target_os = "linux")]
+        die_with_parent(&mut cmd);
 
         #[cfg(target_os = "linux")]
         if validated_cmd
@@ -312,6 +349,39 @@ impl UnixForkserverService {
     }
 }
 
+/// Has the kernel SIGKILL the command when the forkserver exits. The
+/// forkserver is the only process that kills or reaps what it spawned, so a
+/// command that outlives it (a persistent worker, above all, which runs until
+/// it is told to stop) has nobody left to stop it. PR_SET_PDEATHSIG fires when
+/// the thread that forked the child exits, not the process (prctl(2)); the
+/// forkserver spawns from its one runtime thread (`new_current_thread` in
+/// `buck2 forkserver`), so the two are the same here.
+///
+/// Only the command itself gets the signal: its own children do not inherit
+/// the setting, so a forking wrapper's children rely on the group kill.
+#[cfg(target_os = "linux")]
+fn die_with_parent(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    let parent = std::process::id() as libc::pid_t;
+    // Safety: prctl() and getppid() are async-signal-safe single syscalls
+    // that allocate nothing.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // The forkserver may have died between fork and prctl, in which
+            // case no death signal will ever come; the reparented child would
+            // see another parent here.
+            if libc::getppid() != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn is_restricted_network_access(network_access: buck2_data::NetworkAccess) -> bool {
     match network_access {
@@ -333,6 +403,8 @@ impl Forkserver for UnixForkserverService {
     ) -> Result<Response<Self::RunStream>, Status> {
         to_tonic(async move {
             let mut stream = req.into_inner();
+            self.stats.commands.fetch_add(1, Ordering::Relaxed);
+            let open_request = OpenRequest::new(self.stats.dupe());
 
             let cmd_request = Self::parse_command_request(&mut stream).await?;
             let validated_cmd = ValidatedCommand::try_from(cmd_request)?;
@@ -342,6 +414,7 @@ impl Forkserver for UnixForkserverService {
 
             // A task that splits the incoming events up into the freeze requests and cancel request
             tokio::spawn(async move {
+                let _open_request = open_request;
                 pin_mut!(stream);
                 while let Some(m) = stream.next().await {
                     let err = match m {
@@ -515,5 +588,33 @@ mod tests {
             "{error}"
         );
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod die_with_parent_tests {
+    use std::os::unix::process::ExitStatusExt;
+
+    use buck2_util::process::background_command;
+
+    #[test]
+    fn test_command_dies_with_the_thread_that_spawned_it() {
+        // The death signal follows the spawning thread, so a thread that
+        // spawns and exits stands in for a forkserver that exits.
+        let mut child = std::thread::spawn(|| {
+            let mut cmd = background_command("sleep");
+            cmd.arg("60");
+            super::die_with_parent(&mut cmd);
+            cmd.spawn().unwrap()
+        })
+        .join()
+        .unwrap();
+
+        let status = child.wait().unwrap();
+        assert_eq!(
+            status.signal(),
+            Some(libc::SIGKILL),
+            "the command outlived the thread that spawned it: {status}"
+        );
     }
 }

@@ -12,6 +12,7 @@ use std::os::unix::io::FromRawFd;
 use std::os::unix::io::RawFd;
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use buck2_core::logging::LogConfigurationReloadHandle;
 use buck2_error::BuckErrorContext;
@@ -21,6 +22,7 @@ use buck2_grpc::DuplexChannel;
 use tokio::net::UnixListener;
 use tokio::net::UnixStream;
 
+use super::service::ForkserverStats;
 use super::service::UnixForkserverService;
 
 pub async fn run_forkserver(
@@ -54,7 +56,8 @@ pub async fn run_forkserver(
         DuplexChannel::new(read, write)
     };
 
-    let service = UnixForkserverService::new(log_reload_handle, &state_dir)
+    let stats = Arc::new(ForkserverStats::default());
+    let service = UnixForkserverService::new(log_reload_handle, &state_dir, stats.clone())
         .buck_error_context("Failed to create UnixForkserverService")?;
 
     let router = buck2_grpc::server_builder().add_service(
@@ -63,9 +66,20 @@ pub async fn run_forkserver(
             .max_decoding_message_size(usize::MAX),
     );
 
-    buck2_grpc::spawn_oneshot(io, router)
+    let res = buck2_grpc::spawn_oneshot(io, router)
         .into_join_handle()
-        .await??;
+        .await;
+
+    // The daemon closing its end is also how a daemon exit looks here, so this is a warning and
+    // not an error; with commands still open it is the forkserver going away under a live daemon.
+    tracing::warn!(
+        "Forkserver (pid {}): the connection to the daemon ended after {} commands, {} of them still open; exiting",
+        std::process::id(),
+        stats.commands.load(Ordering::Relaxed),
+        stats.open_requests.load(Ordering::Relaxed),
+    );
+
+    res??;
 
     Ok(())
 }

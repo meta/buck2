@@ -11,6 +11,7 @@
 use std::io;
 use std::process::ExitStatus;
 use std::sync::Arc;
+use std::time::Duration;
 
 use allocative::Allocative;
 use arc_swap::ArcSwapOption;
@@ -24,9 +25,11 @@ use dupe::Dupe;
 use futures::future;
 use futures::future::Future;
 use futures::future::FutureExt;
+use futures::future::Shared;
 use futures::stream;
 use futures::stream::StreamExt;
 use tokio::process::Child;
+use tokio::sync::oneshot;
 use tonic::Request;
 use tonic::transport::Channel;
 
@@ -46,25 +49,40 @@ enum ForkserverError {
     Exited(ExitStatus),
 }
 
+/// How long a finished command's response stream may take to reach its trailers before the client
+/// gives up on it and lets h2 reset it. The forkserver writes the trailers right after the exit
+/// event, so this only bounds a forkserver that has stopped answering.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+
 #[derive(Allocative)]
 struct ForkserverClientInner {
     /// Error from the forkserver process, if any.
     #[allocative(skip)]
     error: Arc<ArcSwapOption<buck2_error::Error>>,
+    /// Resolves with that error once the forkserver process has exited.
+    #[allocative(skip)]
+    exited: Shared<oneshot::Receiver<Arc<buck2_error::Error>>>,
     pid: u32,
     #[allocative(skip)]
     rpc: buck2_forkserver_proto::forkserver_client::ForkserverClient<Channel>,
 }
 
 impl ForkserverClient {
-    pub(crate) async fn new(mut child: Child, channel: Channel) -> buck2_error::Result<Self> {
-        let rpc = buck2_forkserver_proto::forkserver_client::ForkserverClient::new(channel)
+    fn rpc(
+        channel: Channel,
+    ) -> buck2_forkserver_proto::forkserver_client::ForkserverClient<Channel> {
+        buck2_forkserver_proto::forkserver_client::ForkserverClient::new(channel)
             .max_encoding_message_size(usize::MAX)
-            .max_decoding_message_size(usize::MAX);
+            .max_decoding_message_size(usize::MAX)
+    }
+
+    pub(crate) async fn new(mut child: Child, channel: Channel) -> buck2_error::Result<Self> {
+        let rpc = Self::rpc(channel);
 
         let pid = child.id().expect("Child has not been polled");
 
         let error = Arc::new(ArcSwapOption::empty());
+        let (exited_tx, exited_rx) = oneshot::channel();
 
         tokio::task::spawn(buck2_util::async_move_clone!(error, {
             let err = match child.wait().await {
@@ -72,13 +90,30 @@ impl ForkserverClient {
                 Err(e) => ForkserverError::WaitError(e),
             };
 
-            let err = buck2_error::Error::from(err).context("Forkserver is unavailable");
-            error.swap(Some(Arc::new(err)));
+            let err = Arc::new(buck2_error::Error::from(err).context("Forkserver is unavailable"));
+            error.swap(Some(err.dupe()));
+            // Nobody listens when the daemon is already on its way out.
+            let _ignored = exited_tx.send(err);
         }));
 
         Ok(Self {
-            inner: Arc::new(ForkserverClientInner { error, pid, rpc }),
+            inner: Arc::new(ForkserverClientInner {
+                error,
+                exited: exited_rx.shared(),
+                pid,
+                rpc,
+            }),
         })
+    }
+
+    /// Resolves when the forkserver process exits, with the error that every command sent to it
+    /// fails with from then on. It never resolves while the forkserver runs.
+    pub async fn exited(&self) -> Arc<buck2_error::Error> {
+        match self.inner.exited.clone().await {
+            Ok(err) => err,
+            // The watcher task was dropped with the runtime, so the daemon is exiting.
+            Err(_) => future::pending().await,
+        }
     }
 
     pub fn pid(&self) -> u32 {
@@ -114,12 +149,27 @@ impl ForkserverClient {
             buck2_forkserver_proto::RequestEvent { data: Some(data) }
         });
 
+        // The request stream ends once this call is done with the command, so the h2 stream closes
+        // with END_STREAM from both sides. Left open, it stays open until `cancel` resolves, and
+        // `cancel` is often a guard that outlives the command: `buck2 test` holds one for the
+        // whole test command (buck2_test/src/command.rs), so every local test of the command
+        // keeps a stream, two tasks and the forkserver's reader of it until the command ends, and
+        // then all of them send their CancelRequest at once. The forkserver's single thread reads
+        // that burst before any reader runs, and h2 >= 0.4.16 charges each unread DATA frame under
+        // 256 bytes against a budget of half the connection window
+        // (h2 src/proto/streams/counts.rs `record_data_frame`). Past it, h2 closes the connection
+        // with GOAWAY ENHANCE_YOUR_CALM "too_many_data_frames" (h2 src/proto/streams/streams.rs
+        // `recv_data`), and the forkserver, whose only connection that was, exits with status 0.
+        // Dropping this future before the command finishes ends the request too, which the
+        // forkserver treats as a cancellation and kills the command.
+        let (finished_tx, finished_rx) = oneshot::channel::<()>();
+
         let stream = stream::once(future::ready(buck2_forkserver_proto::RequestEvent {
             data: Some(req.into()),
         }))
-        .chain(futures::stream::select(cancel_stream, freeze_stream));
+        .chain(futures::stream::select(cancel_stream, freeze_stream).take_until(finished_rx));
 
-        let stream = self
+        let mut stream = self
             .inner
             .rpc
             .clone()
@@ -127,9 +177,24 @@ impl ForkserverClient {
             .await
             .buck_error_context("Error dispatching command to Forkserver")?
             .into_inner();
-        let stream = decode_event_stream(stream);
 
-        decode_command_event_stream(stream).await
+        let res = decode_command_event_stream(decode_event_stream(stream.by_ref())).await;
+        drop(finished_tx);
+
+        // The exit event comes just before the server's trailers. Read up to them rather than
+        // drop the stream, which h2 would reset; a reset stream is remembered for a second and only
+        // 50 at a time (h2 src/proto/mod.rs DEFAULT_RESET_STREAM_*), and a frame for one it has
+        // forgotten counts towards the 1024 that end the connection with "too_many_internal_resets"
+        // (h2 src/proto/streams/streams.rs `recv_data`, `reset_on_recv_stream_err`), the fault
+        // fork commit 5de4fc293e fixed for the remote execution client.
+        tokio::task::spawn(async move {
+            let _ignored = tokio::time::timeout(DRAIN_TIMEOUT, async {
+                while let Some(_event) = stream.next().await {}
+            })
+            .await;
+        });
+
+        res
     }
 
     pub async fn set_log_filter(&self, log_filter: String) -> buck2_error::Result<()> {
@@ -142,5 +207,134 @@ impl ForkserverClient {
             .await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
+
+    use buck2_core::logging::LogConfigurationReloadHandle;
+    use buck2_execute_local::GatherOutputStatus;
+    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use tokio::net::UnixStream;
+
+    use super::*;
+    use crate::service::ForkserverStats;
+    use crate::service::UnixForkserverService;
+
+    impl ForkserverClient {
+        /// A client of a forkserver served in this process, which never exits.
+        fn for_test(channel: Channel) -> Self {
+            let (_never_sent, exited) = oneshot::channel();
+            Self {
+                inner: Arc::new(ForkserverClientInner {
+                    error: Arc::new(ArcSwapOption::empty()),
+                    exited: exited.shared(),
+                    pid: std::process::id(),
+                    rpc: Self::rpc(channel),
+                }),
+            }
+        }
+    }
+
+    /// A finished command leaves no stream open on the forkserver, even when its cancellation
+    /// future never resolves, which is the case for every local test of a `buck2 test` until the
+    /// command ends.
+    /// `exited` is what the daemon's watcher waits on before it shuts down (buck2_server's
+    /// `spawn_forkserver_exit_watcher`), so it must resolve when the process exits, not before.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn exited_resolves_when_the_forkserver_process_exits_and_not_before() {
+        let mut child = tokio::process::Command::new("sh")
+            .args(["-c", "read _"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let channel = Channel::from_static("http://127.0.0.1:1").connect_lazy();
+        let client = ForkserverClient::new(child, channel).await.unwrap();
+
+        let early =
+            tokio::time::timeout(std::time::Duration::from_millis(200), client.exited()).await;
+        assert!(early.is_err(), "exited() resolved while the forkserver was running");
+
+        // Closing its stdin ends `read`, so the process exits.
+        drop(input);
+        let err = tokio::time::timeout(std::time::Duration::from_secs(10), client.exited())
+            .await
+            .expect("exited() did not resolve after the forkserver exited");
+        assert!(format!("{err:#}").contains("Forkserver is unavailable"), "{err:#}");
+        // A later caller gets the same error at once.
+        let again =
+            tokio::time::timeout(std::time::Duration::from_secs(1), client.exited()).await;
+        assert!(again.is_ok());
+    }
+
+    #[tokio::test]
+    async fn finished_commands_end_their_request_streams() {
+        const COMMANDS: u64 = 200;
+
+        let (client_io, server_io) = UnixStream::pair().unwrap();
+        let stats = Arc::new(ForkserverStats::default());
+        let state_dir = AbsNormPathBuf::new(std::env::temp_dir()).unwrap();
+        let service = UnixForkserverService::new(
+            <dyn LogConfigurationReloadHandle>::noop(),
+            &state_dir,
+            stats.dupe(),
+        )
+        .unwrap();
+        let router = tonic::transport::Server::builder()
+            .add_service(buck2_forkserver_proto::forkserver_server::ForkserverServer::new(service));
+        let (read, write) = tokio::io::split(server_io);
+        let _server =
+            buck2_grpc::spawn_oneshot(buck2_grpc::DuplexChannel::new(read, write), router);
+        let channel = buck2_grpc::make_channel(client_io, "forkserver")
+            .await
+            .unwrap();
+        let client = ForkserverClient::for_test(channel);
+
+        let cwd = std::env::current_dir().unwrap();
+        for _ in 0..COMMANDS {
+            let req = buck2_forkserver_proto::CommandRequest {
+                exe: b"/bin/sh".to_vec(),
+                argv: vec![b"-c".to_vec(), b"true".to_vec()],
+                cwd: Some(buck2_forkserver_proto::WorkingDirectory {
+                    path: cwd.as_os_str().as_encoded_bytes().to_vec(),
+                }),
+                ..Default::default()
+            };
+            let res = client
+                .execute(
+                    req,
+                    future::pending(),
+                    stream::pending::<ActionFreezeEvent>(),
+                )
+                .await
+                .unwrap();
+            assert!(
+                matches!(
+                    res.status,
+                    GatherOutputStatus::Finished { exit_code: 0, .. }
+                ),
+                "{:?}",
+                res.status
+            );
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let open = stats.open_requests.load(Ordering::Relaxed);
+            if open == 0 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{open} of {COMMANDS} finished commands still have a request stream open"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(stats.commands.load(Ordering::Relaxed), COMMANDS);
     }
 }

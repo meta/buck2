@@ -28,6 +28,7 @@ rand.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

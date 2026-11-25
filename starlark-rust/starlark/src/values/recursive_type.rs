@@ -222,6 +222,13 @@ macro_rules! starlark_recursive_type {
             }
         }
 
+        // The type takes what its expression takes.
+        impl<$lt, D, P> $crate::values::type_expr::Accepts<$lt, D, $crate::values::type_expr::accepts::Unfolded<P>> for $marker
+        where
+            $unfolded: $crate::values::type_expr::Accepts<$lt, D, P>,
+        {
+        }
+
         // SAFETY: the marker has no lifetime.
         unsafe impl<$lt> $crate::any::ProvidesStaticType<$lt> for $marker {
             type StaticType = $marker;

@@ -30,8 +30,10 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::none::NoneType;
+use crate::values::type_expr::Accepts;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
+use crate::values::type_expr::accepts;
 
 /// Equivalent of a Rust [`Option`], where `None`
 /// is encoded as [`NoneType`](crate::values::none::NoneType).
@@ -95,6 +97,10 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for NoneOr<T> {
 }
 
 impl<'v, T: StarlarkTypeExprStable<'v>> StarlarkTypeExprStable<'v> for NoneOr<T> {}
+
+impl<'v, T: StarlarkTypeExpr<'v>> Accepts<'v, NoneType, accepts::IsNone> for NoneOr<T> {}
+
+impl<'v, D, P, T: Accepts<'v, D, P>> Accepts<'v, D, accepts::InOther<P>> for NoneOr<T> {}
 
 impl<'v, T: UnpackValue<'v>> UnpackValue<'v> for NoneOr<T> {
     type Type = NoneOr<T::Type>;

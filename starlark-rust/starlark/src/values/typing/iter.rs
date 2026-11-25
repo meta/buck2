@@ -40,8 +40,12 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
+use crate::values::list::StarlarkList;
+use crate::values::type_expr::Accepts;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
+use crate::values::type_expr::accepts;
+use crate::values::typing::StarlarkNever;
 
 /// `typing.Iterable[T]`: a type marker, and the check that a value is iterable.
 ///
@@ -73,6 +77,12 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for StarlarkIter<T> {
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExprStable<'v> for StarlarkIter<T> {}
+
+/// The empty list is an iterable of anything.
+impl<'v, T: StarlarkTypeExpr<'v>> Accepts<'v, StarlarkList<'v, StarlarkNever>, accepts::Empty>
+    for StarlarkIter<T>
+{
+}
 
 #[derive(
     Debug,

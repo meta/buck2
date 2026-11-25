@@ -42,9 +42,12 @@ use crate::values::list::value::ListGen;
 use crate::values::list::value::ListRepr;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
 use crate::values::tuple::StarlarkTuple;
+use crate::values::type_expr::Accepts;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_expr::UnionPayload;
+use crate::values::type_expr::accepts;
+use crate::values::typing::StarlarkNever;
 
 /// A Starlark list. `StarlarkList<'v>` is the type `list`, and `StarlarkList<'v, T>` is
 /// `list[T]`, a list whose items are of the type `T`.
@@ -100,6 +103,12 @@ where
     for<'lt> T::Reinfect<'lt>: Sized,
 {
     type Reinfect<'lt> = StarlarkList<'lt, T::Reinfect<'lt>>;
+}
+
+/// Every list type takes the empty list, which is a `list[typing.Never]`.
+impl<'v, T: StarlarkTypeExpr<'v>> Accepts<'v, StarlarkList<'v, StarlarkNever>, accepts::Empty>
+    for StarlarkList<'v, T>
+{
 }
 
 /// `list[T]` for every `T`. At `T = Value` this is the type expression of the type `list`,

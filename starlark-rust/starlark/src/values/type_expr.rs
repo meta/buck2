@@ -146,6 +146,63 @@ impl<'v, TLeft: StarlarkTypeExprHashable<'v>, TRight: StarlarkTypeExprHashable<'
 {
 }
 
+/// A type expression that takes every value of the type expression `T`: a `T` can be used
+/// where a `Self` is wanted, without looking at the value.
+///
+/// It holds for a type and itself, and for a union and whatever one of its alternatives takes:
+/// [`NoneOr<T>`](crate::values::none::NoneOr) takes `None` and what `T` takes, `Either<A, B>`
+/// what `A` or `B` takes, a `#[derive(UnpackValue)]` union what a variant takes, and a
+/// [recursive type](crate::values::recursive_type) what its expression takes.
+///
+/// The one rule about values is for the empty list and dict, which are `list[typing.Never]`
+/// and `dict[typing.Never, typing.Never]`: every list type and every iterable takes the first,
+/// and every dict type the second. Otherwise a container takes only its own type: a
+/// `list[A | B]` does not take a `list[A]`, which would be wrong for a list that can change.
+///
+/// `Path` says which of these it is, so that the impls do not overlap, and is always inferred:
+/// write `_`. Where a `T` fits in two ways, as `None` does in `NoneOr<Either<NoneType, A>>`,
+/// there is nothing to infer it from and the relation does not hold. So `typing.Any` inside a
+/// union takes only itself, not everything.
+#[diagnostic::on_unimplemented(
+    message = "a value of type `{T}` is not of type `{Self}`",
+    label = "this is a `{T}`, and a `{Self}` is wanted"
+)]
+pub trait Accepts<'v, T, Path>: StarlarkTypeExpr<'v> {}
+
+/// The paths of [`Accepts`].
+pub mod accepts {
+    use std::marker::PhantomData;
+
+    /// The type itself.
+    pub struct Itself;
+    /// `None`, of a `NoneOr<T>`.
+    pub struct IsNone;
+    /// What `T` takes, of a `NoneOr<T>`.
+    pub struct InOther<P>(PhantomData<P>);
+    /// What `A` takes, of an `Either<A, B>`.
+    pub struct InLeft<P>(PhantomData<P>);
+    /// What `B` takes, of an `Either<A, B>`.
+    pub struct InRight<P>(PhantomData<P>);
+    /// What variant `N` takes, of a `#[derive(UnpackValue)]` union.
+    pub struct InVariant<const N: usize, P>(PhantomData<P>);
+    /// What the expression of a recursive type takes.
+    pub struct Unfolded<P>(PhantomData<P>);
+    /// The empty list or dict.
+    pub struct Empty;
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> Accepts<'v, T, accepts::Itself> for T {}
+
+impl<'v, D, P, TLeft: Accepts<'v, D, P>, TRight: StarlarkTypeExpr<'v>>
+    Accepts<'v, D, accepts::InLeft<P>> for Either<TLeft, TRight>
+{
+}
+
+impl<'v, D, P, TLeft: StarlarkTypeExpr<'v>, TRight: Accepts<'v, D, P>>
+    Accepts<'v, D, accepts::InRight<P>> for Either<TLeft, TRight>
+{
+}
+
 /// What a variant of a `#[derive(UnpackValue)]` union holds: a [`ValueOf`] of a type
 /// expression, a type expression that is its own [`Get`](StarlarkTypeExpr::Get), such as a
 /// view, or a reference that a type is read through, such as `&str`. The derive reads the

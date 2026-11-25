@@ -41,9 +41,12 @@ use crate::values::dict::DictRef;
 use crate::values::dict::value::DictGen;
 use crate::values::dict::value::DictRepr;
 use crate::values::dict::value::VALUE_EMPTY_FROZEN_DICT;
+use crate::values::type_expr::Accepts;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_expr::UnionPayload;
+use crate::values::type_expr::accepts;
+use crate::values::typing::StarlarkNever;
 
 /// A Starlark dict. `StarlarkDict<'v>` is the type `dict`, and `StarlarkDict<'v, K, V>` is
 /// `dict[K, V]`, a dict whose keys are of the type `K` and whose values are of the type `V`.
@@ -102,6 +105,13 @@ where
     for<'lt> V::Reinfect<'lt>: Sized,
 {
     type Reinfect<'lt> = StarlarkDict<'lt, K::Reinfect<'lt>, V::Reinfect<'lt>>;
+}
+
+/// Every dict type takes the empty dict, which is a `dict[typing.Never, typing.Never]`.
+impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>>
+    Accepts<'v, StarlarkDict<'v, StarlarkNever, StarlarkNever>, accepts::Empty>
+    for StarlarkDict<'v, K, V>
+{
 }
 
 /// `dict[K, V]` for every `K` and `V`. At `Value` for both this is the type expression of

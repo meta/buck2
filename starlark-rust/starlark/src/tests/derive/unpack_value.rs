@@ -28,11 +28,15 @@ use crate::values::dict::StarlarkDict;
 use crate::values::int::IntView;
 use crate::values::list::AllocList;
 use crate::values::list::StarlarkList;
+use crate::values::none::NoneOr;
+use crate::values::none::NoneType;
 use crate::values::set::StarlarkSet;
 use crate::values::string::StarlarkStr;
 use crate::values::tuple::AllocTuple;
 use crate::values::tuple::StarlarkTuple;
+use crate::values::type_expr::Accepts;
 use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::typing::StarlarkIter;
 use crate::values::typing::StarlarkNever;
 
 #[derive(UnpackValue, Eq, PartialEq, Debug)]
@@ -51,6 +55,39 @@ enum IntOrStr<'v> {
 
 #[derive(UnpackValue, Debug)]
 struct TransparentIntOrStr<'v>(IntOrStr<'v>);
+
+#[derive(UnpackValue)]
+#[expect(dead_code, reason = "only the type is used")]
+enum IntOrStrWhere<'v>
+where
+    'v: 'v,
+{
+    Int(IntView<'v>),
+    Str(&'v str),
+}
+
+/// Compiles if the type expression `A` takes every value of the type expression `T`.
+fn takes<'v, A: Accepts<'v, T, Path>, T, Path>() {}
+
+#[test]
+fn test_accepts() {
+    // A type takes itself.
+    takes::<IntView, IntView, _>();
+    // A union takes what an alternative takes.
+    takes::<NoneOr<IntView>, NoneType, _>();
+    takes::<NoneOr<IntView>, IntView, _>();
+    takes::<Either<IntView, StarlarkStr>, StarlarkStr, _>();
+    takes::<NoneOr<Either<IntView, StarlarkStr>>, StarlarkStr, _>();
+    takes::<IntOrStr, IntView, _>();
+    takes::<IntOrStr, StarlarkStr, _>();
+    takes::<TransparentIntOrStr, StarlarkStr, _>();
+    takes::<NoneOr<IntOrStrWhere>, StarlarkStr, _>();
+    // The empty list and the empty dict.
+    takes::<StarlarkList<StarlarkStr>, StarlarkList<StarlarkNever>, _>();
+    takes::<NoneOr<StarlarkList<StarlarkStr>>, StarlarkList<StarlarkNever>, _>();
+    takes::<StarlarkIter<Value>, StarlarkList<StarlarkNever>, _>();
+    takes::<StarlarkDict<StarlarkStr, IntView>, StarlarkDict<StarlarkNever, StarlarkNever>, _>();
+}
 
 #[test]
 fn test_starlark_type_repr() {

@@ -132,5 +132,38 @@ fn derive_unpack_value_impl(input: syn::DeriveInput) -> syn::Result<proc_macro2:
             }
         }
     };
-    Ok(quote::quote_spanned! { span => #expr_impl #stable_impl #payload_impl #trait_impl })
+    // The union takes what a variant takes: `starlark::values::type_expr::Accepts`.
+    let mut accepts_generics = generics.clone();
+    accepts_generics
+        .params
+        .push(syn::parse_quote_spanned! { span => __T });
+    accepts_generics
+        .params
+        .push(syn::parse_quote_spanned! { span => __Path });
+    let (accepts_impl_generics, _, _) = accepts_generics.split_for_impl();
+    let own_predicates: Vec<&syn::WherePredicate> = where_clause
+        .map(|w| w.predicates.iter().collect())
+        .unwrap_or_default();
+    let accepts_impls: Vec<syn::ItemImpl> = variant_types
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            syn::parse_quote_spanned! { span =>
+                impl #accepts_impl_generics starlark::values::type_expr::Accepts<
+                    'v,
+                    __T,
+                    starlark::values::type_expr::accepts::InVariant<#i, __Path>,
+                > for #ident #type_generics
+                where
+                    #(#own_predicates,)*
+                    <#t as starlark::values::type_expr::UnionPayload<'v>>::Expr:
+                        starlark::values::type_expr::Accepts<'v, __T, __Path>,
+                {
+                }
+            }
+        })
+        .collect();
+    Ok(quote::quote_spanned! { span =>
+        #expr_impl #stable_impl #payload_impl #trait_impl #(#accepts_impls)*
+    })
 }

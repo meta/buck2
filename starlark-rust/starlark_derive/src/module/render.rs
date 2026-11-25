@@ -191,6 +191,7 @@ fn render_methods(
     let vis = &input.vis;
     let fn_name = &input.sig.ident;
     let table_name = format_ident!("{}_MEMBERS", module_name.to_uppercase());
+    let slots_name = format_ident!("{}_SLOTS", module_name.to_uppercase());
     let statics_name = format_ident!("{}_STATICS", module_name.to_uppercase());
     let builder = match input.sig.inputs.first() {
         Some(syn::FnArg::Typed(arg)) => arg.pat.clone(),
@@ -208,8 +209,14 @@ fn render_methods(
     };
 
     Ok(quote! {
+        /// The number of slots of the module's table, for a table that is put together from
+        /// several modules.
+        #[doc(hidden)]
+        #[allow(dead_code)]
+        #vis const #slots_name: usize = #slots;
+
         #vis static #table_name:
-            starlark::environment::MemberTable<[starlark::environment::Member; #slots]> =
+            starlark::environment::MemberTable<[starlark::environment::Member; #slots_name]> =
             starlark::environment::MemberTable::new(#docstring, [ #( #members ),* ]);
 
         starlark::methods_static!(#vis #statics_name = {

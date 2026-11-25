@@ -229,6 +229,13 @@ impl Member {
     }
 }
 
+/// A number of slots that is enough for [`MemberTable::concat`] of two tables with `first` and
+/// `second` slots.
+#[doc(hidden)]
+pub const fn concat_slots(first: usize, second: usize) -> usize {
+    (first + second).next_power_of_two()
+}
+
 /// The methods and attributes of a type, as a `static`.
 ///
 /// It is a perfect hash table: the multiplier is chosen, when the table is built at compile
@@ -256,12 +263,74 @@ impl<const S: usize> MemberTable<[Member; S]> {
         docstring: Option<&'static str>,
         members: [Member; N],
     ) -> MemberTable<[Member; S]> {
-        assert!(S.is_power_of_two() && S >= 2 && S >= 2 * N);
-        let shift = 32 - S.trailing_zeros();
-
-        let mut hashes = [0u32; N];
+        assert!(S >= N);
+        let mut all = [Member::EMPTY; S];
         let mut i = 0;
         while i < N {
+            all[i] = members[i];
+            i += 1;
+        }
+        Self::of(docstring, all, N)
+    }
+
+    /// The table of the members of two tables, the first's before the second's: for a type
+    /// whose methods are declared by two modules. As for [`new`](Self::new), `S` is a power of
+    /// two that leaves the table at most half full.
+    pub const fn concat<const A: usize, const B: usize>(
+        first: &MemberTable<[Member; A]>,
+        second: &MemberTable<[Member; B]>,
+    ) -> MemberTable<[Member; S]> {
+        // The documentation is the second module's, or else the first's.
+        let docstring = match second.docstring {
+            Some(docstring) => Some(docstring),
+            None => first.docstring,
+        };
+        let mut all = [Member::EMPTY; S];
+        let mut len = 0;
+        // Each table's members in the order they were declared: a slot's `index` says where.
+        let mut index = 0;
+        while index < A {
+            let mut slot = 0;
+            while slot < A {
+                let member = first.slots[slot];
+                if !matches!(member.kind, MemberKind::Empty) && member.index as usize == index {
+                    assert!(len < S);
+                    all[len] = member;
+                    len += 1;
+                }
+                slot += 1;
+            }
+            index += 1;
+        }
+        let mut index = 0;
+        while index < B {
+            let mut slot = 0;
+            while slot < B {
+                let member = second.slots[slot];
+                if !matches!(member.kind, MemberKind::Empty) && member.index as usize == index {
+                    assert!(len < S);
+                    all[len] = member;
+                    len += 1;
+                }
+                slot += 1;
+            }
+            index += 1;
+        }
+        Self::of(docstring, all, len)
+    }
+
+    /// The table of the first `len` of `members`.
+    const fn of(
+        docstring: Option<&'static str>,
+        members: [Member; S],
+        len: usize,
+    ) -> MemberTable<[Member; S]> {
+        assert!(S.is_power_of_two() && S >= 2 && S >= 2 * len);
+        let shift = 32 - S.trailing_zeros();
+
+        let mut hashes = [0u32; S];
+        let mut i = 0;
+        while i < len {
             hashes[i] = StarlarkHashValue::new_str_const(members[i].name).get();
             let mut j = 0;
             while j < i {
@@ -278,7 +347,7 @@ impl<const S: usize> MemberTable<[Member; S]> {
         loop {
             let mut used = [false; S];
             let mut i = 0;
-            while i < N {
+            while i < len {
                 let slot = (hashes[i].wrapping_mul(multiplier) >> shift) as usize;
                 if used[slot] {
                     break;
@@ -286,7 +355,7 @@ impl<const S: usize> MemberTable<[Member; S]> {
                 used[slot] = true;
                 i += 1;
             }
-            if i == N {
+            if i == len {
                 break;
             }
             multiplier = multiplier
@@ -297,7 +366,7 @@ impl<const S: usize> MemberTable<[Member; S]> {
 
         let mut slots = [Member::EMPTY; S];
         let mut i = 0;
-        while i < N {
+        while i < len {
             let slot = (hashes[i].wrapping_mul(multiplier) >> shift) as usize;
             slots[slot] = members[i];
             slots[slot].index = i as u32;

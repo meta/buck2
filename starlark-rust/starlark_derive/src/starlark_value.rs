@@ -17,6 +17,7 @@
 
 use std::collections::HashMap;
 
+use quote::ToTokens;
 use quote::quote;
 use syn::spanned::Spanned;
 
@@ -52,8 +53,9 @@ struct StarlarkValueAttrs {
     /// generic over the item type and is the `StarlarkType` at one instantiation only.
     type_expr_by_hand: bool,
     /// `methods = path`: the `#[starlark_module]` function whose members are the type's
-    /// methods and attributes.
-    methods: Option<syn::Path>,
+    /// methods and attributes. `methods = [path, path]` for a type that has the members of two
+    /// modules.
+    methods: Vec<syn::Path>,
 }
 
 /// How the representation is allocated, which decides the `AllocRepresentation` and
@@ -133,7 +135,7 @@ impl syn::parse::Parse for StarlarkValueAttrs {
             vtable: VtableMode::Default,
             alloc: AllocMode::Default,
             type_expr_by_hand: false,
-            methods: None,
+            methods: Vec::new(),
         };
 
         loop {
@@ -157,8 +159,22 @@ impl syn::parse::Parse for StarlarkValueAttrs {
                 attrs.set_vtable_mode(&name, VtableMode::Frozen)?;
             } else if name == "methods" {
                 input.parse::<syn::Token![=]>()?;
-                if attrs.methods.replace(input.parse::<syn::Path>()?).is_some() {
+                if !attrs.methods.is_empty() {
                     return Err(syn::Error::new_spanned(name, "`methods` is given twice"));
+                }
+                if input.peek(syn::token::Bracket) {
+                    let list;
+                    syn::bracketed!(list in input);
+                    let modules = list.parse_terminated(syn::Path::parse, syn::Token![,])?;
+                    if modules.len() != 2 {
+                        return Err(syn::Error::new_spanned(
+                            name,
+                            "`methods = [..]` names two modules; a single one is named without brackets",
+                        ));
+                    }
+                    attrs.methods = modules.into_iter().collect();
+                } else {
+                    attrs.methods = vec![input.parse::<syn::Path>()?];
                 }
             } else if name == "alloc" {
                 input.parse::<syn::Token![=]>()?;
@@ -440,38 +456,84 @@ impl ImplStarlarkValue {
         })
     }
 
-    /// `methods = path` names the `#[starlark_module]` function that declares the type's
-    /// members. That macro declares the table of them as the static `<PATH>_MEMBERS`, which
-    /// is the type's `MEMBERS`, and `<PATH>_STATICS`, which fills what `get_methods` returns
-    /// from the same table.
-    fn methods(&self) -> Vec<syn::ImplItem> {
-        let Some(module) = &self.attrs.methods else {
-            return Vec::new();
-        };
-        let sibling = |suffix: &str| {
-            let mut path = module.clone();
-            let last = path.segments.last_mut().expect("a path has a segment");
-            last.ident = quote::format_ident!(
-                "{}_{}",
-                last.ident.to_string().to_uppercase(),
-                suffix,
-                span = last.ident.span()
-            );
-            path
-        };
-        let members = sibling("MEMBERS");
-        let statics = sibling("STATICS");
-        vec![
-            syn::parse_quote! {
-                const MEMBERS: std::option::Option<&'static starlark::environment::MemberTable> =
-                    std::option::Option::Some(&#members);
-            },
-            syn::parse_quote! {
-                fn get_methods() -> std::option::Option<&'static starlark::environment::Methods> {
-                    std::option::Option::Some(#statics.methods())
+    /// `module` is a `#[starlark_module]` function; that macro declares, next to it, statics
+    /// named after it. This is the path of one of them.
+    fn module_static(module: &syn::Path, suffix: &str) -> syn::Path {
+        let mut path = module.clone();
+        let last = path.segments.last_mut().expect("a path has a segment");
+        last.ident = quote::format_ident!(
+            "{}_{}",
+            last.ident.to_string().to_uppercase(),
+            suffix,
+            span = last.ident.span()
+        );
+        path
+    }
+
+    /// For `methods = ..`: the table of the type's members as its `MEMBERS`, and a
+    /// `get_methods` that is filled from the same table. Also the items that go before the
+    /// block, which a type with two modules has: the table of both, and what `get_methods`
+    /// returns.
+    fn methods(&self) -> (proc_macro2::TokenStream, Vec<syn::ImplItem>) {
+        let (before, members, statics): (proc_macro2::TokenStream, syn::Path, syn::Path) =
+            match self.attrs.methods.as_slice() {
+                [] => return (proc_macro2::TokenStream::new(), Vec::new()),
+                [module] => (
+                    proc_macro2::TokenStream::new(),
+                    Self::module_static(module, "MEMBERS"),
+                    Self::module_static(module, "STATICS"),
+                ),
+                modules => {
+                    let (first, second) = (&modules[0], &modules[1]);
+                    // The two statics need names that no other block of the module has.
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(
+                        &self.input.self_ty.to_token_stream().to_string(),
+                        &mut hasher,
+                    );
+                    let unique = std::hash::Hasher::finish(&hasher);
+                    let members = quote::format_ident!("__STARLARK_MEMBERS_{:016X}", unique);
+                    let statics = quote::format_ident!("__STARLARK_METHODS_{:016X}", unique);
+                    let (first_members, second_members) = (
+                        Self::module_static(first, "MEMBERS"),
+                        Self::module_static(second, "MEMBERS"),
+                    );
+                    let (first_slots, second_slots) = (
+                        Self::module_static(first, "SLOTS"),
+                        Self::module_static(second, "SLOTS"),
+                    );
+                    (
+                        quote! {
+                            static #members: starlark::environment::MemberTable<
+                                [starlark::environment::Member;
+                                    starlark::environment::concat_slots(#first_slots, #second_slots)],
+                            > = starlark::environment::MemberTable::concat(
+                                &#first_members,
+                                &#second_members,
+                            );
+                            starlark::methods_static!(
+                                #statics = |builder| builder.extend(&#members)
+                            );
+                        },
+                        syn::parse_quote! { #members },
+                        syn::parse_quote! { #statics },
+                    )
                 }
-            },
-        ]
+            };
+        (
+            before,
+            vec![
+                syn::parse_quote! {
+                    const MEMBERS: std::option::Option<&'static starlark::environment::MemberTable> =
+                        std::option::Option::Some(&#members);
+                },
+                syn::parse_quote! {
+                    fn get_methods() -> std::option::Option<&'static starlark::environment::Methods> {
+                        std::option::Option::Some(#statics.methods())
+                    }
+                },
+            ],
+        )
     }
 
     fn get_type_value_static(&self) -> syn::Result<syn::ImplItem> {
@@ -1029,7 +1091,7 @@ impl ImplStarlarkValue {
             0..0,
             [self.const_type()?, self.get_type_value_static()?]
                 .into_iter()
-                .chain(self.methods())
+                .chain(self.methods().1)
                 .chain(self.get_type_starlark_repr()?)
                 .chain(self.attr_ty()?)
                 .chain(self.bit_or()?)
@@ -1054,7 +1116,10 @@ impl ImplStarlarkValue {
             }
         }
         let memberships = memberships_impl(&memberships, &self.input, lt);
+        let before = self.methods().0;
         Ok(quote! {
+            #before
+
             #type_impl
 
             #type_expr_impl

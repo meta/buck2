@@ -81,3 +81,61 @@ fn test_receiver_can_be_named_anything() {
     a.eq("2", "x.callable(1, named=2)");
     a.fail("x.value(1)", "Operation `call()` not supported");
 }
+
+#[derive(
+    Debug,
+    derive_more::Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("{:?}", self)]
+struct TwoModules;
+
+#[starlark_module]
+fn first_methods(builder: &mut MethodsBuilder) {
+    #[starlark(attribute)]
+    fn one(this: Value) -> anyhow::Result<i32> {
+        let _ = this;
+        Ok(1)
+    }
+
+    fn a_method_with_a_name_of_more_than_sixteen_bytes(this: Value) -> anyhow::Result<i32> {
+        let _ = this;
+        Ok(16)
+    }
+}
+
+#[starlark_module]
+fn second_methods(builder: &mut MethodsBuilder) {
+    fn two(this: Value, #[starlark(default = 2)] x: i32) -> anyhow::Result<i32> {
+        let _ = this;
+        Ok(x)
+    }
+}
+
+#[starlark_value(type = "two_modules", methods = [first_methods, second_methods])]
+impl<'v> StarlarkValue<'v> for TwoModules {}
+
+#[test]
+fn test_a_type_has_the_members_of_two_modules() {
+    let mut a = Assert::new();
+    a.globals_add(|g| g.set("x", TwoModules));
+    a.eq("1", "x.one");
+    a.eq("2", "x.two()");
+    a.eq("5", "x.two(x = 5)");
+    a.eq("16", "x.a_method_with_a_name_of_more_than_sixteen_bytes()");
+    a.eq("2", "getattr(x, 'two')()");
+    a.eq(
+        "['a_method_with_a_name_of_more_than_sixteen_bytes', 'one', 'two']",
+        "dir(x)",
+    );
+    a.is_true("hasattr(x, 'one') and not hasattr(x, 'three')");
+    // A name that is not a member, of a length that one is.
+    a.fail("x.six", "no attribute `six`");
+    a.fail(
+        "x.a_method_with_a_name_of_more_than_sixteen_bytez()",
+        "no attribute",
+    );
+}

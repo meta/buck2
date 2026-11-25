@@ -23,14 +23,14 @@ use dupe::Copy_;
 use dupe::Dupe_;
 
 use crate as starlark;
-use crate::__derive_refs::representations::ViewOfRepresentations;
 use crate::any::ProvidesStaticType;
 use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::set::SetRef;
-use crate::values::set::value::SetView;
+use crate::values::set::StarlarkSet;
+use crate::values::set::value::SetRepr;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 
@@ -52,7 +52,7 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for SetType<T> {
 
     #[inline]
     fn get(value: Value<'v>) -> Option<Self::Get> {
-        let set = SetView::from_value(value)?;
+        let set = SetRepr::of_value(value)?;
         set.to_ref().iter().all(|x| T::matches(x)).then(|| SetOf {
             value: ValueOf::new_unchecked(value),
             set,
@@ -96,6 +96,28 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, SetType<T>> {
     }
 }
 
+/// A handle to a `set[T]` under either of its two names is a handle under the other, for code
+/// that has one and is given the other while [`SetType`] still exists.
+impl<'v, T: StarlarkTypeExpr<'v>> From<ValueOf<'v, SetType<T>>>
+    for ValueOf<'v, StarlarkSet<'v, T>>
+{
+    #[inline]
+    fn from(set: ValueOf<'v, SetType<T>>) -> Self {
+        // The same type under its other name.
+        ValueOf::new_unchecked(set.to_value())
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> From<ValueOf<'v, StarlarkSet<'v, T>>>
+    for ValueOf<'v, SetType<T>>
+{
+    #[inline]
+    fn from(set: ValueOf<'v, StarlarkSet<'v, T>>) -> Self {
+        // The same type under its other name.
+        ValueOf::new_unchecked(set.to_value())
+    }
+}
+
 /// What a value read as a `set[T]` gives ([`SetType`]'s `Get`): the handle, and which of its
 /// representations the set is, so that what holds one does not look the set up again. It
 /// does not hold a borrow of a mutable set: [`set`](Self::set) takes one when it is called.
@@ -104,14 +126,14 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, SetType<T>> {
 #[derive(Clone_, Copy_, Dupe_)]
 pub struct SetOf<'v, T: StarlarkTypeExpr<'v>> {
     value: ValueOf<'v, SetType<T>>,
-    set: SetView<'v>,
+    set: SetRepr<'v>,
 }
 
 impl<'v, T: StarlarkTypeExpr<'v>> SetOf<'v, T> {
     /// The reading of a handle. The set is looked up; its items are not checked.
     #[inline]
     pub(crate) fn of_handle(value: ValueOf<'v, SetType<T>>) -> Self {
-        let set = SetView::from_value(value.to_value()).expect("a value's type does not change");
+        let set = SetRepr::of_value(value.to_value()).expect("a value's type does not change");
         SetOf { value, set }
     }
 

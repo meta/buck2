@@ -31,6 +31,7 @@ use serde::Serialize;
 use starlark_map::Hashed;
 use starlark_map::small_set::SmallSet;
 
+use super::refs::SetMut;
 use super::refs::SetRef;
 use crate as starlark;
 use crate::environment::Methods;
@@ -43,7 +44,6 @@ use crate::values::Freezer;
 use crate::values::Heap;
 use crate::values::ProvidesStaticType;
 use crate::values::StarlarkPagable;
-use crate::values::StarlarkRepresentations;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
@@ -53,6 +53,7 @@ use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::comparison::equals_small_set;
 use crate::values::set::SetType;
+use crate::values::set::StarlarkSet;
 use crate::values::set::methods;
 use crate::values::starlark_value;
 
@@ -125,14 +126,6 @@ crate::register_simple_vtable_entry!(FrozenSet);
 // SAFETY: The vtable entry is registered above. The deser type id is
 // lifetime-erased, so the `'static` instantiation covers all heap lifetimes.
 unsafe impl<'v> crate::__derive_refs::VtableRegistered for SetGen<SetData<'v>> {}
-
-/// Every set is a `set[typing.Any]`.
-impl<'v> From<ValueOf<'v, SetView<'v>>> for ValueOf<'v, SetType<Value<'v>>> {
-    #[inline]
-    fn from(value: ValueOf<'v, SetView<'v>>) -> Self {
-        Self::new_unchecked(value.to_value())
-    }
-}
 
 impl<'v> AllocValue<'v> for SetData<'v> {
     type Type = SetType<Value<'v>>;
@@ -235,9 +228,9 @@ impl<'v> SetLike<'v> for SetData<'v> {
 
 starlark::methods_static!(SET_METHODS = methods::set_methods);
 
-/// A `set` in either of its representations.
-#[derive(Debug, Clone, Copy, Dupe, StarlarkRepresentations)]
-pub(crate) enum SetView<'v> {
+/// Which of its representations a `set` is.
+#[derive(Debug, Clone, Copy, Dupe)]
+pub(crate) enum SetRepr<'v> {
     Frozen(ValueTyped<'v, SetGen<SetData<'v>>>),
     Unfrozen(ValueTyped<'v, SetGen<RefCell<SetData<'v>>>>),
 }
@@ -246,11 +239,11 @@ pub(crate) enum SetView<'v> {
 macro_rules! with_set {
     ($self:expr, |$x:ident| $e:expr) => {
         match $self {
-            SetView::Frozen($x) => {
+            SetRepr::Frozen($x) => {
                 let $x = &$x.as_ref().0;
                 $e
             }
-            SetView::Unfrozen($x) => {
+            SetRepr::Unfrozen($x) => {
                 let $x = &$x.as_ref().0;
                 $e
             }
@@ -258,76 +251,138 @@ macro_rules! with_set {
     };
 }
 
-impl<'v> SetView<'v> {
+impl<'v> SetRepr<'v> {
+    /// `value` as a set, if it is one. The representation is told by whether the value is
+    /// frozen, so one representation is tested, not both in turn.
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
+    pub(crate) fn of_value(value: Value<'v>) -> Option<Self> {
+        if value.is_frozen() {
+            ValueTyped::new(value).map(SetRepr::Frozen)
+        } else {
+            ValueTyped::new(value).map(SetRepr::Unfrozen)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn to_value(self) -> Value<'v> {
+        match self {
+            SetRepr::Frozen(x) => x.to_value(),
+            SetRepr::Unfrozen(x) => x.to_value(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_frozen(self) -> bool {
+        matches!(self, SetRepr::Frozen(_))
+    }
+
     /// The set, borrowed for as long as the reference lives if it is mutable.
     #[inline]
     pub(crate) fn to_ref(self) -> SetRef<'v> {
         SetRef {
             aref: match self {
-                SetView::Frozen(x) => Either::Right(&x.as_ref().0),
-                SetView::Unfrozen(x) => Either::Left(x.as_ref().0.borrow()),
+                SetRepr::Frozen(x) => Either::Right(&x.as_ref().0),
+                SetRepr::Unfrozen(x) => Either::Left(x.as_ref().0.borrow()),
             },
+        }
+    }
+
+    /// The set, to change it: an error if it is frozen or being iterated.
+    #[inline]
+    pub(crate) fn to_mut(self) -> crate::Result<SetMut<'v>> {
+        match self {
+            SetRepr::Unfrozen(x) => match x.as_ref().0.try_borrow_mut() {
+                Ok(aref) => Ok(SetMut { aref }),
+                Err(_) => Err(cannot_mutate(ValueError::MutationDuringIteration)),
+            },
+            SetRepr::Frozen(_) => Err(cannot_mutate(ValueError::CannotMutateImmutableValue)),
         }
     }
 
     #[inline]
     fn content(self) -> Either<Ref<'v, SmallSet<Value<'v>>>, &'v SmallSet<Value<'v>>> {
         match self {
-            SetView::Frozen(x) => Either::Right(x.as_ref().0.content()),
-            SetView::Unfrozen(x) => Either::Left(x.as_ref().0.content()),
+            SetRepr::Frozen(x) => Either::Right(x.as_ref().0.content()),
+            SetRepr::Unfrozen(x) => Either::Left(x.as_ref().0.content()),
         }
     }
 }
 
-#[starlark_value(type = "set")]
-impl<'v> StarlarkType<'v> for SetView<'v> {
+#[cold]
+#[inline(never)]
+fn cannot_mutate(error: ValueError) -> crate::Error {
+    crate::Error::new_other(error)
+}
+
+#[starlark_value(type = "set", type_expr = by_hand)]
+impl<'v> StarlarkType<'v> for StarlarkSet<'v> {
     /// Returns the length of the value, if this value is a sequence.
-    fn length(&self) -> i32 {
-        self.content().len() as i32
+    fn length(this: Self) -> i32 {
+        this.repr().content().len() as i32
     }
 
-    fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
-        Ok(self.content().contains_hashed(other.get_hashed()?.as_ref()))
+    fn is_in(this: Self, other: Value<'v>) -> crate::Result<bool> {
+        Ok(this
+            .repr()
+            .content()
+            .contains_hashed(other.get_hashed()?.as_ref()))
     }
 
-    fn equals(&self, other: Self) -> bool {
-        equals_small_set(&self.content(), &other.content())
+    // The operand is a plain value read with `from_value`, not a typed `Self`: read as a
+    // `set[typing.Any]` it is borrowed once more, to look at items that there is nothing to
+    // check about. Inlined into each representation's entry, as the macro does by itself for
+    // a typed method.
+    #[inline(always)]
+    fn equals(this: Self, other: Value<'v>) -> crate::Result<bool> {
+        match StarlarkSet::from_value(other) {
+            Some(other) => Ok(equals_small_set(
+                &this.repr().content(),
+                &other.repr().content(),
+            )),
+            None => Ok(false),
+        }
     }
 
     fn get_methods() -> Option<&'static Methods> {
         Some(SET_METHODS.methods())
     }
 
-    unsafe fn iterate(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(this: Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         unsafe {
-            with_set!(self, |s| s.iter_start())?;
-            Ok((*self).into())
+            with_set!(this.repr(), |s| s.iter_start())?;
+            Ok(this.to_value())
         }
     }
 
-    unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        let len = self.content().len();
+    unsafe fn iter_size_hint(this: Self, index: usize) -> (usize, Option<usize>) {
+        let len = this.repr().content().len();
         debug_assert!(index <= len);
         let rem = len - index;
         (rem, Some(rem))
     }
 
-    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        unsafe { with_set!(self, |s| s.content_unchecked().iter().nth(index).copied()) }
+    unsafe fn iter_next(this: Self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
+        unsafe {
+            with_set!(this.repr(), |s| s
+                .content_unchecked()
+                .iter()
+                .nth(index)
+                .copied())
+        }
     }
 
-    unsafe fn iter_stop(&self) {
-        unsafe { with_set!(self, |s| s.iter_stop()) }
+    unsafe fn iter_stop(this: Self) {
+        unsafe { with_set!(this.repr(), |s| s.iter_stop()) }
     }
 
-    fn to_bool(&self) -> bool {
-        !self.content().is_empty()
+    fn to_bool(this: Self) -> bool {
+        !this.repr().content().is_empty()
     }
 
     // Set union
     // Unlike in `union` it is not possible to `|` `set` and iterable. This is due python semantics.
-    fn bit_or(&self, rhs: SetRef<'v>) -> SetData<'v> {
-        let content = self.content();
+    fn bit_or(this: Self, rhs: SetRef<'v>) -> SetData<'v> {
+        let content = this.repr().content();
         if content.is_empty() {
             return (*rhs.aref).clone();
         }
@@ -339,9 +394,9 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
     }
 
     // Set intersection
-    fn bit_and(&self, rhs: SetRef<'v>) -> SetData<'v> {
+    fn bit_and(this: Self, rhs: SetRef<'v>) -> SetData<'v> {
         let mut items = SmallSet::new();
-        let content = self.content();
+        let content = this.repr().content();
         if content.is_empty() {
             return SetData { content: items };
         }
@@ -356,14 +411,17 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
     }
 
     // Set symmetric difference
-    fn bit_xor(&self, rhs: SetRef<'v>) -> SetData<'v> {
-        let items = self.content().symmetric_difference(&rhs.aref.content);
+    fn bit_xor(this: Self, rhs: SetRef<'v>) -> SetData<'v> {
+        let items = this
+            .repr()
+            .content()
+            .symmetric_difference(&rhs.aref.content);
         SetData { content: items }
     }
 
     // Set difference
-    fn sub(&self, rhs: SetRef<'v>) -> SetData<'v> {
-        let content = self.content();
+    fn sub(this: Self, rhs: SetRef<'v>) -> SetData<'v> {
+        let content = this.repr().content();
 
         let content = content.difference_with(&rhs.aref.content);
         SetData { content }
@@ -376,12 +434,12 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for SetGen<RefCell<SetData<'v>>> {
-    type Type = SetView<'v>;
+    type Type = StarlarkSet<'v>;
 }
 
 #[starlark_value(alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for SetGen<SetData<'v>> {
-    type Type = SetView<'v>;
+    type Type = StarlarkSet<'v>;
 }
 
 impl<'v, T: SetLike<'v>> Serialize for SetGen<T> {

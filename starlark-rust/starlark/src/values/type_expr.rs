@@ -259,6 +259,7 @@ mod tests {
     use crate::values::list::StarlarkList;
     use crate::values::none::NoneOr;
     use crate::values::none::NoneType;
+    use crate::values::set::StarlarkSet;
     use crate::values::string::str_type::StarlarkStr;
     use crate::values::tuple::StarlarkTuple;
     use crate::values::type_expr::StarlarkTypeExpr;
@@ -269,7 +270,6 @@ mod tests {
     use crate::values::types::record::field::Field;
     use crate::values::types::record::record_type::RecordTypeView;
     use crate::values::types::set::value::SetData;
-    use crate::values::types::set::value::SetView;
     use crate::values::typing::StarlarkIter;
     use crate::values::typing::TypeCompiled;
     use crate::values::typing::type_compiled::matcher::TypeMatcher;
@@ -323,7 +323,7 @@ mod tests {
             typed_as::<StarlarkBytes>(heap.alloc(StarlarkBytes::new(b"b")).to_value());
             typed_as::<StarlarkList>(heap.alloc(AllocList([1i32])).to_value());
             typed_as::<StarlarkDict>(heap.alloc(AllocDict([(1i32, "a")])).to_value());
-            typed_as::<SetView>(heap.alloc(SetData::default()).to_value());
+            typed_as::<StarlarkSet>(heap.alloc(SetData::default()).to_value());
             typed_as::<StarlarkTuple>(heap.alloc((1i32, "a")).to_value());
             let field = Field::new(TypeCompiled::from_ty(&Ty::int(), heap), None);
             typed_as::<Field>(heap.alloc(field).to_value());

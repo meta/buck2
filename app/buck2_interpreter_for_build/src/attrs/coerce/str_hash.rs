@@ -8,9 +8,21 @@
  * above-listed licenses.
  */
 
+use std::hash::Hash;
+use std::hash::Hasher;
+
 use twox_hash::XxHash3_64;
 
 /// Unspecified fast hash for short strings.
 pub(crate) fn str_hash(s: &str) -> u64 {
     XxHash3_64::oneshot(s.as_bytes())
+}
+
+/// Unspecified fast hash for a sequence of short strings.
+pub(crate) fn strs_hash<'a>(strs: impl IntoIterator<Item = &'a str>) -> u64 {
+    let mut hasher = XxHash3_64::default();
+    for s in strs {
+        s.hash(&mut hasher);
+    }
+    hasher.finish()
 }

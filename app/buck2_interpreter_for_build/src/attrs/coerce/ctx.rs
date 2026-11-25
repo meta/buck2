@@ -51,9 +51,12 @@ use dupe::Dupe;
 use hashbrown::HashTable;
 use hashbrown::hash_table;
 use starlark::values::Value;
+use starlark::values::list::StarlarkList;
+use starlark::values::tuple::StarlarkTuple;
 
 use crate::attrs::coerce::arc_str_interner::ArcStrInterner;
 use crate::attrs::coerce::str_hash::str_hash;
+use crate::attrs::coerce::str_hash::strs_hash;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -98,11 +101,30 @@ pub struct BuildAttrCoercionContext {
     /// (macro `Arg` parts, `select_fail`/`select_incompatible` messages),
     /// which have no arena node of their own.
     str_interner: ArcStrInterner,
+    /// Target modifiers written as a list of strings, by those strings. Parsing a list is
+    /// costly, and the targets of a package tend to share a few.
+    modifiers_cache: RefCell<HashTable<(u64, Box<[Box<str>]>, CfgModifiers)>>,
     /// The node constructors (`build_*_attr`) encode attribute values into
     /// this arena as coercion proceeds. Package contexts seal it into the
     /// package's shared storage; bzl contexts (rule defaults) seal it into
     /// the value's own storage.
     attr_arena_builder: RefCell<CoercedAttrArenaBuilder>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread has parsed target modifiers.
+    static PARSED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The strings of `items`, if they are nothing but strings.
+fn strings_of<'a, 'v>(
+    items: &'a [Value<'v>],
+) -> Option<impl Iterator<Item = &'v str> + Clone + 'a> {
+    items
+        .iter()
+        .all(|item| item.unpack_str().is_some())
+        .then(|| items.iter().filter_map(|item| item.unpack_str()))
 }
 
 impl Debug for BuildAttrCoercionContext {
@@ -131,6 +153,7 @@ impl BuildAttrCoercionContext {
             alloc: Bump::new(),
             label_cache: RefCell::new(HashTable::new()),
             str_interner: ArcStrInterner::new(),
+            modifiers_cache: RefCell::new(HashTable::new()),
             attr_arena_builder: RefCell::new(CoercedAttrArenaBuilder::default()),
         }
     }
@@ -237,6 +260,30 @@ impl BuildAttrCoercionContext {
     }
 }
 
+impl BuildAttrCoercionContext {
+    /// The modifiers of a list of `strings` whose hash is `hash`: what `parse` gives, the
+    /// first time the list is seen.
+    fn modifiers_of_strings<'a>(
+        &self,
+        hash: u64,
+        strings: impl Iterator<Item = &'a str> + Clone,
+        parse: impl FnOnce() -> CfgModifiers,
+    ) -> CfgModifiers {
+        match self.modifiers_cache.borrow_mut().entry(
+            hash,
+            |(h, key, _)| *h == hash && key.iter().map(|s| &**s).eq(strings.clone()),
+            |(h, _, _)| *h,
+        ) {
+            hash_table::Entry::Occupied(e) => e.get().2,
+            hash_table::Entry::Vacant(e) => {
+                let modifiers = parse();
+                e.insert((hash, strings.map(Box::from).collect(), modifiers));
+                modifiers
+            }
+        }
+    }
+}
+
 impl<'v> AttrCoercionContext<'v> for BuildAttrCoercionContext {
     fn attr_arena(&self) -> RefMut<'_, CoercedAttrArenaBuilder> {
         self.attr_arena_builder.borrow_mut()
@@ -262,7 +309,20 @@ impl<'v> AttrCoercionContext<'v> for BuildAttrCoercionContext {
     }
 
     fn coerce_cfg_modifiers(&self, value: Value<'v>) -> CfgModifiers {
-        CfgModifiers::from_target(value, &ModifierLabelParser::new(&self.cell_resolver))
+        let parse = || {
+            #[cfg(test)]
+            PARSED.set(PARSED.get() + 1);
+            CfgModifiers::from_target(value, &ModifierLabelParser::new(&self.cell_resolver))
+        };
+        let list = StarlarkList::from_value(value);
+        let items = match &list {
+            Some(list) => Some(list.content()),
+            None => StarlarkTuple::from_value(value).map(|tuple| tuple.content()),
+        };
+        match items.and_then(strings_of) {
+            Some(strings) => self.modifiers_of_strings(strs_hash(strings.clone()), strings, parse),
+            None => parse(),
+        }
     }
 
     fn intern_str(&self, value: &str) -> ArcStr {
@@ -393,5 +453,121 @@ impl<'c, 'v> AttrCoercionContext<'v> for MemoizedCoercionCtx<'c, 'v> {
         query: &'q str,
     ) -> buck2_error::Result<()> {
         AttrCoercionContext::visit_query_function_literals(self.base, visitor, expr, query)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_node::attrs::coercion_context::AttrCoercionContext;
+    use buck2_node::modifiers::CfgModifiers;
+    use buck2_node::modifiers::ModifierLabelParser;
+    use starlark::values::Heap;
+    use starlark::values::Value;
+    use starlark::values::list::AllocList;
+    use starlark::values::tuple::AllocTuple;
+
+    use crate::attrs::coerce::ctx::PARSED;
+    use crate::attrs::coerce::testing::coercion_ctx;
+
+    #[test]
+    fn test_modifiers_of_a_list_seen_before_are_those_of_parsing_it() {
+        Heap::temp(|heap| {
+            let ctx = coercion_ctx();
+            let labels = ModifierLabelParser::new(&ctx.cell_resolver);
+            let list = |strings: &[&str]| heap.alloc(AllocList(strings.iter().copied())).to_value();
+            let string = heap.alloc("cell1//os:linux").to_value();
+            let values: Vec<Value> = vec![
+                list(&[]),
+                list(&["cell1//os:linux"]),
+                list(&["cell1//os:linux", "cell1//cpu:arm64"]),
+                list(&["cell1//cpu:arm64", "cell1//os:linux"]),
+                // The characters of the third list, in one string.
+                list(&["cell1//os:linuxcell1//cpu:arm64"]),
+                heap.alloc(AllocTuple(["cell1//os:linux"])).to_value(),
+                list(&["not a label"]),
+                // Not lists of strings.
+                heap.alloc(AllocList([string, Value::new_none()]))
+                    .to_value(),
+                string,
+                Value::new_none(),
+            ];
+            // Twice, to also ask for every list after it was stored.
+            for value in values.iter().chain(&values) {
+                assert_eq!(
+                    CfgModifiers::from_target(*value, &labels),
+                    ctx.coerce_cfg_modifiers(*value),
+                    "{value}"
+                );
+            }
+            assert_ne!(
+                ctx.coerce_cfg_modifiers(values[2]),
+                ctx.coerce_cfg_modifiers(values[3])
+            );
+            assert_ne!(
+                ctx.coerce_cfg_modifiers(values[2]),
+                ctx.coerce_cfg_modifiers(values[4])
+            );
+            assert_ne!(
+                ctx.coerce_cfg_modifiers(values[1]),
+                ctx.coerce_cfg_modifiers(values[7])
+            );
+        });
+    }
+
+    #[test]
+    fn test_equal_lists_of_strings_are_parsed_once() {
+        Heap::temp(|heap| {
+            let ctx = coercion_ctx();
+            let list = |strings: &[&str]| heap.alloc(AllocList(strings.iter().copied())).to_value();
+            // How many times coercing `value` parses it.
+            let parses = |value: Value| {
+                let before = PARSED.get();
+                ctx.coerce_cfg_modifiers(value);
+                PARSED.get() - before
+            };
+
+            assert_eq!(1, parses(list(&["cell1//os:linux"])));
+            // An equal list, and a tuple of the same strings, find the first.
+            assert_eq!(0, parses(list(&["cell1//os:linux"])));
+            assert_eq!(
+                0,
+                parses(heap.alloc(AllocTuple(["cell1//os:linux"])).to_value())
+            );
+            assert_eq!(1, parses(list(&["cell1//cpu:arm64"])));
+            // Anything but a list of strings is parsed every time.
+            let string = heap.alloc("cell1//os:linux").to_value();
+            let mixed = heap
+                .alloc(AllocList([string, Value::new_none()]))
+                .to_value();
+            for value in [string, Value::new_none(), mixed] {
+                assert_eq!(1, parses(value));
+                assert_eq!(1, parses(value));
+            }
+        });
+    }
+
+    #[test]
+    fn test_lists_with_one_hash_keep_their_own_modifiers() {
+        Heap::temp(|heap| {
+            let ctx = coercion_ctx();
+            let labels = ModifierLabelParser::new(&ctx.cell_resolver);
+            let parse = |strings: [&str; 1]| {
+                CfgModifiers::from_target(heap.alloc(AllocList(strings)).to_value(), &labels)
+            };
+            let (linux, arm64) = (["cell1//os:linux"], ["cell1//cpu:arm64"]);
+
+            let of_linux = ctx.modifiers_of_strings(0, linux.into_iter(), || parse(linux));
+            let of_arm64 = ctx.modifiers_of_strings(0, arm64.into_iter(), || parse(arm64));
+            assert_eq!(parse(linux), of_linux);
+            assert_eq!(parse(arm64), of_arm64);
+            assert_ne!(of_linux, of_arm64);
+
+            // And neither is parsed again.
+            let seen = |strings: [&str; 1]| {
+                ctx.modifiers_of_strings(0, strings.into_iter(), || panic!("parsed twice"))
+            };
+            assert_eq!(of_linux, seen(linux));
+            assert_eq!(of_arm64, seen(arm64));
+        });
     }
 }

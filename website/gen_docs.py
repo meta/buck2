@@ -14,12 +14,14 @@ Generate API documentation for the website.
 """
 
 import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional, Tuple
 
 
 def read_file(path: Path) -> str:
@@ -56,6 +58,54 @@ def buck_command(args: argparse.Namespace) -> str:
     return buck + " --client-metadata id=buck2_gen_docs"
 
 
+def rule_summary(page: str) -> str:
+    """
+    The first sentence of the description of a rule page, for a table cell.
+    """
+    lines = page.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("# ")) + 1
+    paragraph: List[str] = []
+    for line in lines[start:]:
+        if line.startswith("#"):
+            break
+        if line.strip():
+            paragraph.append(line.strip())
+        elif paragraph:
+            break
+    text = " ".join(paragraph)
+    # The first period that ends a sentence, and not "e.g." or "i.e.".
+    end = re.search(r"(?<!e\.g)(?<!i\.e)\.(?=\s|$)", text)
+    if end:
+        text = text[: end.end()]
+    return text.replace("|", "\\|")
+
+
+def rules_table(
+    rules: List[Tuple[str, str, str]], categories: Optional[Dict[str, str]]
+) -> str:
+    """
+    A table of rules, each given as its name, the directory of its category and
+    its summary.
+
+    With `categories`, which maps a directory to the name of its category, the
+    table is the one of all rules: it has a column for the category, and its
+    links are relative to the directory that holds the category directories.
+    Without, the table is the one of a single category, and its links are
+    relative to the directory of that category.
+    """
+    header = "| Rule | Category | Description |\n|---|---|---|\n"
+    if categories is None:
+        header = "| Rule | Description |\n|---|---|\n"
+    rows = []
+    for name, directory, summary in sorted(rules):
+        if categories is None:
+            rows.append(f"| [`{name}`]({name}.md) | {summary} |")
+        else:
+            link = f"[`{name}`]({directory}/{name}.md)"
+            rows.append(f"| {link} | {categories[directory]} | {summary} |")
+    return header + "\n".join(rows) + "\n"
+
+
 def generate_prelude_rules_docs(buck: str) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         base_dir = Path("docs") / "prelude" / "rules"
@@ -73,14 +123,50 @@ def generate_prelude_rules_docs(buck: str) -> None:
 
         # Copy the files under Path(tmp) / prelude / docs / rules to base_dir
         folder = Path(tmp) / "prelude" / "docs" / "rules.bzl"
+        # The rules in each directory, as (name, directory, summary).
+        rules: Dict[str, List[Tuple[str, str, str]]] = {}
+        # The category of each directory. Docusaurus does not publish a
+        # directory whose name starts with a dot, so the `.NET` category is
+        # written to the directory `NET` and labelled `.NET` in the sidebar.
+        categories: Dict[str, str] = {}
         for orig in folder.rglob("*.md"):
             path = orig.relative_to(folder)
-            dest = base_dir.joinpath(path)
+            if len(path.parts) == 1:
+                # The index of all rules, which is written below.
+                continue
+            if len(path.parts) != 2:
+                raise Exception(f"Expected <category>/<page>.md, got `{path}`")
+            category = path.parts[0]
+            directory = category.lstrip(".")
+            if categories.setdefault(directory, category) != category:
+                raise Exception(
+                    f"`{category}` and `{categories[directory]}` are both written to `{directory}`"
+                )
+            dest = base_dir / directory / path.name
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(orig, dest)
+            if path.name == "index.md":
+                continue
+            page = read_file(orig)
+            write_file(dest, page)
+            rules.setdefault(directory, []).append(
+                (path.stem, directory, rule_summary(page))
+            )
+
+        for directory, category in categories.items():
+            write_file(
+                base_dir / directory / "index.md",
+                f"# {category}\n\n" + rules_table(rules.get(directory, []), None),
+            )
+            if directory != category:
+                write_file(
+                    base_dir / directory / "_category_.json",
+                    json.dumps({"label": category}) + "\n",
+                )
 
         index_file_content = (
-            "# Rules\n\nThese rules are available as standard in Buck2.\n"
+            "# Rules\n\nThe rules of the prelude that have a reference page. A build "
+            "file can use\nthem without a `load()`.\n\n"
+            + rules_table([r for rs in rules.values() for r in rs], categories)
         )
 
         os.makedirs(base_dir, exist_ok=True)

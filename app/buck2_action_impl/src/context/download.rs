@@ -96,10 +96,11 @@ pub(crate) fn analysis_actions_methods_download(methods: &mut MethodsBuilder) {
     ///   enough (preferably, in years).
     /// * `is_executable`: indicates the resulting file should be marked with executable
     ///   permissions
-    /// * `is_tree`: digest must point to a blob of type
-    ///   [RE.Tree](https://fburl.com/code/95rqgju0)
-    /// * `is_directory`: digest must point to a blob of type
-    ///   [RE.Directory](https://fburl.com/code/4eg40nnp)
+    /// * `is_tree`: digest must point to a blob of type `Tree`, as the
+    ///   [Remote Execution API](https://github.com/bazelbuild/remote-apis/blob/main/build/bazel/remote/execution/v2/remote_execution.proto)
+    ///   defines it
+    /// * `is_directory`: digest must point to a blob of type `Directory`, as the Remote Execution
+    ///   API defines it
     fn cas_artifact<'v>(
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] output: OutputArtifactArg<'v>,

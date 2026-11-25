@@ -278,7 +278,7 @@ impl<'v> StarlarkValue<'v> for AnalysisContext<'v> {}
 /// Usually the sole argument to the `impl` argument of the `rule` function.
 ///
 /// ```python
-/// def _impl_my_rule(ctx: AnalysisContext) -> ["provider"]:
+/// def _impl_my_rule(ctx: AnalysisContext) -> list[Provider]:
 ///     return [DefaultInfo()]
 /// my_rule = rule(impl = _impl_my_rule, attrs = {})
 /// ```

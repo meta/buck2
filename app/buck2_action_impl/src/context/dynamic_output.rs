@@ -72,13 +72,13 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
     /// * `dynamic` - a list of artifacts whose values will be available in the function. These will
     ///   be built before the function is run.
     /// * `inputs` - parameter is ignored.
-    /// * `outputs` - a list of unbound artifacts (created with `declare_artifact`) which will be
-    ///   bound by the function.
+    /// * `outputs` - a list of the outputs which will be bound by the function: artifacts
+    ///   created with `declare_output`, each passed as `artifact.as_output()`.
     /// * The function argument is given 3 arguments:
     ///   * `ctx` (context) - which is the same as that passed to the initial rule analysis.
     ///   * `artifacts` - using one of the artifacts from `dynamic` (example usage:
     ///     `artifacts[artifact_from_dynamic])` gives an artifact value containing the methods
-    ///     `read_string`, `read_lines`, and `read_json` to obtain the values from the disk in
+    ///     `read_string` and `read_json` to obtain the values from the disk in
     ///     various formats.  Anything too complex should be piped through a Python script for
     ///     transformation to JSON.
     ///   * `outputs` - using one of the artifacts from the `dynamic_output`'s `outputs` (example

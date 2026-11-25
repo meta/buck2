@@ -141,7 +141,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
     ///   build that might be present on a disk; in which case, command from arguments should be
     ///   responsible for the cleanup (that is useful, for example, when an action is supporting
     ///   incremental mode and its outputs are based on result from a previous build)
-    /// * `metadata_env_var` and `meadata_path` should be used together: both set or both unset
+    /// * `metadata_env_var` and `metadata_path` should be used together: both set or both unset
     ///     * `metadata_path`: defines a path relative to the result directory for a file with
     ///       action metadata, which will be created right before the command will be run.
     ///     * Metadata contains the path relative to the Buck2 project root and hash digest for

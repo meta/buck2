@@ -51,7 +51,7 @@ use crate::interpreter::rule_defs::provider::ProviderCollection;
 
 /// A provider that all rules' implementations must return
 ///
-/// In many simple cases, this can be inferred for the user.
+/// The providers of a subtarget get an empty `DefaultInfo` if they have none.
 ///
 /// Example of a rule's implementation function and how these fields are used by the framework:
 ///
@@ -59,7 +59,7 @@ use crate::interpreter::rule_defs::provider::ProviderCollection;
 /// # //foo_binary.bzl
 /// def impl(ctx):
 ///     out = ctx.actions.declare_output("out")
-///     ctx.actions.run([ctx.attrs._cc[RunInfo], "-o", out.as_output()] + ctx.attrs.srcs)
+///     ctx.actions.run([ctx.attrs._cc[RunInfo], "-o", out.as_output()] + ctx.attrs.srcs, category = "compile")
 ///     stripped_out = ctx.actions.declare_output("stripped")
 ///     debug_symbols_out = ctx.actions.declare_output("debug_info")
 ///     ctx.actions.run([
@@ -70,7 +70,7 @@ use crate::interpreter::rule_defs::provider::ProviderCollection;
 ///         stripped_out.as_output(),
 ///         "--debug-symbols-out",
 ///         debug_symbols_out.as_output(),
-///     ])
+///     ], category = "strip")
 ///     return [
 ///         DefaultInfo(
 ///             sub_targets = {
@@ -86,35 +86,28 @@ use crate::interpreter::rule_defs::provider::ProviderCollection;
 ///     impl = impl,
 ///     attrs = {
 ///         "srcs": attrs.list(attrs.source()),
-///         "_cc": attrs.dep(default = "//tools:cc", providers = [RunInfo]),
-///         "_strip_script": attrs.dep(default = "//tools:strip", providers = [RunInfo]),
+///         "_cc": attrs.exec_dep(default = "//tools:cc", providers = [RunInfo]),
+///         "_strip": attrs.exec_dep(default = "//tools:strip", providers = [RunInfo]),
 ///     },
 /// )
 ///
 ///
-/// def foo_binary_wrapper(name, srcs):
-///     foo_binary(
-///         name = name,
-///         srcs = src,
-///         out = name,
-///         stripped = name + ".stripped",
-///         debug_info = name + ".debug_info",
-///     )
-///
 /// # //subdir/BUCK
-/// load("//:foo_binary.bzl", "foo_binary_wrapper")
+/// load("//:foo_binary.bzl", "foo_binary")
 ///
-/// genrule(name = "gen_stuff", ...., default_outs = ["foo.cpp"])
+/// genrule(name = "gen_stuff", out = "foo.cpp", cmd = "echo 'int foo();' > $OUT")
 ///
 /// # ":gen_stuff" pulls the default_outputs for //subdir:gen_stuff
-/// foo_binary_wrapper(name = "foo", srcs = glob(["*.cpp"]) + [":gen_stuff"])
+/// foo_binary(name = "foo", srcs = glob(["*.cpp"]) + [":gen_stuff"])
+/// ```
 ///
+/// ```sh
 /// # Builds just 'foo' binary. The strip command is never invoked.
-/// $ buck build //subdir:foo
+/// $ buck2 build //subdir:foo
 ///
 /// # builds the 'foo' binary, because it is needed by the 'strip' command. Ensures that
 /// # both the stripped binary and the debug symbols are built.
-/// $ buck build //subdir:foo[stripped]
+/// $ buck2 build '//subdir:foo[stripped]'
 /// ```
 #[internal_provider(default_info_creator)]
 #[derive(
@@ -140,11 +133,10 @@ pub struct DefaultInfo<'v> {
     /// explicitly (via CLI or `$(location)` etc), or depended on as as a "source"
     /// (i.e., `attrs.source()`).
     default_outputs: ValueOf<'v, StarlarkList<'v, StarlarkArtifactView<'v>>>,
-    /// A list of `ArtifactTraversable`. The underlying `Artifact`s they define will
+    /// A list of artifacts and `cmd_args`. An artifact stands for itself, and a
+    /// `cmd_args` for all its inputs. They will
     /// be built by default if this rule is requested (via CLI or `$(location)` etc),
     /// but _not_ when it's depended on as as a "source" (i.e., `attrs.source()`).
-    /// `ArtifactTraversable` can be an `Artifact` (which yields itself), or
-    /// `cmd_args`, which expand to all their inputs.
     other_outputs: ValueOf<'v, StarlarkList<'v, StarlarkCmdArgsLike>>,
 }
 

@@ -1028,14 +1028,41 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
     ///
     /// ```python
     /// def _my_rule(ctx: AnalysisContext) -> list[Provider]:
-    ///     output = ctx.actions.write("hello.txt", ctx.attrs.contents, executable = ctx.attrs.exe)
-    ///     return [DefaultInfo(outputs = [output])]
+    ///     output = ctx.actions.write("hello.txt", ctx.attrs.contents, is_executable = ctx.attrs.exe)
+    ///     return [DefaultInfo(default_output = output)]
     ///
-    /// MyRule = rule(impl = _my_rule, attrs = {
+    /// my_rule = rule(impl = _my_rule, attrs = {
     ///     "contents": attrs.string(),
-    ///     "exe": attrs.option(attrs.bool(), default = False),
+    ///     "exe": attrs.bool(default = False),
     /// })
     /// ```
+    ///
+    /// A `BUCK` file that loads `my_rule` declares a target of the rule with
+    /// `my_rule(name = "hello", contents = "Hello")`.
+    ///
+    /// The arguments are:
+    ///
+    /// * `impl` - the function that implements the rule. It is called with the
+    ///   `AnalysisContext` of a target and returns the target's providers, which must include
+    ///   a `DefaultInfo`, or a promise of them.
+    /// * `attrs` - the attributes that a target of the rule takes: a dictionary from the name of
+    ///   each attribute to a value made with the functions of `attrs`.
+    /// * `cfg` - a transition that is applied to every target of the rule: the target is built
+    ///   in the configuration that the transition returns.
+    /// * `supports_incoming_transition` - gives targets of the rule an `incoming_transition`
+    ///   attribute, with which a target names the transition that is applied to it. A rule
+    ///   cannot have both this and `cfg`, and can have neither if it is a configuration rule
+    ///   or a toolchain rule.
+    /// * `doc` - the description of the rule in generated documentation.
+    /// * `is_configuration_rule` - the rule defines parts of configurations, as `constraint` and
+    ///   `platform` do. Its targets are analyzed without a configuration, so their attributes
+    ///   cannot use `select()`.
+    /// * `is_toolchain_rule` - the rule defines toolchains. Other targets depend on its targets
+    ///   through `attrs.toolchain_dep()`. A rule cannot be both a configuration rule and a
+    ///   toolchain rule.
+    /// * `uses_plugins` - the plugin kinds whose plugins the rule reads with `ctx.plugins`.
+    /// * `exec_groups` - the execution groups that the exec deps and actions of the rule can
+    ///   be put in.
     fn rule<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallableChecked<
             'v,

@@ -744,7 +744,11 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
     ///
     /// ```python
     /// resources = cmd_args(resource_file, format = "-DFOO={}", ignore_artifacts=True)
-    /// ctx.actions.run(cmd_args("gcc", "-c", source_file, resources))
+    /// out = ctx.actions.declare_output("out.o")
+    /// ctx.actions.run(
+    ///     cmd_args("gcc", "-c", source_file, resources, "-o", out.as_output()),
+    ///     category = "compile",
+    /// )
     /// ```
     ///
     /// Note that `ignore_artifacts` sets all artifacts referenced by this `cmd_args` to be ignored, including those added afterwards,

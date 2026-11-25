@@ -644,14 +644,15 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
     /// Typically named with an `Info` suffix.
     ///
     /// ```python
-    /// GroovyLibraryInfo(fields = [
+    /// GroovyLibraryInfo = provider(fields = [
     ///     "objects",  # a list of artifacts
     ///     "options",  # a string containing compiler options
     /// ])
     /// ```
     ///
-    /// Given a dependency you can obtain the provider with `my_dep[GroovyLibraryInfo]`
-    /// which returns either `None` or a value of type `GroovyLibraryInfo`.
+    /// Given a dependency you can obtain the provider with `my_dep[GroovyLibraryInfo]`, which is
+    /// an error if the dependency does not have the provider, or with
+    /// `my_dep.get(GroovyLibraryInfo)`, which returns `None` in that case.
     ///
     /// For providers that accumulate upwards a transitive set is often a good choice.
     fn provider<'v>(

@@ -147,11 +147,13 @@ impl<'v> StarlarkValue<'v> for StarlarkActionErrorContext<'v> {}
 ///
 /// # Use the error handler in an action
 /// def _impl(ctx):
+///     out = ctx.actions.declare_output("main")
 ///     ctx.actions.run(
-///         cmd_args(["compiler", "main.rs"]),
+///         cmd_args(["compiler", "main.rs", "-o", out.as_output()]),
 ///         category = "compile",
 ///         error_handler = my_error_handler,
 ///     )
+///     return [DefaultInfo(default_output = out)]
 /// ```
 #[starlark_module]
 fn action_error_context_methods(builder: &mut MethodsBuilder) {

@@ -481,7 +481,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// value corresponding to the inner to the rule. Often used to make a rule optional:
     ///
     /// ```python
-    /// attrs.option(attr.string(), default = None)
+    /// attrs.option(attrs.string(), default = None)
     /// ```
     fn option<'v>(
         #[starlark(require = pos)] inner: &StarlarkAttribute,

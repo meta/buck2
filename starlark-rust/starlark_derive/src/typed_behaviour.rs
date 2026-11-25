@@ -350,19 +350,11 @@ pub(crate) fn derive_from_typed(
         return Ok(None);
     }
 
-    match receiver {
-        syn::FnArg::Receiver(syn::Receiver {
-            mutability: None,
-            kind: syn::ReceiverKind::Reference(_, None, None),
-            ..
-        }) => {}
-        syn::FnArg::Typed(_) => {}
-        receiver => {
-            return method.error(
-                receiver,
-                "the receiver of a typed method is a parameter named `this`, or `&self`",
-            );
-        }
+    if !matches!(receiver, syn::FnArg::Typed(_)) {
+        return method.error(
+            receiver,
+            "the receiver of a typed method is a parameter named `this`",
+        );
     }
     if !sig.generics.params.is_empty() || sig.generics.where_clause.is_some() {
         return method.error(&sig.generics, "a typed method has no generics");
@@ -380,7 +372,7 @@ pub(crate) fn derive_from_typed(
     let output = &sig.output;
     let block = &f.block;
     let glue = format_ident!("typed_{}", name);
-    // The typed body goes into the derived method as a closure: there it sees `self`, `Self`
+    // The typed body goes into the derived method as a closure: there it sees `this`, `Self`
     // and the impl's generics as it did where it was written, which a nested `fn` would not,
     // and it needs no item on `Self`, which may be a type of another crate.
     //

@@ -92,8 +92,8 @@ macro_rules! starlark_complex_value {
 /// impl<'v> StarlarkValue<'v> for MyObject {
 ///     // We can choose to implement whichever methods we want.
 ///     // All other operations will result in runtime errors.
-///     fn plus(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-///         Ok(heap.alloc(MyObject(self.0.to_uppercase())).to_value())
+///     fn plus(this: &Self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+///         Ok(heap.alloc(MyObject(this.0.to_uppercase())).to_value())
 ///     }
 /// }
 /// ```

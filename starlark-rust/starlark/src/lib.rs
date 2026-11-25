@@ -378,12 +378,12 @@
 //! #[starlark_value(type = "complex")]
 //! impl<'v> StarlarkValue<'v> for Complex {
 //!     // How we add them
-//!     fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
+//!     fn add(this: &Self, rhs: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
 //!         if let Some(rhs) = rhs.downcast_ref::<Self>() {
 //!             Some(Ok(heap
 //!                 .alloc(Complex {
-//!                     real: self.real + rhs.real,
-//!                     imaginary: self.imaginary + rhs.imaginary,
+//!                     real: this.real + rhs.real,
+//!                     imaginary: this.imaginary + rhs.imaginary,
 //!                 })
 //!                 .to_value()))
 //!         } else {

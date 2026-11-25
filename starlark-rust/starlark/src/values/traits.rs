@@ -239,9 +239,30 @@ impl<'v, V> ComplexValue<'v> for V where V: StarlarkValue<'v> + Trace<'v> + Free
 /// | `this: ValueTyped<'v, Self>` | The value of a type with one representation, as a handle that derefs to the representation. |
 /// | `this: Self::Get` | What this trait declares, for a body that calls another method of the trait on the same value. |
 ///
-/// Nothing is checked to bind it: a method is only called for a value of its type. A block may
-/// also still write `&self`, which is the representation or, for a type with several, the
-/// view.
+/// Nothing is checked to bind it: a method is only called for a value of its type.
+///
+/// The receiver is always that parameter. A method written with `&self` does not compile:
+///
+/// ```compile_fail
+/// # use allocative::Allocative;
+/// # use derive_more::Display;
+/// # use starlark::starlark_simple_value;
+/// # use starlark::values::NoSerialize;
+/// # use starlark::values::ProvidesStaticType;
+/// # use starlark::values::StarlarkPagable;
+/// # use starlark::values::StarlarkValue;
+/// # use starlark_derive::starlark_value;
+/// # #[derive(Debug, Display, ProvidesStaticType, NoSerialize, StarlarkPagable, Allocative)]
+/// # #[display("Foo")]
+/// # struct Foo;
+/// # starlark_simple_value!(Foo);
+/// #[starlark_value(type = "foo")]
+/// impl<'v> StarlarkValue<'v> for Foo {
+///     fn to_bool(&self) -> bool {
+///         true
+///     }
+/// }
+/// ```
 ///
 /// The methods are associated functions. Rust code that has a [`Value`] calls the method of
 /// the same name on it, which dispatches here; a method cannot be called on a representation

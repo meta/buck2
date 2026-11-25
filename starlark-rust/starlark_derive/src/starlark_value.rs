@@ -1058,39 +1058,11 @@ impl ImplStarlarkValue {
     /// The method's first parameter is its receiver. It is named `this` and declared with any
     /// type that converts from the type; the body runs with it bound from the `Get`. A
     /// receiver declared `Self::Get` is the trait's own, and the method stays as written.
-    ///
-    /// A method may also still be written with `&self`. Its body runs with `self` bound to
-    /// the representation, for a type that is its own representation, or to the view.
     fn bind_receiver(&self, f: &mut syn::ImplItemFn) -> syn::Result<()> {
         if WITHOUT_RECEIVER.iter().any(|name| f.sig.ident == name) {
             return Ok(());
         }
-        let lt = &self.lifetime_param;
-        let (binding, this, rename_self): (syn::Stmt, syn::Ident, Option<syn::Ident>) = match f
-            .sig
-            .inputs
-            .first()
-        {
-            Some(syn::FnArg::Receiver(syn::Receiver {
-                mutability: None,
-                kind: syn::ReceiverKind::Reference(_, None, None),
-                self_token,
-                ..
-            })) => {
-                let span = self_token.span;
-                let this = syn::Ident::new("__starlark_this", span);
-                let this_self = syn::Ident::new("__starlark_self", span);
-                let binding = match self.impl_of {
-                    ImplOf::Value => syn::parse_quote! {
-                        let #this_self: &#lt Self =
-                            starlark::__derive_refs::behaviour::receiver::<Self, _>(#this);
-                    },
-                    ImplOf::Type => syn::parse_quote! {
-                        let #this_self: &Self = &#this;
-                    },
-                };
-                (binding, this, Some(this_self))
-            }
+        let (binding, this): (syn::Stmt, syn::Ident) = match f.sig.inputs.first() {
             Some(syn::FnArg::Typed(param)) if is_named_this(&param.pat) => {
                 if is_self_get(&param.ty) {
                     return Ok(());
@@ -1103,7 +1075,7 @@ impl ImplStarlarkValue {
                 let binding = syn::parse_quote_spanned! { param.span() =>
                     let #pat: #ty = starlark::__derive_refs::behaviour::receiver::<Self, _>(#this);
                 };
-                (binding, this, None)
+                (binding, this)
             }
             _ => {
                 return Err(syn::Error::new_spanned(
@@ -1113,34 +1085,8 @@ impl ImplStarlarkValue {
                 ));
             }
         };
-        fn replace_self(
-            tokens: proc_macro2::TokenStream,
-            with: &syn::Ident,
-        ) -> proc_macro2::TokenStream {
-            tokens
-                .into_iter()
-                .map(|tt| match tt {
-                    proc_macro2::TokenTree::Ident(i) if i == "self" => {
-                        let mut with = with.clone();
-                        with.set_span(i.span());
-                        proc_macro2::TokenTree::Ident(with)
-                    }
-                    proc_macro2::TokenTree::Group(g) => {
-                        let mut new =
-                            proc_macro2::Group::new(g.delimiter(), replace_self(g.stream(), with));
-                        new.set_span(g.span());
-                        proc_macro2::TokenTree::Group(new)
-                    }
-                    tt => tt,
-                })
-                .collect()
-        }
         f.sig.inputs[0] = syn::parse_quote! { #this: Self::Get };
-        let block = &f.block;
-        let body = match &rename_self {
-            Some(this_self) => replace_self(quote! { #block }, this_self),
-            None => quote! { #block },
-        };
+        let body = &f.block;
         f.block = syn::parse_quote! {
             {
                 #binding

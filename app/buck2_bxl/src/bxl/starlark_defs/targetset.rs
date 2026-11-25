@@ -26,6 +26,7 @@ use pagable::PagableSerialize;
 use starlark::any::IsStaticType;
 use starlark::any::ProvidesStaticType;
 use starlark::docs::DocItem;
+use starlark::docs::DocType;
 use starlark::environment::MethodsBuilder;
 use starlark::pagable::StarlarkDeserialize;
 use starlark::pagable::StarlarkDeserializeContext;
@@ -188,8 +189,6 @@ where
     }
 }
 
-starlark::methods_static!(STARLARK_TARGET_SET_METHODS = starlark_target_set_methods);
-
 #[starlark_value(type = "target_set", methods = starlark_target_set_methods)]
 impl<'v, Node: NodeLike> StarlarkValue<'v> for StarlarkTargetSet<Node>
 where
@@ -328,12 +327,12 @@ impl<'v> StarlarkValue<'v> for StarlarkTargetSetType {
     }
 
     fn documentation(_this: &Self) -> DocItem {
-        // All node kinds share one methods table, so its docs describe every target set.
-        DocItem::Type(
-            STARLARK_TARGET_SET_METHODS
-                .methods()
-                .documentation(Self::any_kind_ty()),
-        )
+        // All node kinds have the same methods, so the docs of one kind's describe every
+        // target set.
+        DocItem::Type(DocType {
+            ty: Self::any_kind_ty(),
+            ..DocType::from_starlark_value::<StarlarkTargetSet<TargetNode>>()
+        })
     }
 }
 

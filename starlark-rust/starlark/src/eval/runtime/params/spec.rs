@@ -66,7 +66,8 @@ use crate::values::dict::DictRef;
 pub enum ParametersSpecParam<V> {
     /// Parameter is required.
     Required,
-    /// Parameter is optional (returned as `None`).
+    /// Leaving the argument out is no error and leaves the slot empty: the function binds
+    /// the parameter's default itself.
     Optional,
     /// Parameter has default value.
     Defaulted(V),
@@ -94,10 +95,10 @@ pub(crate) struct ParameterKind(u32);
 /// Unpacked view of [`ParameterKind`] for matching.
 pub(crate) enum ParameterKindUnpacked {
     Required,
-    /// When optional parameter is not supplied, there's no error,
-    /// but the slot remains `None`.
+    /// When the argument is not supplied, there's no error, but the slot remains `None`.
     ///
-    /// This is used only in native code, parameters of type `Option<T>` become `Optional`.
+    /// This is used only in native code: a native function binds a default itself, where the
+    /// conversion of a constant folds, and for `Absent` there is no value to put in the slot.
     Optional,
     /// Index into [`ParametersSpec::defaults`] holding this parameter's default value.
     Defaulted(u32),

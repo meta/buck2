@@ -444,12 +444,14 @@ fn render_unpack_value(value: syn::Expr, arg: &StarArg) -> syn::Expr {
 /// Convert an expression of type `Option<Value>` to an expression of type of parameter.
 fn render_unpack_option_value(option_value: syn::Expr, arg: &StarArg) -> syn::Expr {
     let name_str = ident_string(&arg.param.ident);
-    if arg.is_option_value() {
-        // If we already have a `Option<Value>`, no need to unpack it.
-        option_value
-    } else if arg.is_option() {
+    if arg.is_option() && arg.default.is_none() {
+        // TRANSITIONAL: an `Option<T>` parameter that says no default has `Absent`.
         syn::parse_quote! {
-            starlark::__derive_refs::parse_args::check_optional(#name_str, #option_value)?
+            starlark::__derive_refs::parse_args::check_defaulted(
+                #name_str,
+                #option_value,
+                || starlark::values::Absent,
+            )?
         }
     } else if let (Some(default), true) = (&arg.default, arg.is_value()) {
         // A `Value` parameter takes every value: there is nothing to check its default against.
@@ -562,28 +564,36 @@ fn render_starlark_type(typ: &syn::Type) -> syn::Expr {
 }
 
 fn render_regular_native_callable_param(arg: &StarArg) -> syn::Result<syn::Expr> {
-    let ty = render_starlark_type(arg.without_option());
     let name_str = ident_string(&arg.param.ident);
     let doc_hidden = arg.doc_hidden;
-    let required: syn::Expr = match (&arg.default, arg.is_option()) {
-        (Some(_), true) => {
-            return Err(syn::Error::new(
-                arg.span,
-                "Option arguments cannot have defaults",
-            ));
-        }
-        (None, true) => render_some(
-            syn::parse_quote! { starlark::__derive_refs::param_spec::NativeCallableParamDefaultValue::Optional },
-        ),
-        (None, false) => render_none(),
-        (Some(default), _) => {
-            let default = render_default(default);
+    let param_ty = &arg.param.ty;
+    // The parameter's default, for a parameter that has one.
+    // TRANSITIONAL: an `Option<T>` parameter that says no default has `Absent`.
+    let default: Option<syn::Expr> = match (&arg.default, arg.is_option()) {
+        (None, true) => Some(syn::parse_quote! { starlark::values::Absent }),
+        (None, false) => None,
+        (Some(default), _) => Some(render_default(default)),
+    };
+    let (ty, required): (syn::Expr, syn::Expr) = match default {
+        None => (render_starlark_type(param_ty), render_none()),
+        Some(default) => (
+            syn::parse_quote! {
+                {
+                    fn get_type_string<'v>() -> starlark::typing::Ty {
+                        starlark::__derive_refs::parse_args::defaulted_param_ty::<#param_ty, _>(&#default)
+                    }
+                    get_type_string()
+                }
+            },
             render_some(syn::parse_quote! {
-                starlark::__derive_refs::param_spec::NativeCallableParamDefaultValue::Value(
-                    starlark::values::ParamDefault::param_default(#default),
-                )
-            })
-        }
+                {
+                    fn documented<'v>() -> starlark::__derive_refs::param_spec::NativeCallableParamDefaultValue {
+                        starlark::__derive_refs::parse_args::documented_default::<#param_ty, _>(#default)
+                    }
+                    documented()
+                }
+            }),
+        ),
     };
 
     Ok(syn::parse_quote! {

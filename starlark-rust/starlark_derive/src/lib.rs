@@ -59,10 +59,9 @@ mod vtable;
 /// }
 /// ```
 ///
-/// Parameters operate as named parameters of a given type. Each parameter will be unpacked with `UnpackValue`, unless:
-///
-/// * It is type `Option`, in which case it will be considered optional.
-/// * It is a single argument of type `Arguments`, in which case all arguments will be passed together with minimal interpretation.
+/// Parameters operate as named parameters of a given type. Each parameter will be unpacked with `UnpackValue`,
+/// and is required unless it says a default. A single argument of type `Arguments` is the exception: all
+/// arguments are passed together with minimal interpretation.
 ///
 /// There are a number of attributes that can be add to each parameter by writing attributes before the
 /// parameter name:
@@ -71,6 +70,10 @@ mod vtable;
 ///   It is a Starlark value that exists without a heap, written as any `starlark::values::ParamDefault`:
 ///   `true`, `3`, `NoneType`, a string literal, `EmptyList`, or a static value. It has to be of the
 ///   parameter's type, or the function does not compile.
+/// * `#[starlark(default = Absent)]` on a parameter of type `Option<T>` - leaving the argument out is passing
+///   nothing: the parameter is `None`, and an argument, `None` included, is `Some`. It is the last choice for an
+///   optional parameter, after a real default and after `default = NoneType` on a `NoneOr<T>`:
+///   `starlark::values::Absent` says when it is the right one.
 /// * `#[starlark(require = pos)]` - require the parameter to be passed by position, not named.
 /// * `#[starlark(require = named)]` - require the parameter to be passed by name, not by position.
 /// * `#[starlark(args)]` - treat the argument as `*args` in Starlark, receiving all additional positional arguments as a tuple.

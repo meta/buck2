@@ -27,7 +27,6 @@ use syn::spanned::Spanned;
 use crate::module::parse::ModuleKind;
 use crate::module::simple_param::SimpleParam;
 use crate::module::util::is_type_name;
-use crate::module::util::unpack_option;
 
 #[derive(Debug)]
 pub(crate) struct StarModule {
@@ -237,18 +236,8 @@ impl StarArg {
         is_type_name(&self.param.ty, "Option")
     }
 
-    /// Remove the `Option` if it exists, otherwise return the real type.
-    pub fn without_option(&self) -> &Type {
-        unpack_option(&self.param.ty).unwrap_or(&self.param.ty)
-    }
-
     pub fn is_value(&self) -> bool {
         is_type_name(&self.param.ty, "Value")
-    }
-
-    /// Parameter type is `Option<Value>`.
-    pub(crate) fn is_option_value(&self) -> bool {
-        self.is_option() && is_type_name(self.without_option(), "Value")
     }
 
     pub fn requires_signature(&self) -> bool {

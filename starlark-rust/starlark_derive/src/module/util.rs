@@ -31,29 +31,6 @@ pub(crate) fn is_type_name(x: &Type, name: &str) -> bool {
     false
 }
 
-/// If the type is `Option`, return the type inside it.
-pub(crate) fn unpack_option(x: &Type) -> Option<&Type> {
-    if let Type::Path(TypePath {
-        path: Path { segments, .. },
-        ..
-    }) = x
-    {
-        if let Some(seg1) = segments.last() {
-            if seg1.ident == "Option" {
-                if let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
-                    args, ..
-                }) = &seg1.arguments
-                {
-                    if let Some(GenericArgument::Type(x)) = args.first() {
-                        return Some(x);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 pub(crate) fn ident_string(x: &Ident) -> String {
     let x = x.to_string();
     match x.strip_prefix("r#") {

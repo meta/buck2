@@ -116,6 +116,7 @@ pub use crate::values::layout::static_string::constant_string;
 pub use crate::values::layout::typed::FrozenValueTyped;
 pub use crate::values::layout::typed::ValueTyped;
 pub use crate::values::layout::value::Value;
+pub use crate::values::param_default::Absent;
 pub use crate::values::param_default::EmptyDict;
 pub use crate::values::param_default::EmptyList;
 pub use crate::values::param_default::ParamDefault;

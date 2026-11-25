@@ -23,6 +23,7 @@ use crate::const_frozen_string;
 use crate::docs::DocItem;
 use crate::docs::DocMember;
 use crate::environment::GlobalsBuilder;
+use crate::values::Absent;
 use crate::values::EmptyDict;
 use crate::values::EmptyList;
 use crate::values::Value;
@@ -145,5 +146,52 @@ fn test_default_is_documented_as_its_repr() {
             "{}",
             "None"
         ],
+    );
+}
+
+#[starlark_module]
+fn absent_functions(builder: &mut GlobalsBuilder) {
+    /// Says which of its arguments were left out; `None` is an argument like any other.
+    fn left_out<'v>(
+        #[starlark(default = Absent)] x: Option<i32>,
+        #[starlark(default = Absent)] v: Option<Value<'v>>,
+    ) -> anyhow::Result<String> {
+        Ok(format!(
+            "{} {}",
+            x.map_or("absent".to_owned(), |x| x.to_string()),
+            v.map_or("absent".to_owned(), |v| v.to_repr()),
+        ))
+    }
+}
+
+#[test]
+fn test_an_argument_that_is_left_out_is_not_a_value() {
+    let mut a = Assert::new();
+    a.globals_add(absent_functions);
+    a.eq("'absent absent'", "left_out()");
+    a.eq("'1 absent'", "left_out(1)");
+    a.eq("'absent None'", "left_out(v = None)");
+    a.eq("'2 [3]'", "left_out(2, [3])");
+    // The parameter's type is `int`: `None` is not one.
+    a.fail("left_out(None)", "Type of parameter `x` doesn't match");
+
+    let globals = GlobalsBuilder::standard().with(absent_functions).build();
+    let DocItem::Member(DocMember::Function(left_out)) = globals
+        .documentation()
+        .members
+        .shift_remove("left_out")
+        .unwrap()
+    else {
+        panic!("`left_out` is a function");
+    };
+    let params: Vec<_> = left_out
+        .params
+        .pos_or_named
+        .iter()
+        .map(|p| (p.typ.to_string(), p.default_value.as_deref().unwrap()))
+        .collect();
+    assert_eq!(
+        params,
+        [("int".to_owned(), "..."), ("typing.Any".to_owned(), "...")]
     );
 }

@@ -15,9 +15,12 @@
  * limitations under the License.
  */
 
+use crate::__derive_refs::param_spec::NativeCallableParamDefaultValue;
 use crate::__derive_refs::param_spec::param_default_at;
 use crate::eval::Arguments;
 use crate::eval::ParametersSpec;
+use crate::typing::Ty;
+use crate::values::Absent;
 use crate::values::Heap;
 use crate::values::ParamDefault;
 use crate::values::UnpackValue;
@@ -25,6 +28,7 @@ use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::dict::AllocDict;
 use crate::values::type_expr::Accepts;
+use crate::values::type_expr::StarlarkTypeExpr;
 
 /// Collect `N` arguments.
 ///
@@ -85,15 +89,62 @@ pub fn check_required<'v, T: UnpackValue<'v>>(
     }
 }
 
-/// Utility for checking an optional parameter matches what you expect.
-#[inline(always)]
-pub fn check_optional<'v, T: UnpackValue<'v>>(
-    name: &str,
-    x: Option<Value<'v>>,
-) -> crate::Result<Option<T>> {
-    match x {
-        None => Ok(None),
-        Some(x) => Ok(Some(T::unpack_named_param(x, name)?)),
+/// The default of a parameter of type `T`, as `#[starlark(default = ..)]` takes it: a value
+/// that the parameter's conversion takes, which is any [`ParamDefault`], or [`Absent`] for an
+/// `Option` parameter.
+pub trait BindDefault<'v, T>: Sized {
+    /// The parameter for an argument that was left out.
+    fn bind_default(self, name: &str) -> crate::Result<T>;
+
+    /// The parameter for an argument that was passed.
+    fn bind_argument(value: Value<'v>, name: &str) -> crate::Result<T>;
+
+    /// The parameter's type, for the typechecker and the documentation.
+    fn param_ty() -> Ty;
+
+    /// The default, for the documentation.
+    fn documented(self) -> NativeCallableParamDefaultValue;
+}
+
+/// An argument that is left out is bound from the default by the parameter's own conversion.
+impl<'v, T: UnpackValue<'v>, D: ParamDefault> BindDefault<'v, T> for D {
+    #[inline(always)]
+    fn bind_default(self, name: &str) -> crate::Result<T> {
+        T::unpack_named_param(param_default_at(self), name)
+    }
+
+    #[inline(always)]
+    fn bind_argument(value: Value<'v>, name: &str) -> crate::Result<T> {
+        T::unpack_named_param(value, name)
+    }
+
+    fn param_ty() -> Ty {
+        <T::Type as StarlarkTypeExpr<'v>>::starlark_type_repr()
+    }
+
+    fn documented(self) -> NativeCallableParamDefaultValue {
+        NativeCallableParamDefaultValue::Value(self.param_default())
+    }
+}
+
+/// An argument that is left out is no value at all.
+impl<'v, T: UnpackValue<'v>> BindDefault<'v, Option<T>> for Absent {
+    #[inline(always)]
+    fn bind_default(self, _name: &str) -> crate::Result<Option<T>> {
+        Ok(None)
+    }
+
+    #[inline(always)]
+    fn bind_argument(value: Value<'v>, name: &str) -> crate::Result<Option<T>> {
+        Ok(Some(T::unpack_named_param(value, name)?))
+    }
+
+    fn param_ty() -> Ty {
+        <T::Type as StarlarkTypeExpr<'v>>::starlark_type_repr()
+    }
+
+    fn documented(self) -> NativeCallableParamDefaultValue {
+        NativeCallableParamDefaultValue::Absent
     }
 }
 
@@ -116,21 +167,24 @@ impl<'v, T: UnpackValue<'v>, D: ParamDefault, Path> DefaultFor<'v, T, Path> for 
 {
 }
 
-/// Converts the argument of a parameter that has a default: an argument that was left out is
-/// the default.
+/// [`Absent`] is not a value: it is the default of an `Option` parameter of any type.
+#[diagnostic::do_not_recommend]
+impl<'v, T: UnpackValue<'v>> DefaultFor<'v, Option<T>, ()> for Absent {}
+
+/// Converts the argument of a parameter that has a default.
 ///
 /// The two arms convert separately, where converting `x.unwrap_or_else(default)` would be
 /// less code: a default is a constant, and its conversion folds only if it is not merged with
 /// that of an argument.
 #[inline(always)]
-pub fn check_defaulted<'v, T: UnpackValue<'v>, D: ParamDefault + DefaultFor<'v, T, Path>, Path>(
+pub fn check_defaulted<'v, T, D: BindDefault<'v, T> + DefaultFor<'v, T, Path>, Path>(
     name: &str,
     x: Option<Value<'v>>,
     default: impl FnOnce() -> D,
 ) -> crate::Result<T> {
     match x {
-        None => T::unpack_named_param(param_default_at(default()), name),
-        Some(x) => T::unpack_named_param(x, name),
+        None => default().bind_default(name),
+        Some(x) => D::bind_argument(x, name),
     }
 }
 
@@ -145,6 +199,18 @@ pub fn check_defaulted_value<'v, D: ParamDefault>(
         None => param_default_at(default()),
         Some(x) => x,
     }
+}
+
+/// The type of a parameter of type `T` whose default is `default`.
+pub fn defaulted_param_ty<'v, T, D: BindDefault<'v, T>>(_default: &D) -> Ty {
+    D::param_ty()
+}
+
+/// The default `default` of a parameter of type `T`, for the documentation.
+pub fn documented_default<'v, T, D: BindDefault<'v, T>>(
+    default: D,
+) -> NativeCallableParamDefaultValue {
+    default.documented()
 }
 
 /// We already know the parameter is set, so we just unpack it.

@@ -63,7 +63,8 @@ impl ParamDefault for IntLiteralDefault {
 pub enum NativeCallableParamDefaultValue {
     /// The default, for the documentation. The function binds its own copy when it is called.
     Value(Value<'static>),
-    Optional,
+    /// The default is [`Absent`](crate::values::Absent): no value, shown as `...`.
+    Absent,
 }
 
 pub struct NativeCallableParam {

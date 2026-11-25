@@ -180,3 +180,32 @@ impl ParamDefault for EmptyDict {
         Value::new_empty_dict()
     }
 }
+
+/// The default of a parameter that takes no value when its argument is left out: the
+/// parameter is an `Option<T>`, and an argument that is left out is `None`.
+///
+/// ```ignore
+/// fn getattr<'v>(
+///     a: Value<'v>,
+///     attr: &str,
+///     #[starlark(default = Absent)] default: Option<Value<'v>>,
+/// ) -> ..
+/// ```
+///
+/// It is not a Starlark value, so no program can pass it, and the documentation shows such a
+/// default as `...`, with the parameter's type as `T`.
+///
+/// # When it is the right choice
+///
+/// An optional parameter is, in order of preference:
+///
+/// 1. A parameter with a value as its default, where leaving the argument out is the same as
+///    passing that value: `#[starlark(default = 0)] x: i32`.
+/// 2. `#[starlark(default = NoneType)] x: NoneOr<T>`, where it is not the same as passing any
+///    value of `T`. A caller can then pass the `None` on.
+/// 3. `Absent`, where `None` must not be accepted in place of the argument. That is a
+///    parameter for which `None` is itself a value (`getattr`'s `default`), and a parameter
+///    that the Starlark specification makes optional without saying that it may be `None`
+///    (`list.pop`'s index), together with what the standard library has next to those.
+#[derive(Debug, Clone, Copy, dupe::Dupe)]
+pub struct Absent;

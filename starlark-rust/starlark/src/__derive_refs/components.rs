@@ -53,7 +53,7 @@ impl NativeCallableComponents {
                 typ: ty.dupe(),
                 default_value: match required {
                     None => None,
-                    Some(NativeCallableParamDefaultValue::Optional) => {
+                    Some(NativeCallableParamDefaultValue::Absent) => {
                         Some(PARAM_FMT_OPTIONAL.to_owned())
                     }
                     Some(NativeCallableParamDefaultValue::Value(default)) => {

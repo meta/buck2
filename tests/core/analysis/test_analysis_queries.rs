@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::Path;
@@ -241,5 +242,213 @@ async fn test_analysis_query_is_shared_by_its_text_and_literals(
     assert_eq!(query_targets(buck, &["//e:q2", "--out=-"]).await?, matched);
     let keys = analysis_query_keys(buck, &tmp_path.join("dice-recovered")).await?;
     assert_eq!(kept(&keys), 1, "{keys:?}");
+    Ok(())
+}
+
+/// `(name, query, the targets it matches under `root//:chosen`)`.
+const ATTRFILTER_CASES: &[(&str, &str, &[&str])] = &[
+    (
+        "prefix",
+        "attrfilter(labels, prefix, deps(:selected) + deps(:plain))",
+        &["root//:plain", "root//:selected"],
+    ),
+    (
+        "selected",
+        "attrfilter(labels, selected, deps(:selected) + deps(:plain))",
+        &["root//:selected"],
+    ),
+    (
+        "unselected",
+        "attrfilter(labels, unselected, deps(:selected) + deps(:plain))",
+        &[],
+    ),
+    (
+        "helloworld",
+        "attrfilter(text, helloworld, deps(:selected) + deps(:plain))",
+        &["root//:selected"],
+    ),
+    (
+        "hello",
+        "attrfilter(text, hello, deps(:selected) + deps(:plain))",
+        &[],
+    ),
+    (
+        "world",
+        "attrfilter(text, world, deps(:selected) + deps(:plain))",
+        &[],
+    ),
+    (
+        "nested_helloworld",
+        "attrfilter(labels, helloworld, deps(:nested))",
+        &["root//:nested"],
+    ),
+    (
+        "nested_hello",
+        "attrfilter(labels, hello, deps(:nested))",
+        &[],
+    ),
+    (
+        "nested_world",
+        "attrfilter(labels, world, deps(:nested))",
+        &[],
+    ),
+    (
+        "dep_unconfigured",
+        "attrfilter(dep, 'root//:plain', deps(:with_dep))",
+        &[],
+    ),
+    (
+        "dep_configured",
+        "attrregexfilter(dep, 'plain .root//:chosen', deps(:with_dep))",
+        &["root//:with_dep"],
+    ),
+    (
+        "item_chosen",
+        "attrfilter(labels, item-chosen, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "item_other",
+        "attrfilter(labels, item-other, deps(:shapes))",
+        &[],
+    ),
+    (
+        "item_part",
+        "attrfilter(labels, chosen, deps(:shapes))",
+        &[],
+    ),
+    (
+        "sel_concat",
+        "attrfilter(labels, sel-chosen, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "sel_tail",
+        "attrfilter(labels, sel-tail, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "sel_other",
+        "attrfilter(labels, sel-other, deps(:shapes))",
+        &[],
+    ),
+    (
+        "inner_chosen",
+        "attrfilter(labels, inner-chosen, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "inner_other",
+        "attrfilter(labels, inner-other, deps(:shapes))",
+        &[],
+    ),
+    (
+        "opt_chosen",
+        "attrfilter(optional_labels, opt-chosen, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "opt_other",
+        "attrfilter(optional_labels, opt-other, deps(:shapes))",
+        &[],
+    ),
+    (
+        "enum_chosen",
+        "attrfilter(kinds, beta, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "either_chosen",
+        "attrfilter(either, either-chosen, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "either_other",
+        "attrfilter(either, either-other, deps(:shapes))",
+        &[],
+    ),
+    (
+        "lists_chosen",
+        "attrfilter(lists, lists-chosen, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "lists_other",
+        "attrfilter(lists, lists-other, deps(:shapes))",
+        &[],
+    ),
+    (
+        "any_string",
+        "attrfilter(anything, any-string, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "any_int",
+        "attrfilter(anything, '1', deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "flag_true",
+        "attrfilter(flag, 'True', deps(:shapes) + deps(:plain))",
+        &["root//:shapes"],
+    ),
+    (
+        "flag_false",
+        "attrfilter(flag, 'False', deps(:shapes) + deps(:plain))",
+        &["root//:plain"],
+    ),
+    (
+        "value_chosen",
+        "attrfilter(values, v-chosen, deps(:shapes))",
+        &["root//:shapes"],
+    ),
+    (
+        "value_other",
+        "attrfilter(values, v-other, deps(:shapes))",
+        &[],
+    ),
+    (
+        "sorted_dict",
+        "attrregexfilter(meta, '^MATCH$|^(a|aa)*(?>b)$', deps(:sorted_dict))",
+        &["root//:sorted_dict"],
+    ),
+];
+
+/// `attrfilter` in an analysis query sees attributes as the node's
+/// configuration resolves them, exactly as cquery does.
+#[buck_test(data_dir = "analysis_query_attrfilter")]
+async fn test_analysis_query_attrfilter_configures_attributes(buck: &Buck) -> anyhow::Result<()> {
+    let queries: BTreeMap<&str, &str> = ATTRFILTER_CASES
+        .iter()
+        .map(|(name, query, _)| (*name, *query))
+        .collect();
+    let queries = format!("-c=test.queries={}", serde_json::to_string(&queries)?);
+    let chosen = "--target-platforms=root//:chosen";
+    for (name, query, expected) in ATTRFILTER_CASES {
+        let expected = targets(expected);
+        let actual =
+            query_targets(buck, &[&format!(":q_{name}"), &queries, chosen, "--out=-"]).await?;
+        assert_eq!(actual, expected, "{name}");
+        // cquery answers the same filter over configured attributes.
+        let cquery = buck.cquery(&[query, &queries, chosen]).await?;
+        let configured: BTreeSet<String> = cquery
+            .stdout
+            .lines()
+            .map(|line| line.split(" (").next().unwrap_or(line).to_owned())
+            .collect();
+        assert_eq!(configured, expected, "{name}: {}", cquery.stdout);
+    }
+
+    let other = query_targets(
+        buck,
+        &[
+            ":q_unselected",
+            &queries,
+            "--target-platforms=root//:other",
+            "--out=-",
+        ],
+    )
+    .await?;
+    assert_eq!(other, targets(&["root//:selected"]));
     Ok(())
 }

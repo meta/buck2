@@ -14,7 +14,9 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 
+use buck2_core::configuration::compatibility::ResultMaybeCompatible;
 use buck2_core::provider::label::ProvidersLabel;
+use buck2_error::internal_error;
 use display_container::fmt_container;
 use serde::Serialize;
 use serde::Serializer;
@@ -26,9 +28,13 @@ use crate::attrs::arena::CoercedAttrRef;
 use crate::attrs::arena::Refs;
 use crate::attrs::arena::Values;
 use crate::attrs::arena::schema::View;
+use crate::attrs::attr_type::AttrType;
+use crate::attrs::attr_type::any_matches::AnyMatches;
+use crate::attrs::coerced::kinds::CoercedAttrRefKind;
 use crate::attrs::coerced::kinds::ValueVisitor;
 use crate::attrs::coerced::kinds::dispatch_value;
 use crate::attrs::coerced::semantics::Semantics;
+use crate::attrs::configuration_context::AttrConfigurationContext;
 use crate::attrs::display::AttrDisplayWithContext;
 use crate::attrs::display::AttrDisplayWithContextExt;
 use crate::attrs::fmt_context::AttrFmtContext;
@@ -49,6 +55,57 @@ impl<'a> CoercedAttrRef<'a> {
         filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<bool> {
         dispatch_value(*self, MatchesAny { filter })
+    }
+
+    /// `self.configure(t, ctx, name).any_matches(filter)`, without building
+    /// the configured value for strings and the lists, list concats and
+    /// selects that lead to them.
+    pub(crate) fn matches_configured(
+        &self,
+        t: &AttrType,
+        ctx: &dyn AttrConfigurationContext,
+        name: Option<&str>,
+        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
+    ) -> buck2_error::Result<bool> {
+        fn any(
+            items: Refs<'_, Values>,
+            t: &AttrType,
+            ctx: &dyn AttrConfigurationContext,
+            name: Option<&str>,
+            filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
+        ) -> buck2_error::Result<bool> {
+            for item in items.iter() {
+                if item.matches_configured(t, ctx, name, filter)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+
+        let configured = || match self.configure(t, ctx, name) {
+            ResultMaybeCompatible::Compatible(configured) => configured.any_matches(filter),
+            ResultMaybeCompatible::Incompatible(reason) => Err(internal_error!(
+                "Attribute of a configured node is incompatible: {reason}"
+            )),
+            ResultMaybeCompatible::Err(e) => Err(e),
+        };
+        match self.kind() {
+            CoercedAttrRefKind::String(v) | CoercedAttrRefKind::EnumVariant(v) => filter(v),
+            CoercedAttrRefKind::Selector((entries, default)) => {
+                match CoercedAttrRef::select_view(ctx, entries, default)? {
+                    Some(selected) => selected.matches_configured(t, ctx, name, filter),
+                    None => Err(CoercedAttrRef::select_no_match_error(ctx, entries)),
+                }
+            }
+            CoercedAttrRefKind::Concat(items) if t.concat_is_elementwise() => {
+                any(items, t, ctx, name, filter)
+            }
+            CoercedAttrRefKind::List(items) => match t.list_item() {
+                Some(item_t) => any(items, item_t, ctx, name, filter),
+                None => configured(),
+            },
+            _ => configured(),
+        }
     }
 
     /// The value's rendering when it is used as a JSON object key.

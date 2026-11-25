@@ -991,21 +991,12 @@ impl<'a> ConfiguredTargetNodeBodyRef<'a> {
         match coerced {
             Some(attr) => match attr.value.kind() {
                 CoercedAttrRefKind::String(v) | CoercedAttrRefKind::EnumVariant(v) => filter(v),
-                CoercedAttrRefKind::List(values)
-                    if values.iter().all(|v| {
-                        matches!(
-                            v.kind(),
-                            CoercedAttrRefKind::String(_) | CoercedAttrRefKind::EnumVariant(_)
-                        )
-                    }) =>
-                {
-                    attr.value.any_matches(filter)
-                }
-                _ => attr
-                    .configure(&self.attr_configuration_context())
-                    .expect_compatible("checked attr configuration in constructor")
-                    .value
-                    .any_matches(filter),
+                _ => attr.value.matches_configured(
+                    attr.attr.coercer(),
+                    &self.attr_configuration_context(),
+                    Some(attr.name),
+                    filter,
+                ),
             },
             None => match self.special_attr_or_none(key) {
                 Some(attr) => attr.any_matches(filter),

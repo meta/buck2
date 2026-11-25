@@ -565,6 +565,17 @@ impl AttrType {
         )
     }
 
+    /// Whether `+` on this type keeps its operands' elements, in order:
+    /// `list` and `option(list)`. String and arg concats make a new value, a
+    /// dict concat merges, a `one_of` concat checks variants.
+    pub(crate) fn concat_is_elementwise(&self) -> bool {
+        match &self.0.inner {
+            AttrTypeInner::List(_) => true,
+            AttrTypeInner::Option(inner) => inner.inner.concat_is_elementwise(),
+            _ => false,
+        }
+    }
+
     /// Used when we first detect that concatenation is going to happen for an attr
     /// while loading a build file. Returning false here will make us provide an error
     /// during the loading phase at the point that the concatenation happens.

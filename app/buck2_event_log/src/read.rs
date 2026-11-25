@@ -485,7 +485,12 @@ mod tests {
     fn test_get_uuid_from_logfile_name() -> buck2_error::Result<()> {
         // Create a test log path.
         let event = buck_event()?;
-        let file_name = &get_logfile_name(&event, Encoding::PROTO_ZSTD, "bzl")?;
+        let file_name = &get_logfile_name(
+            event.timestamp(),
+            &event.trace_id()?,
+            Encoding::PROTO_ZSTD,
+            "bzl",
+        )?;
         let path = EventLogPathBuf {
             path: logdir().as_abs_path().join(file_name),
             encoding: Encoding::PROTO_ZSTD,

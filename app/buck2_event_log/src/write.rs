@@ -167,8 +167,14 @@ impl WriteEventLog {
         }
     }
 
-    /// Opens the log files and writes their header, when the first event arrives.
-    async fn open_log_writers(&mut self, event: &BuckEvent) -> buck2_error::Result<()> {
+    /// Opens the log files and writes their header. The files are of the command `trace_id`,
+    /// and `timestamp` goes into the name of the command's log. `write_events` does this
+    /// with its first event, for a log that is not open by then.
+    pub async fn open(
+        &mut self,
+        trace_id: TraceId,
+        timestamp: SystemTime,
+    ) -> buck2_error::Result<()> {
         let LogWriterState::Unopened { files } = &self.state else {
             return Err(internal_error!("Event log is opened once"));
         };
@@ -187,7 +193,7 @@ impl WriteEventLog {
                 remove_old_logs(logdir, *retained_event_logs).await;
 
                 let encoding = Encoding::PROTO_ZSTD;
-                let file_name = &get_logfile_name(event, encoding, command_name)?;
+                let file_name = &get_logfile_name(timestamp, &trace_id, encoding, command_name)?;
                 let path = EventLogPathBuf {
                     path: logdir.as_abs_path().join(file_name),
                     encoding,
@@ -252,7 +258,7 @@ impl WriteEventLog {
             writers,
             writer_lock,
         };
-        self.log_invocation(event.trace_id()?).await
+        self.log_invocation(trace_id).await
     }
 
     pub fn exit(&mut self) -> impl Future<Output = ()> + 'static + Send + Sync + use<> {
@@ -359,7 +365,7 @@ impl WriteEventLog {
             return Ok(());
         };
         if let LogWriterState::Unopened { .. } = &self.state {
-            self.open_log_writers(first).await?;
+            self.open(first.trace_id()?, first.timestamp()).await?;
         }
 
         let event_refs: Vec<_> = events

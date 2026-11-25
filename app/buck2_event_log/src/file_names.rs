@@ -8,9 +8,10 @@
  * above-listed licenses.
  */
 
+use std::time::SystemTime;
+
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_error::BuckErrorOptionContext;
-use buck2_events::BuckEvent;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
@@ -25,17 +26,16 @@ use crate::writer_lock::is_writer_finished;
 use crate::writer_lock::remove_lock_file;
 
 pub(crate) fn get_logfile_name(
-    event: &BuckEvent,
+    timestamp: SystemTime,
+    trace_id: &TraceId,
     encoding: Encoding,
     command_name: &str,
 ) -> buck2_error::Result<FileNameBuf> {
     let time_str = {
-        let timestamp =
-            jiff::Timestamp::try_from(event.timestamp()).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+        let timestamp = jiff::Timestamp::try_from(timestamp).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
         timestamp.strftime("%Y%m%d-%H%M%S").to_string()
     };
 
-    let trace_id = event.trace_id()?;
     let extension = encoding.extensions[0];
 
     // Sort order matters here: earliest builds are lexicographically first and deleted first.

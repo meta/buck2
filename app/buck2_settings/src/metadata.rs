@@ -32,6 +32,9 @@ pub(super) enum SettingSource {
     Base,
     /// Wrapper-cached rollout settings.
     Rollout,
+    /// The test settings file; see [`crate::enable_test_settings_layer`].
+    #[expect(dead_code, reason = "constructed once the test settings layer lands")]
+    Test,
     Override(OverrideSource),
 }
 
@@ -92,7 +95,7 @@ impl SettingKeyMetadata {
             return true;
         }
         match source {
-            SettingSource::Base | SettingSource::Rollout => true,
+            SettingSource::Base | SettingSource::Rollout | SettingSource::Test => true,
             SettingSource::Override(source) => self.overridable_in.contains(&source),
         }
     }

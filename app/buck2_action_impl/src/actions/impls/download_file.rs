@@ -245,15 +245,15 @@ impl DownloadFileAction {
 
     /// Declares the output as a CAS download when the CAS already holds the content, which
     /// leaves nothing to fetch from the origin server or to write to disk now. `None` when the
-    /// content is not there, is about to expire, or there is no CAS to ask. Asked under
-    /// `--local-only` and `--no-remote-cache` too, unlike a write's or copy's probe
+    /// content is not there, is about to expire, there is no CAS to ask, or under
+    /// `--no-remote-cache`. Asked under `--local-only` too, unlike a write's or copy's probe
     /// (`ActionExecutionCtx::may_probe_cas`): the CAS stands in for the URL here, not for a cache.
     async fn declare_from_cas(
         &self,
         ctx: &dyn ActionExecutionCtx,
         metadata: &FileMetadata,
     ) -> buck2_error::Result<Option<ArtifactValue>> {
-        if !ctx.cas_configured() {
+        if !ctx.cas_configured() || ctx.skip_cache_read() {
             return Ok(None);
         }
         let use_case = ctx.invocation_re_use_case();

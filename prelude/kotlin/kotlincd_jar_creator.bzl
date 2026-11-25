@@ -165,7 +165,10 @@ def create_jar_artifact_kotlincd(
     so_abi_deps = None
     if actual_abi_generation_mode == AbiGenerationMode("source_only"):
         so_abi_deps = get_source_only_abi_compiling_deps(actions, compiling_deps_tset, source_only_abi_deps)
-        if kotlin_toolchain.kosabi_availability_jars != None:
+        # Availability jars cost one extra action per source_only library; only
+        # incrementally-compiled targets recover that cost, so the rest keep
+        # the full source-only-ABI jars on the applicability classpath.
+        if kotlin_toolchain.kosabi_availability_jars != None and should_kotlinc_run_incrementally:
             # The jars themselves are inputs that no dep file covers, so any change to them would rerun
             # this compile; the availability jars change only when what the checks read changes.
             source_only_abi_applicability_classpath = _availability_jars(

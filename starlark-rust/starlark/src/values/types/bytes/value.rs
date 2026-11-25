@@ -168,6 +168,62 @@ impl Serialize for StarlarkBytes {
 
 #[starlark_value(type = BYTES_TYPE, methods = crate::values::types::bytes::methods::bytes_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkBytes {
+    /// [bytes](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#bytes
+    /// ): construct a bytes value.
+    ///
+    /// `bytes(x)` converts its argument to a `bytes` value.
+    ///
+    /// If `x` is already a `bytes` value, the result is `x`.
+    ///
+    /// If `x` is a string, its UTF-8 encoding is returned.
+    ///
+    /// If `x` is an iterable of integers (each in 0–255), the bytes are
+    /// constructed from those integer values.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// bytes(b"hello") == b"hello"
+    /// bytes("hello") == b"hello"
+    /// bytes([104, 101, 108, 108, 111]) == b"hello"
+    /// # "#);
+    /// ```
+    #[starlark(constructor)]
+    fn bytes(#[starlark(require = pos)] x: Value<'v>, heap: Heap<'v>) -> anyhow::Result<Value<'v>> {
+        if StarlarkBytes::from_value(x).is_some() {
+            return Ok(x);
+        }
+        if let Some(s) = x.unpack_str() {
+            return Ok(heap.alloc(StarlarkBytes::new(s.as_bytes())).to_value());
+        }
+        // Try iterating as a sequence of ints
+        let mut result = Vec::new();
+        let iter = x.iterate(heap).map_err(|_| {
+            anyhow::anyhow!(
+                "bytes() argument must be bytes, str, or iterable of int, not '{}'",
+                x.get_type()
+            )
+        })?;
+        for v in iter {
+            match v.unpack_i32() {
+                Some(n) if n >= 0 && n <= 255 => result.push(n as u8),
+                Some(n) => {
+                    return Err(anyhow::anyhow!(
+                        "bytes() integer {} is out of range 0..=255",
+                        n
+                    ));
+                }
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "bytes() iterable must contain integers, not '{}'",
+                        v.get_type()
+                    ));
+                }
+            }
+        }
+        Ok(heap.alloc(StarlarkBytes::from_vec(result)).to_value())
+    }
+
     /// repr(b"...") — byte literal syntax.
     fn collect_repr(this: &Self, collector: &mut String) {
         write!(collector, "{}", this).unwrap()

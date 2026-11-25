@@ -17,7 +17,6 @@
 
 //! Provides the `namespace` type and global
 
-pub(crate) mod globals;
 mod typing;
 pub(crate) mod value;
 

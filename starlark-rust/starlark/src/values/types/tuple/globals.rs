@@ -15,51 +15,9 @@
  * limitations under the License.
  */
 
-use starlark_derive::starlark_module;
-
-use crate as starlark;
 use crate::environment::GlobalsBuilder;
-use crate::values::Heap;
-use crate::values::Value;
-use crate::values::ValueOf;
-use crate::values::function::SpecialBuiltinFunction;
-use crate::values::tuple::AllocTuple;
 use crate::values::tuple::StarlarkTuple;
-use crate::values::tuple::value::Tuple;
-use crate::values::typing::StarlarkIter;
 
-#[starlark_module]
 pub(crate) fn register_tuple(globals: &mut GlobalsBuilder) {
-    /// [tuple](
-    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#tuple
-    /// ): returns a tuple containing the elements of the iterable x.
-    ///
-    /// With no arguments, `tuple()` returns the empty tuple.
-    ///
-    /// ```
-    /// # starlark::assert::all_true(r#"
-    /// tuple() == ()
-    /// tuple([1,2,3]) == (1, 2, 3)
-    /// # "#);
-    /// ```
-    #[starlark(
-        as_type = Tuple<'static>,
-        speculative_exec_safe,
-        special_builtin_function = SpecialBuiltinFunction::Tuple,
-    )]
-    fn tuple<'v>(
-        #[starlark(require = pos)] a: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
-        heap: Heap<'v>,
-    ) -> starlark::Result<ValueOf<'v, StarlarkTuple<'v>>> {
-        if let Some(a) = a {
-            if let Some(tuple) = ValueOf::new(a.to_value()) {
-                return Ok(tuple);
-            }
-
-            let it = a.to_value().iterate(heap)?;
-            Ok(heap.alloc_tuple_iter(it.map(ValueOf::from)))
-        } else {
-            Ok(heap.alloc(AllocTuple::EMPTY))
-        }
-    }
+    globals.type_symbol::<StarlarkTuple>();
 }

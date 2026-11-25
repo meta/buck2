@@ -25,6 +25,8 @@ use crate as starlark;
 use crate::typing::Ty;
 use crate::typing::TyBasic;
 use crate::values::StarlarkValue;
+use crate::values::StringValue;
+use crate::values::Value;
 
 /// Type of type.
 #[doc(hidden)]
@@ -41,6 +43,24 @@ pub enum AbstractType {}
 
 #[starlark_value(type = "type")]
 impl<'v> StarlarkValue<'v> for AbstractType {
+    /// [type](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#type
+    /// ): returns a string describing the type of its operand.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// type(None)              == "NoneType"
+    /// type(0)                 == "int"
+    /// type(1)                 == "int"
+    /// type(())                == "tuple"
+    /// type("hello")           == "string"
+    /// # "#);
+    /// ```
+    #[starlark(constructor, speculative_exec_safe)]
+    fn r#type(#[starlark(require = pos)] a: Value) -> anyhow::Result<StringValue<'v>> {
+        Ok(a.get_type_value().at())
+    }
+
     fn get_type_starlark_repr() -> Ty {
         Ty::basic(TyBasic::Type)
     }

@@ -134,8 +134,9 @@ impl<F: TyCustomFunctionImpl> TyCustomImpl for TyCustomFunction<F> {
     }
 
     fn attribute(&self, attr: &str) -> Result<Ty, TypingNoContextError> {
-        // Native "type constructor" functions (declared with `#[starlark(as_type = ...)]`)
-        // expose a legacy `.type` attribute holding the name of the type they construct.
+        // Native "type constructor" functions (a type's `#[starlark(constructor)]`, or a
+        // function declared with `#[starlark(as_type = ...)]`) expose a legacy `.type`
+        // attribute holding the name of the type they construct.
         // See `NativeFunction::get_attr`.
         if attr == "type" && self.0.is_type() {
             return Ok(Ty::string());

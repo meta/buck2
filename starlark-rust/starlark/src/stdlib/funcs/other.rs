@@ -27,7 +27,6 @@ use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::AllocValue;
 use crate::values::Heap;
-use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
@@ -438,23 +437,7 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
         Ok(AllocList(it.into_iter().map(|x| x.0)))
     }
 
-    /// [type](
-    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#type
-    /// ): returns a string describing the type of its operand.
-    ///
-    /// ```
-    /// # starlark::assert::all_true(r#"
-    /// type(None)              == "NoneType"
-    /// type(0)                 == "int"
-    /// type(1)                 == "int"
-    /// type(())                == "tuple"
-    /// type("hello")           == "string"
-    /// # "#);
-    /// ```
-    #[starlark(speculative_exec_safe, as_type = AbstractType)]
-    fn r#type<'v>(#[starlark(require = pos)] a: Value) -> anyhow::Result<StringValue<'v>> {
-        Ok(a.get_type_value().at())
-    }
+    builder.type_symbol::<AbstractType>();
 }
 
 #[cfg(test)]

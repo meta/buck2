@@ -24,6 +24,7 @@ use std::hash::Hasher;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use either::Either;
 use serde::Serialize;
 use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_value;
@@ -45,6 +46,7 @@ use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
+use crate::values::string::repr::string_repr;
 use crate::values::types::num::typecheck::NumTy;
 use crate::values::types::num::typecheck::num_bin_op_signatures;
 use crate::values::types::num::value::NumRef;
@@ -275,6 +277,67 @@ impl Display for StarlarkFloat {
 
 #[starlark_value(type = StarlarkFloat::TYPE)]
 impl<'v> StarlarkValue<'v> for StarlarkFloat {
+    /// [float](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#float
+    /// ): interprets its argument as a floating-point number.
+    ///
+    /// If x is a `float`, the result is x.
+    /// if x is an `int`, the result is the nearest floating point value to x.
+    /// If x is a string, the string is interpreted as a floating-point literal.
+    /// With no arguments, `float()` returns `0.0`.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// float() == 0.0
+    /// float(1) == 1.0
+    /// float('1') == 1.0
+    /// float('1.0') == 1.0
+    /// float('.25') == 0.25
+    /// float('1e2') == 100.0
+    /// float(False) == 0.0
+    /// float(True) == 1.0
+    /// # "#);
+    /// # starlark::assert::fail(r#"
+    /// float("hello")   # error: not a valid number
+    /// # "#, "not a valid number");
+    /// # starlark::assert::fail(r#"
+    /// float([])   # error
+    /// # "#, "doesn't match, expected");
+    /// ```
+    #[starlark(constructor, speculative_exec_safe)]
+    fn float(
+        #[starlark(require = pos)] a: Option<Either<Either<NumRef, bool>, &str>>,
+    ) -> anyhow::Result<f64> {
+        if a.is_none() {
+            return Ok(0.0);
+        }
+        let a = a.unwrap();
+        match a {
+            Either::Left(Either::Left(f)) => f.as_finite_float(),
+            Either::Left(Either::Right(b)) => Ok(if b { 1.0 } else { 0.0 }),
+            Either::Right(s) => {
+                match s.parse::<f64>() {
+                    Ok(f) => {
+                        if f.is_infinite() && !s.to_lowercase().contains("inf") {
+                            // if a resulting float is infinite but the parsed string is not explicitly infinity then we should fail with an error
+                            Err(anyhow::anyhow!(
+                                "float() floating-point number too large: {}",
+                                s
+                            ))
+                        } else {
+                            Ok(f)
+                        }
+                    }
+                    Err(x) => {
+                        let mut repr = String::new();
+                        string_repr(s, &mut repr);
+                        Err(anyhow::anyhow!("{} is not a valid number: {}", repr, x,))
+                    }
+                }
+            }
+        }
+    }
+
     fn equals(this: &Self, other: Value) -> crate::Result<bool> {
         Ok(Some(NumRef::Float(StarlarkFloat(this.0))) == other.unpack_num())
     }

@@ -17,7 +17,6 @@
 
 //! The bytes type, an immutable sequence of bytes.
 
-pub(crate) mod globals;
 pub(crate) mod methods;
 pub(crate) mod tests;
 pub(crate) mod value;

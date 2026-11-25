@@ -21,7 +21,6 @@
 //! but instead use special values. If the value doesn't fit in the special representation,
 //! we use [`BigInt`](num_bigint::BigInt) to store it.
 
-pub(crate) mod globals;
 mod i32;
 pub(crate) mod inline_int;
 pub(crate) mod int_or_big;

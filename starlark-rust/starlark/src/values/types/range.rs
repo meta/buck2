@@ -17,7 +17,6 @@
 
 //! The range type, constructed with `range()`.
 
-pub(crate) mod globals;
 mod range_type;
 
 pub use range_type::Range;

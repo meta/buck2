@@ -64,7 +64,7 @@ pub(super) struct TyNamespaceFunction;
 
 impl TyCustomFunctionImpl for TyNamespaceFunction {
     fn is_type(&self) -> bool {
-        // `namespace` is declared `as_type = Namespace`, so at runtime it has a
+        // `namespace` is the constructor of `Namespace`, so at runtime it has a
         // `.type` attribute and can be used in a type expression (`namespace | None`).
         true
     }

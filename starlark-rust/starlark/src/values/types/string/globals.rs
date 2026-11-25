@@ -132,33 +132,5 @@ pub(crate) fn register_str(globals: &mut GlobalsBuilder) {
         Ok(r)
     }
 
-    /// [str](
-    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#str
-    /// ): formats its argument as a string.
-    ///
-    /// If x is a string, the result is x (without quotation).
-    /// All other strings, such as elements of a list of strings, are
-    /// double-quoted.
-    ///
-    /// ```
-    /// # starlark::assert::all_true(r#"
-    /// str(1)                          == '1'
-    /// str("x")                        == 'x'
-    /// str([1, "x"])                   == "[1, \"x\"]"
-    /// # "#);
-    /// ```
-    #[starlark(as_type = StarlarkStr, speculative_exec_safe)]
-    fn str<'v>(
-        #[starlark(require = pos)] a: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<StringValue<'v>> {
-        if let Some(a) = StringValue::new(a) {
-            return Ok(a);
-        }
-        let mut s = eval.string_pool.alloc();
-        a.collect_str(&mut s);
-        let r = eval.heap().alloc_str(&s);
-        eval.string_pool.release(s);
-        Ok(r)
-    }
+    globals.type_symbol::<StarlarkStr>();
 }

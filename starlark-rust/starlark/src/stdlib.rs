@@ -21,7 +21,6 @@
 use dupe::Dupe;
 
 use crate::environment::GlobalsBuilder;
-use crate::values::namespace::globals::register_namespace;
 
 pub(crate) mod breakpoint;
 pub(crate) mod call_stack;
@@ -36,8 +35,9 @@ pub use extra::PrintHandler;
 use crate::stdlib::funcs::globals::register_globals;
 use crate::stdlib::internal::register_internal;
 use crate::values::enumeration::globals::register_enum;
+use crate::values::namespace::value::Namespace;
 use crate::values::record::globals::register_record;
-use crate::values::structs::structs::register_struct;
+use crate::values::structs::value::Struct;
 use crate::values::types::set::set::register_set;
 use crate::values::typing;
 
@@ -131,8 +131,8 @@ impl LibraryExtension {
     pub fn add(self, builder: &mut GlobalsBuilder) {
         use LibraryExtension::*;
         match self {
-            StructType => register_struct(builder),
-            NamespaceType => register_namespace(builder),
+            StructType => builder.type_symbol::<Struct>(),
+            NamespaceType => builder.type_symbol::<Namespace>(),
             RecordType => register_record(builder),
             EnumType => register_enum(builder),
             SetType => register_set(builder),

@@ -41,10 +41,13 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::comparison::compare_slice;
 use crate::values::comparison::equals_slice;
+use crate::values::function::SpecialBuiltinFunction;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::layout::avalue::TrailingValues;
+use crate::values::tuple::AllocTuple;
 use crate::values::tuple::StarlarkTuple;
+use crate::values::typing::StarlarkIter;
 
 /// Define the tuple type.
 #[repr(C)]
@@ -153,6 +156,39 @@ fn repeated<'v>(
 
 #[starlark_value(type = Tuple::TYPE, type_expr = by_hand)]
 impl<'v> StarlarkType<'v> for StarlarkTuple<'v> {
+    /// [tuple](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#tuple
+    /// ): returns a tuple containing the elements of the iterable x.
+    ///
+    /// With no arguments, `tuple()` returns the empty tuple.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// tuple() == ()
+    /// tuple([1,2,3]) == (1, 2, 3)
+    /// # "#);
+    /// ```
+    #[starlark(
+        constructor,
+        speculative_exec_safe,
+        special_builtin_function = SpecialBuiltinFunction::Tuple,
+    )]
+    fn tuple(
+        #[starlark(require = pos)] a: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkTuple<'v>>> {
+        if let Some(a) = a {
+            if let Some(tuple) = ValueOf::new(a.to_value()) {
+                return Ok(tuple);
+            }
+
+            let it = a.to_value().iterate(heap)?;
+            Ok(heap.alloc_tuple_iter(it.map(ValueOf::from)))
+        } else {
+            Ok(heap.alloc(AllocTuple::EMPTY))
+        }
+    }
+
     fn to_bool(this: Self) -> bool {
         !this.is_empty()
     }

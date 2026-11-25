@@ -21,12 +21,8 @@ use allocative::Allocative;
 use dupe::Dupe;
 use mini_map::MiniFixedSortedMap;
 use pagable::Pagable;
-use starlark_derive::starlark_module;
 
-use crate as starlark;
 use crate::codemap::Span;
-use crate::environment::GlobalsBuilder;
-use crate::eval::Arguments;
 use crate::typing::ParamSpec;
 use crate::typing::Ty;
 use crate::typing::call_args::TyCallArgs;
@@ -36,18 +32,15 @@ use crate::typing::function::TyCustomFunctionImpl;
 use crate::typing::oracle::ctx::TypingOracleCtx;
 use crate::typing::structs::TyStruct;
 use crate::util::arc_str::ArcStr;
-use crate::values::Heap;
-use crate::values::ValueOf;
-use crate::values::structs::Struct;
 
 #[derive(
     Allocative, Clone, Copy, Dupe, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Pagable
 )]
-struct StructType;
+pub(crate) struct StructType;
 
 impl TyCustomFunctionImpl for StructType {
     fn is_type(&self) -> bool {
-        // `struct` is declared `as_type = Struct`, so at runtime it has a
+        // `struct` is the constructor of `Struct`, so at runtime it has a
         // `.type` attribute and can be used in a type expression (`struct | None`).
         true
     }
@@ -76,25 +69,5 @@ impl TyCustomFunctionImpl for StructType {
             fields: MiniFixedSortedMap::from_iter(fields),
             extra,
         }))
-    }
-}
-
-/// Register `struct` builtin.
-#[starlark_module]
-pub(crate) fn register_struct(builder: &mut GlobalsBuilder) {
-    #[starlark(
-        ty_custom_function = StructType,
-        as_type = Struct<'static>,
-    )]
-    fn r#struct<'v>(
-        args: &Arguments<'v, '_>,
-        heap: Heap<'v>,
-    ) -> starlark::Result<ValueOf<'v, Struct<'v>>> {
-        args.no_positional_args(heap)?;
-        // TODO(nga): missing optimization: practically most `struct` invocations are
-        //   performed with fixed named arguments, e.g. `struct(a = 1, b = 2)`.
-        //   In this case we can avoid allocating the map, but instead
-        //   allocate field index once at compilation time and store field values in a vector.
-        Ok(heap.alloc(Struct::new(args.names_map()?)))
     }
 }

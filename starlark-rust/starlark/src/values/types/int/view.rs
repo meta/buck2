@@ -20,6 +20,7 @@
 use std::cmp::Ordering;
 use std::hash::Hasher;
 
+use either::Either;
 use num_bigint::BigInt;
 use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_value;
@@ -34,8 +35,12 @@ use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
+use crate::values::float::StarlarkFloat;
+use crate::values::int::int_or_big::StarlarkInt;
 use crate::values::layout::value::IntegerTooBigError;
+use crate::values::string::StarlarkStr;
 use crate::values::types::bigint::StarlarkBigInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::types::int::pointer_i32::INT_TYPE;
@@ -119,6 +124,164 @@ impl<'v> IntView<'v> {
 
 #[starlark_value(type = INT_TYPE)]
 impl<'v> StarlarkType<'v> for IntView<'v> {
+    /// [int](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#int
+    /// ): convert a value to integer.
+    ///
+    /// `int(x[, base])` interprets its argument as an integer.
+    ///
+    /// If x is an `int`, the result is x.
+    /// If x is a `float`, the result is the integer value nearest to x,
+    /// truncating towards zero; it is an error if x is not finite (`NaN`,
+    /// `+Inf`, `-Inf`).
+    /// If x is a `bool`, the result is 0 for `False` or 1 for `True`.
+    ///
+    /// If x is a string, it is interpreted like a string literal;
+    /// an optional base prefix (`0b`, `0B`, `0o`, `0O`, `0x`, `0X`) determines which
+    /// base to use. The string may specify an arbitrarily large integer,
+    /// whereas true integer literals are restricted to 64 bits.
+    /// If a non-zero `base` argument is provided, the string is interpreted
+    /// in that base and no base prefix is permitted; the base argument may
+    /// specified by name.
+    ///
+    /// `int()` with no arguments returns 0.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// int() == 0
+    /// int(1) == 1
+    /// int(False) == 0
+    /// int(True) == 1
+    /// int('1') == 1
+    /// int('16') == 16
+    /// int('16', 10) == 16
+    /// int('16', 8) == 14
+    /// int('16', 16) == 22
+    /// int(0.0) == 0
+    /// int(3.14) == 3
+    /// int(-12345.6789) == -12345
+    /// int(2e9) == 2000000000
+    /// # "#);
+    /// # starlark::assert::fail(r#"
+    /// int("hello")   # error: Cannot parse
+    /// # "#, "Cannot parse");
+    /// # starlark::assert::fail(r#"
+    /// int(float("nan"))   # error: cannot be represented as exact integer
+    /// # "#, "cannot be represented as exact integer");
+    /// # starlark::assert::fail(r#"
+    /// int(float("inf"))   # error: cannot be represented as exact integer
+    /// # "#, "cannot be represented as exact integer");
+    /// ```
+    #[starlark(constructor, speculative_exec_safe)]
+    fn int(
+        #[starlark(require = pos)] a: Option<
+            ValueOf<'v, Either<Either<IntView<'v>, StarlarkFloat>, Either<bool, StarlarkStr>>>,
+        >,
+        base: Option<i32>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, IntView<'v>>> {
+        let Some(a) = a else {
+            return Ok(heap.alloc(0));
+        };
+        let num_or_bool = match a.get() {
+            Either::Left(num) => Either::Left(num),
+            Either::Right(Either::Left(b)) => Either::Right(b),
+            Either::Right(Either::Right(s)) => {
+                let s = s.as_str();
+                let literal = base == Some(0);
+                let base = base.unwrap_or(0);
+                if base == 1 || base < 0 || base > 36 {
+                    return Err(anyhow::anyhow!(
+                        "{} is not a valid base, int() base must be >= 2 and <= 36",
+                        base
+                    )
+                    .into());
+                }
+                let (negate, s) = {
+                    match s.chars().next() {
+                        Some('+') => (false, s.get(1..).unwrap()),
+                        Some('-') => (true, s.get(1..).unwrap()),
+                        _ => (false, s),
+                    }
+                };
+                let base = if base == 0 {
+                    match s.get(0..2) {
+                        Some("0b") | Some("0B") => 2,
+                        Some("0o") | Some("0O") => 8,
+                        Some("0x") | Some("0X") => 16,
+                        // Like an integer literal, a decimal cannot have a leading 0,
+                        // which would be read as an obsolete octal literal.
+                        _ if literal
+                            && s.len() > 1
+                            && s.starts_with('0')
+                            && s.bytes().any(|b| b != b'0') =>
+                        {
+                            return Err(anyhow::anyhow!(
+                                "Cannot parse `{}` as an integer with base 0, integer cannot have leading 0",
+                                s,
+                            )
+                            .into());
+                        }
+                        _ => 10,
+                    }
+                } else {
+                    base as u32
+                };
+                let s = match base {
+                    16 => {
+                        if s.starts_with("0x") || s.starts_with("0X") {
+                            s.get(2..).unwrap()
+                        } else {
+                            s
+                        }
+                    }
+                    8 => {
+                        if s.starts_with("0o") || s.starts_with("0O") {
+                            s.get(2..).unwrap()
+                        } else {
+                            s
+                        }
+                    }
+                    2 => {
+                        if s.starts_with("0b") || s.starts_with("0B") {
+                            s.get(2..).unwrap()
+                        } else {
+                            s
+                        }
+                    }
+                    _ => s,
+                };
+                // We already handled the sign above, so we are not trying to parse another sign.
+                if s.starts_with('-') || s.starts_with('+') {
+                    return Err(anyhow::anyhow!("Cannot parse `{}` as an integer", s,).into());
+                }
+
+                let x = StarlarkInt::from_str_radix(s, base)?;
+                let x = if negate { -x } else { x };
+                return Ok(heap.alloc(x));
+            }
+        };
+
+        if let Some(base) = base {
+            return Err(anyhow::anyhow!(
+                "int() cannot convert non-string with explicit base '{}'",
+                base
+            )
+            .into());
+        }
+
+        match num_or_bool {
+            Either::Left(Either::Left(IntView::Small(int))) => {
+                Ok(ValueOf::from_representation(int))
+            }
+            Either::Left(Either::Left(IntView::Big(int))) => Ok(ValueOf::from_representation(int)),
+            Either::Left(Either::Right(float)) => {
+                Ok(heap.alloc(StarlarkInt::from_f64_exact(float.as_ref().0.trunc())?))
+            }
+            Either::Right(b) => Ok(heap.alloc(b as i32)),
+        }
+    }
+
     fn to_bool(this: Self) -> bool {
         this.as_int_ref() != 0
     }

@@ -36,6 +36,7 @@ use crate::any::ProvidesStaticType;
 use crate::docs::DocItem;
 use crate::docs::DocMember;
 use crate::docs::DocProperty;
+use crate::eval::Arguments;
 use crate::starlark_complex_value;
 use crate::typing::Ty;
 use crate::typing::TyStruct;
@@ -45,10 +46,12 @@ use crate::values::StarlarkPagable;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::comparison::compare_small_map;
 use crate::values::comparison::equals_small_map;
 use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::structs::unordered_hasher::UnorderedHasher;
+use crate::values::types::structs::structs::StructType;
 
 impl<'v> Struct<'v> {
     /// The result of calling `type()` on a struct.
@@ -140,6 +143,19 @@ impl<'v> Display for Struct<'v> {
 
 #[starlark_value(type = Struct::TYPE)]
 impl<'v> StarlarkValue<'v> for Struct<'v> {
+    #[starlark(constructor, ty_custom_function = StructType)]
+    fn r#struct(
+        args: &Arguments<'v, '_>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, Struct<'v>>> {
+        args.no_positional_args(heap)?;
+        // TODO(nga): missing optimization: practically most `struct` invocations are
+        //   performed with fixed named arguments, e.g. `struct(a = 1, b = 2)`.
+        //   In this case we can avoid allocating the map, but instead
+        //   allocate field index once at compilation time and store field values in a vector.
+        Ok(heap.alloc(Struct::new(args.names_map()?)))
+    }
+
     fn collect_repr_cycle(_this: &Self, collector: &mut String) {
         collector.push_str("struct(...)");
     }

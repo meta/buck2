@@ -19,8 +19,6 @@ use starlark_derive::starlark_module;
 
 use crate as starlark;
 use crate::environment::GlobalsBuilder;
-use crate::values::Value;
-use crate::values::types::bool::value::StarlarkBool;
 
 #[starlark_module]
 pub(crate) fn register_bool(globals: &mut GlobalsBuilder) {
@@ -30,34 +28,5 @@ pub(crate) fn register_bool(globals: &mut GlobalsBuilder) {
     /// A boolean representing false.
     const False: bool = false;
 
-    /// [bool](
-    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#bool
-    /// ): returns the truth value of any starlark value.
-    ///
-    /// ```
-    /// # starlark::assert::all_true(r#"
-    /// bool() == False
-    /// bool([]) == False
-    /// bool([1]) == True
-    /// bool(True) == True
-    /// bool(False) == False
-    /// bool(None) == False
-    /// bool(bool) == True
-    /// bool(1) == True
-    /// bool(0) == False
-    /// bool({}) == False
-    /// bool({1:2}) == True
-    /// bool(()) == False
-    /// bool((1,)) == True
-    /// bool("") == False
-    /// bool("1") == True
-    /// # "#);
-    /// ```
-    #[starlark(as_type = StarlarkBool, speculative_exec_safe)]
-    fn bool(#[starlark(require = pos)] x: Option<Value>) -> anyhow::Result<bool> {
-        match x {
-            None => Ok(false),
-            Some(x) => Ok(x.to_bool()),
-        }
-    }
+    globals.type_symbol::<bool>();
 }

@@ -151,6 +151,61 @@ impl Range {
 
 #[starlark_value(type = Range::TYPE)]
 impl<'v> StarlarkValue<'v> for Range {
+    /// [range](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#range
+    /// ): return a range of integers
+    ///
+    /// `range` returns a tuple of integers defined by the specified interval
+    /// and stride.
+    ///
+    /// ```python
+    /// range(stop)                             # equivalent to range(0, stop)
+    /// range(start, stop)                      # equivalent to range(start, stop, 1)
+    /// range(start, stop, step)
+    /// ```
+    ///
+    /// `range` requires between one and three integer arguments.
+    /// With one argument, `range(stop)` returns the ascending sequence of
+    /// non-negative integers less than `stop`.
+    /// With two arguments, `range(start, stop)` returns only integers not less
+    /// than `start`.
+    ///
+    /// With three arguments, `range(start, stop, step)` returns integers
+    /// formed by successively adding `step` to `start` until the value meets or
+    /// passes `stop`. A call to `range` fails if the value of `step` is
+    /// zero.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// list(range(10))                         == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    /// list(range(3, 10))                      == [3, 4, 5, 6, 7, 8, 9]
+    /// list(range(3, 10, 2))                   == [3, 5, 7, 9]
+    /// list(range(10, 3, -2))                  == [10, 8, 6, 4]
+    /// # "#);
+    /// ```
+    #[starlark(constructor, speculative_exec_safe)]
+    fn range(
+        #[starlark(require = pos)] a1: i32,
+        #[starlark(require = pos)] a2: Option<i32>,
+        #[starlark(require = pos, default = 1)] step: i32,
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, Range>> {
+        let start = match a2 {
+            None => 0,
+            Some(_) => a1,
+        };
+        let stop = a2.unwrap_or(a1);
+        let step = match NonZeroI32::new(step) {
+            Some(step) => step,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "Third argument of range (step) cannot be zero"
+                ));
+            }
+        };
+        Ok(ValueOf::alloc(heap, Range::new(start, stop, step)))
+    }
+
     fn to_bool(this: &Self) -> bool {
         this.is_non_empty()
     }

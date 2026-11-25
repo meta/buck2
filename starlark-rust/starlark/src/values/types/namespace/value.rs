@@ -31,6 +31,7 @@ use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::docs::DocItem;
 use crate::docs::DocModule;
+use crate::eval::Arguments;
 use crate::starlark_complex_value;
 use crate::typing::Ty;
 use crate::util::arc_str::ArcStr;
@@ -39,6 +40,8 @@ use crate::values::StarlarkPagable;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::namespace::typing::TyNamespaceFunction;
 use crate::values::types::namespace::typing::TyNamespace;
 
 #[derive(Clone, Copy, Debug, Trace, Freeze, Allocative, StarlarkPagable)]
@@ -94,6 +97,29 @@ impl<'v> Display for Namespace<'v> {
 
 #[starlark_value(type = "namespace")]
 impl<'v> StarlarkValue<'v> for Namespace<'v> {
+    #[starlark(constructor, ty_custom_function = TyNamespaceFunction)]
+    fn namespace(
+        args: &Arguments<'v, '_>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, Namespace<'v>>> {
+        args.no_positional_args(heap)?;
+
+        Ok(heap.alloc(Namespace::new(
+            args.names_map()?
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        MaybeDocHiddenValue {
+                            value: v,
+                            doc_hidden: false,
+                        },
+                    )
+                })
+                .collect(),
+        )))
+    }
+
     fn collect_repr_cycle(_this: &Self, collector: &mut String) {
         collector.push_str("namespace(...)");
     }

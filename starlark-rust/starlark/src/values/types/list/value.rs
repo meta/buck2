@@ -53,9 +53,13 @@ use crate::values::array::Array;
 use crate::values::comparison::compare_slice;
 use crate::values::comparison::equals_slice;
 use crate::values::error::ValueError;
+use crate::values::function::SpecialBuiltinFunction;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
+use crate::values::list::AllocList;
 use crate::values::list::StarlarkList;
+use crate::values::list::globals::ListFunctionTy;
+use crate::values::typing::StarlarkIter;
 
 #[derive(Clone, Default, Trace, Debug, ProvidesStaticType, Allocative)]
 #[repr(transparent)]
@@ -435,6 +439,46 @@ fn repeated<'v>(
 
 #[starlark_value(type = ListData::TYPE, type_expr = by_hand, methods = crate::values::types::list::methods::list_methods)]
 impl<'v> StarlarkType<'v> for StarlarkList<'v> {
+    /// [list](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#list
+    /// ): construct a list.
+    ///
+    /// `list(x)` returns a new list containing the elements of the
+    /// iterable sequence x.
+    ///
+    /// With no argument, `list()` returns a new empty list.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// list()        == []
+    /// list((1,2,3)) == [1, 2, 3]
+    /// # "#);
+    /// # starlark::assert::fail(r#"
+    /// list("strings are not iterable") # error: expected `typing.Iterable`
+    /// # "#, r#"expected `typing.Iterable`"#);
+    /// ```
+    #[starlark(
+        constructor,
+        speculative_exec_safe,
+        special_builtin_function = SpecialBuiltinFunction::List,
+        ty_custom_function = ListFunctionTy,
+    )]
+    fn list(
+        #[starlark(require = pos)] a: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkList<'v>>> {
+        Ok(if let Some(a) = a {
+            if let Some(xs) = StarlarkList::from_value(a.to_value()) {
+                heap.alloc_list(xs.content())
+            } else {
+                let it = a.to_value().iterate(heap)?;
+                heap.alloc(AllocList(it))
+            }
+        } else {
+            heap.alloc(AllocList::EMPTY)
+        })
+    }
+
     fn collect_repr(this: Self, s: &mut String) {
         // Fast path as repr() for lists is quite hot
         s.push('[');

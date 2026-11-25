@@ -51,9 +51,11 @@ use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::comparison::equals_small_set;
+use crate::values::function::SpecialBuiltinFunction;
 use crate::values::set::StarlarkSet;
 use crate::values::set::methods;
 use crate::values::starlark_value;
+use crate::values::typing::StarlarkIter;
 
 #[derive(
     Clone,
@@ -312,6 +314,33 @@ fn cannot_mutate(error: ValueError) -> crate::Error {
 
 #[starlark_value(type = "set", type_expr = by_hand, methods = methods::set_methods)]
 impl<'v> StarlarkType<'v> for StarlarkSet<'v> {
+    #[starlark(
+        constructor,
+        speculative_exec_safe,
+        special_builtin_function = SpecialBuiltinFunction::Set,
+    )]
+    fn set(
+        #[starlark(require = pos)] arg: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<SetData<'v>> {
+        let set = match arg {
+            Some(pos) => match StarlarkSet::from_value(pos.to_value()) {
+                Some(set) => (set.borrowed().aref).clone(),
+                None => {
+                    let it = pos.to_value().iterate(heap)?;
+                    let mut data = SetData::default();
+                    for el in it {
+                        let el = el.get_hashed()?;
+                        data.content.insert_hashed(el);
+                    }
+                    data
+                }
+            },
+            None => SetData::default(),
+        };
+        Ok(set)
+    }
+
     /// Returns the length of the value, if this value is a sequence.
     fn length(this: Self) -> i32 {
         this.repr().content().len() as i32

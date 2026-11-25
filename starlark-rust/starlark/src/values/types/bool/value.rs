@@ -70,6 +70,37 @@ pub(crate) static VALUE_FALSE_TRUE: [&AllocStaticSimple<StarlarkBool>; 2] =
 
 #[starlark_value(type = BOOL_TYPE)]
 impl<'v> StarlarkType<'v> for bool {
+    /// [bool](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#bool
+    /// ): returns the truth value of any starlark value.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// bool() == False
+    /// bool([]) == False
+    /// bool([1]) == True
+    /// bool(True) == True
+    /// bool(False) == False
+    /// bool(None) == False
+    /// bool(bool) == True
+    /// bool(1) == True
+    /// bool(0) == False
+    /// bool({}) == False
+    /// bool({1:2}) == True
+    /// bool(()) == False
+    /// bool((1,)) == True
+    /// bool("") == False
+    /// bool("1") == True
+    /// # "#);
+    /// ```
+    #[starlark(constructor, speculative_exec_safe)]
+    fn bool(#[starlark(require = pos)] x: Option<Value>) -> anyhow::Result<bool> {
+        match x {
+            None => Ok(false),
+            Some(x) => Ok(x.to_bool()),
+        }
+    }
+
     fn collect_repr(this: Self, s: &mut String) {
         // The default writes the receiver's `Display`, which for a Rust `bool` is `true`.
         // repr() for bool is also quite hot, so optimise it

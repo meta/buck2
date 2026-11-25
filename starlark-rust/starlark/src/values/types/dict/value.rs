@@ -41,6 +41,7 @@ use crate::any::ProvidesStaticType;
 use crate::cast::transmute;
 use crate::collections::Hashed;
 use crate::collections::SmallMap;
+use crate::eval::Arguments;
 use crate::hint::unlikely;
 use crate::static_starlark_value;
 use crate::typing::Ty;
@@ -67,6 +68,7 @@ use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
 use crate::values::dict::StarlarkDict;
 use crate::values::error::ValueError;
+use crate::values::function::SpecialBuiltinFunction;
 use crate::values::string::str_type::hash_string_value;
 
 #[derive(
@@ -521,8 +523,97 @@ fn cannot_mutate(error: ValueError) -> crate::Error {
     crate::Error::new_other(error)
 }
 
+fn unpack_pair<'v>(pair: Value<'v>, heap: Heap<'v>) -> crate::Result<(Value<'v>, Value<'v>)> {
+    let mut it = pair.iterate(heap)?;
+    if let Some(first) = it.next() {
+        if let Some(second) = it.next() {
+            if it.next().is_none() {
+                return Ok((first, second));
+            }
+        }
+    }
+    Err(anyhow::anyhow!(
+        "Found a non-pair element in the positional argument of dict(): {}",
+        pair.to_repr(),
+    )
+    .into())
+}
+
 #[starlark_value(type = Dict::TYPE, type_expr = by_hand, methods = crate::values::types::dict::methods::dict_methods)]
 impl<'v> StarlarkType<'v> for StarlarkDict<'v> {
+    /// [dict](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#dict
+    /// ): creates a dictionary.
+    ///
+    /// `dict` creates a dictionary. It accepts up to one positional argument,
+    /// which is interpreted as an iterable of two-element sequences
+    /// (pairs), each specifying a key/value pair in the
+    /// resulting dictionary.
+    ///
+    /// `dict` also accepts any number of keyword arguments, each of which
+    /// specifies a key/value pair in the resulting dictionary; each keyword
+    /// is treated as a string.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// dict() == {}
+    /// dict(**{'a': 1}) == {'a': 1}
+    /// dict({'a': 1}) == {'a': 1}
+    /// dict([(1, 2), (3, 4)]) == {1: 2, 3: 4}
+    /// dict([(1, 2), ['a', 'b']]) == {1: 2, 'a': 'b'}
+    /// dict(one=1, two=2) == {'one': 1, 'two': 2}
+    /// dict([(1, 2)], x=3) == {1: 2, 'x': 3}
+    /// dict([('x', 2)], x=3) == {'x': 3}
+    /// # "#);
+    /// # starlark::assert::is_true(r#"
+    /// x = {'a': 1}
+    /// y = dict([('x', 2)], **x)
+    /// x == {'a': 1} and y == {'x': 2, 'a': 1}
+    /// # "#);
+    /// ```
+    #[starlark(
+        constructor,
+        speculative_exec_safe,
+        special_builtin_function = SpecialBuiltinFunction::Dict,
+    )]
+    fn dict(args: &Arguments<'v, '_>, heap: Heap<'v>) -> starlark::Result<Dict<'v>> {
+        // Dict is super hot, and has a slightly odd signature, so we can do a bunch of special cases on it.
+        // In particular, we don't generate the kwargs if there are no positional arguments.
+        // Therefore we make it take the raw Arguments.
+        // It might have one positional argument, which could be a dict or an array of pairs.
+        // It might have named/kwargs arguments, which we copy over (afterwards).
+
+        let pos = args.optional1(heap)?;
+        let kwargs = args.names()?;
+
+        match pos {
+            None => Ok(kwargs),
+            Some(pos) => {
+                let mut result: Dict = match DictRef::from_value(pos) {
+                    Some(pos) => {
+                        let mut result = (*pos).clone();
+                        result.reserve(kwargs.len());
+                        result
+                    }
+                    None => {
+                        let it = pos.iterate(heap)?;
+                        let mut result = SmallMap::with_capacity(it.size_hint().0 + kwargs.len());
+                        for el in it {
+                            let (k, v) = unpack_pair(el, heap)?;
+                            let k = k.get_hashed()?;
+                            result.insert_hashed(k, v);
+                        }
+                        Dict::new(result)
+                    }
+                };
+                for (k, v) in kwargs.iter_hashed() {
+                    result.insert_hashed(k, v);
+                }
+                Ok(result)
+            }
+        }
+    }
+
     fn collect_repr(this: Self, r: &mut String) {
         // Fast path as repr() for dicts is quite hot
         r.push('{');

@@ -41,6 +41,7 @@ use starlark_syntax::fast_string::StrIndices;
 
 use crate as starlark;
 use crate::collections::aligned_padded_str::AlignedPaddedStr;
+use crate::eval::Evaluator;
 use crate::private::Private;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
@@ -230,6 +231,36 @@ impl Display for StarlarkStr {
 
 #[starlark_value(type = STRING_TYPE, methods = crate::values::types::string::methods::string_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkStr {
+    /// [str](
+    /// https://github.com/bazelbuild/starlark/blob/master/spec.md#str
+    /// ): formats its argument as a string.
+    ///
+    /// If x is a string, the result is x (without quotation).
+    /// All other strings, such as elements of a list of strings, are
+    /// double-quoted.
+    ///
+    /// ```
+    /// # starlark::assert::all_true(r#"
+    /// str(1)                          == '1'
+    /// str("x")                        == 'x'
+    /// str([1, "x"])                   == "[1, \"x\"]"
+    /// # "#);
+    /// ```
+    #[starlark(constructor, speculative_exec_safe)]
+    fn str(
+        #[starlark(require = pos)] a: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<StringValue<'v>> {
+        if let Some(a) = StringValue::new(a) {
+            return Ok(a);
+        }
+        let mut s = eval.string_pool.alloc();
+        a.collect_str(&mut s);
+        let r = eval.heap().alloc_str(&s);
+        eval.string_pool.release(s);
+        Ok(r)
+    }
+
     fn is_special(_: Private) -> bool
     where
         Self: Sized,

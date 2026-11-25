@@ -52,8 +52,8 @@ fn type_annotation_functions(globals: &mut GlobalsBuilder) {
 
 /// Guard against a future type constructor silently regressing.
 ///
-/// A global is a type constructor when it is declared `#[starlark(as_type = ...)]`,
-/// which is what gives it a runtime `.type` attribute. Nothing in the type system
+/// A global is a type constructor when it is a type's `#[starlark(constructor)]` or is
+/// declared `#[starlark(as_type = ...)]`, which is what gives it a runtime `.type` attribute. Nothing in the type system
 /// enforces that such a global's `TyCustomFunctionImpl` also reports `is_type()`, and
 /// getting that wrong is invisible until someone writes `X.type` inside a `def`. This
 /// walks every global and checks the two agree, so adding a fifth type constructor
@@ -91,7 +91,7 @@ fn test_type_annotation() {
     a.eq("'Foo'", "def f():\n    return foo.type\nf()");
 }
 
-/// `.type` must resolve for every global that is declared `as_type = ...`, not just
+/// `.type` must resolve for every global that is a type constructor, not just
 /// those backed by `TyFunction`. `struct` and `namespace` have hand-written
 /// `TyCustomFunctionImpl`s, so they need `is_type()` overridden to match.
 #[test]

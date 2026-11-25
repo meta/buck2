@@ -51,7 +51,8 @@ impl syn::parse::Parse for Implements {
             return Err(syn::Error::new_spanned(
                 name,
                 "unknown attribute; in a `#[starlark_value]` block `#[starlark(implements = P)]` \
-                 marks a membership of the predicate type `P`",
+                 marks a membership of the predicate type `P` and `#[starlark(constructor)]` \
+                 the type's constructor",
             ));
         }
         input.parse::<syn::Token![=]>()?;

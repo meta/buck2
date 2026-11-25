@@ -401,13 +401,18 @@ mod tests {
     use starlark_derive::NoSerialize;
     use starlark_derive::ProvidesStaticType;
     use starlark_derive::StarlarkPagable;
+    use starlark_derive::Trace;
     use starlark_derive::starlark_module;
     use starlark_derive::starlark_value;
 
     use crate as starlark;
     use crate::assert::Assert;
     use crate::environment::GlobalsBuilder;
+    use crate::values::Freeze;
+    use crate::values::FreezeResult;
+    use crate::values::Freezer;
     use crate::values::StarlarkValue;
+    use crate::values::Value;
     use crate::values::types::starlark_value_as_type::tests;
 
     #[derive(
@@ -457,6 +462,90 @@ f(compiler_args("hello"))
 
     #[starlark_value(type = "tools.Flags")]
     impl<'v> StarlarkValue<'v> for StarlarkFlags {}
+
+    #[derive(
+        derive_more::Display,
+        Debug,
+        NoSerialize,
+        Allocative,
+        ProvidesStaticType,
+        StarlarkPagable
+    )]
+    #[display("point({})", _0)]
+    struct StarlarkPoint(i32);
+
+    #[starlark_value(type = "point")]
+    impl<'v> StarlarkValue<'v> for StarlarkPoint {
+        /// Makes a point.
+        #[starlark(constructor, speculative_exec_safe)]
+        fn point(#[starlark(default = 0)] x: i32) -> anyhow::Result<Self> {
+            Ok(StarlarkPoint(x))
+        }
+    }
+
+    #[test]
+    fn test_the_symbol_of_a_type_with_a_constructor_is_the_constructor() {
+        let mut a = Assert::new();
+        a.globals_add(|globals| globals.type_symbol::<StarlarkPoint>());
+        a.pass(
+            r#"
+def f(p: point) -> point:
+    return p
+
+assert_eq(str(f(point(3))), "point(3)")
+assert_eq(str(point()), "point(0)")
+assert_true(isinstance(point(1), point))
+assert_true(not isinstance(1, point))
+        "#,
+        );
+        a.fail(
+            "def g(p: point): pass\ng(1)",
+            "does not match the type annotation",
+        );
+    }
+
+    #[derive(
+        derive_more::Display,
+        Debug,
+        NoSerialize,
+        Allocative,
+        ProvidesStaticType,
+        Trace,
+        StarlarkPagable
+    )]
+    #[display("held({})", _0)]
+    struct StarlarkHeld<'v>(Value<'v>);
+
+    #[starlark_value(type = "held", frozen_vtable, alloc = complex)]
+    impl<'v> StarlarkValue<'v> for StarlarkHeld<'v> {
+        /// Holds a value.
+        #[starlark(constructor)]
+        fn held(x: Value<'v>) -> anyhow::Result<Self> {
+            Ok(Self(x))
+        }
+    }
+
+    impl<'v> Freeze<'v> for StarlarkHeld<'v> {
+        type Frozen<'fv> = StarlarkHeld<'fv>;
+
+        fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
+            Ok(StarlarkHeld(freezer.freeze(self.0)?))
+        }
+    }
+
+    /// A constructor names its type as `Self` where it makes the value too, and the type may
+    /// have a lifetime.
+    #[test]
+    fn test_a_constructor_makes_a_type_with_a_lifetime_as_self() {
+        let mut a = Assert::new();
+        a.globals_add(|globals| globals.type_symbol::<StarlarkHeld>());
+        a.pass(
+            r#"
+assert_eq(str(held(3)), "held(3)")
+assert_true(isinstance(held(1), held))
+        "#,
+        );
+    }
 
     #[starlark_module]
     fn symbols(globals: &mut GlobalsBuilder) {

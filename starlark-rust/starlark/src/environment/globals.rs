@@ -566,15 +566,27 @@ impl GlobalsBuilder {
         T::Type: HasTypeSymbol,
     {
         let symbol = T::Type::TYPE_SYMBOL;
-        (symbol.set)(self, symbol.name);
+        match symbol.set {
+            TypeSymbolSet::Object(set) => set(self, symbol.name),
+            TypeSymbolSet::Constructor(module) => module(self),
+        }
     }
 
-    /// Sets what [`type_symbol`](Self::type_symbol) sets, called `name`.
+    /// Sets what [`type_symbol`](Self::type_symbol) sets, called `name`. A constructor has
+    /// the one name.
     pub fn type_symbol_as<T: NamesStarlarkType>(&mut self, name: &str)
     where
         T::Type: HasTypeSymbol,
     {
-        (T::Type::TYPE_SYMBOL.set)(self, name);
+        let symbol = T::Type::TYPE_SYMBOL;
+        match symbol.set {
+            TypeSymbolSet::Object(set) => set(self, name),
+            TypeSymbolSet::Constructor(_) => panic!(
+                "the symbol of `{}` is its constructor `{}`, which cannot be called `{name}`",
+                T::Type::TYPE,
+                symbol.name,
+            ),
+        }
     }
 
     /// Allocate on the heap where globals are allocated.
@@ -593,9 +605,10 @@ impl GlobalsBuilder {
 
 /// A type that has a symbol, the global that names it: see [`GlobalsBuilder::type_symbol`].
 ///
-/// `#[starlark_value]` implements this for the type of its block. A block that is generic over
-/// a type cannot, because a symbol is registered for one type; [`type_symbol!`] declares the
-/// symbol of one instantiation of such a type.
+/// `#[starlark_value]` implements this for the type of its block: the symbol is the function
+/// marked `#[starlark(constructor)]`, if the block has one, and otherwise an object that is
+/// only the type. A block that is generic over a type cannot, because a symbol is registered
+/// for one type; [`type_symbol!`] declares the symbol of one instantiation of such a type.
 ///
 /// [`type_symbol!`]: crate::type_symbol
 #[diagnostic::on_unimplemented(
@@ -612,8 +625,15 @@ pub trait HasTypeSymbol: StarlarkType<'static> {
 #[derive(Clone, Copy)]
 pub struct TypeSymbol {
     name: &'static str,
-    /// Sets the global under the given name.
-    set: fn(&mut GlobalsBuilder, &str),
+    set: TypeSymbolSet,
+}
+
+#[derive(Clone, Copy)]
+enum TypeSymbolSet {
+    /// Sets an object that is only the type, under the given name.
+    Object(fn(&mut GlobalsBuilder, &str)),
+    /// The module of globals that holds the type's constructor.
+    Constructor(fn(&mut GlobalsBuilder)),
 }
 
 impl TypeSymbol {
@@ -634,7 +654,16 @@ impl TypeSymbol {
                 Ok(name) => name,
                 Err(_) => panic!("split at a character boundary"),
             },
-            set,
+            set: TypeSymbolSet::Object(set),
+        }
+    }
+
+    /// The symbol of a type with a constructor: the function `name` of `module`.
+    #[doc(hidden)]
+    pub const fn constructor(name: &'static str, module: fn(&mut GlobalsBuilder)) -> TypeSymbol {
+        TypeSymbol {
+            name,
+            set: TypeSymbolSet::Constructor(module),
         }
     }
 }

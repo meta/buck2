@@ -21,6 +21,8 @@ use quote::ToTokens;
 use quote::quote;
 use syn::spanned::Spanned;
 
+use crate::constructor::constructor_module;
+use crate::constructor::take_constructor;
 use crate::membership::memberships_impl;
 use crate::membership::take_memberships;
 use crate::typed_behaviour::Typing;
@@ -524,13 +526,24 @@ impl ImplStarlarkValue {
         )
     }
 
-    /// What goes before the block to declare the type's symbol, an object that is only the
-    /// type. A block that is generic over a type declares none, because a symbol is registered
-    /// for one type.
-    fn type_symbol(&self) -> proc_macro2::TokenStream {
+    /// What goes before the block to declare the type's symbol. With a `constructor` that is
+    /// the module of globals that holds it; without one the symbol is an object that is only
+    /// the type. A block that is generic over a type declares none, because a symbol is
+    /// registered for one type.
+    fn type_symbol(
+        &self,
+        constructor: Option<&syn::ImplItemFn>,
+    ) -> syn::Result<proc_macro2::TokenStream> {
         if self.generics_shape() == GenericsShape::Other {
-            return proc_macro2::TokenStream::new();
+            if let Some(constructor) = constructor {
+                return Err(syn::Error::new_spanned(
+                    &constructor.sig.ident,
+                    "a block that is generic over a type cannot have a constructor",
+                ));
+            }
+            return Ok(proc_macro2::TokenStream::new());
         }
+        let lt = &self.lifetime_param;
         let ty = self.self_ty_with_lifetime(syn::parse_quote! { 'static });
         // A representation names its type already.
         let names_itself = (self.impl_of == ImplOf::Type).then(|| {
@@ -540,11 +553,26 @@ impl ImplStarlarkValue {
                 }
             }
         });
-        quote! {
+        let Some(constructor) = constructor else {
+            return Ok(quote! {
+                #names_itself
+
+                starlark::type_symbol!(#ty);
+            });
+        };
+        let (module, module_name) = constructor_module(constructor, &self.input.self_ty, &ty, lt)?;
+        let name = constructor.sig.ident.to_string();
+        let name = name.strip_prefix("r#").unwrap_or(&name);
+        Ok(quote! {
             #names_itself
 
-            starlark::type_symbol!(#ty);
-        }
+            #module
+
+            impl starlark::environment::HasTypeSymbol for #ty {
+                const TYPE_SYMBOL: starlark::environment::TypeSymbol =
+                    starlark::environment::TypeSymbol::constructor(#name, #module_name);
+            }
+        })
     }
 
     fn get_type_value_static(&self) -> syn::Result<syn::ImplItem> {
@@ -1048,6 +1076,8 @@ impl ImplStarlarkValue {
         let (get_items, mut items): (Vec<syn::ImplItem>, Vec<syn::ImplItem>) =
             items.into_iter().partition(is_get_item);
         let type_expr_impl = self.type_expr_impl(get_items)?;
+        let constructor = take_constructor(&mut items)?;
+        let symbol = self.type_symbol(constructor.as_ref())?;
         let memberships = take_memberships(&mut items)?;
         let mut always_hashes = None;
         let mut typed = TypedMethods::new();
@@ -1128,7 +1158,6 @@ impl ImplStarlarkValue {
         }
         let memberships = memberships_impl(&memberships, &self.input, lt);
         let before = self.methods().0;
-        let symbol = self.type_symbol();
         Ok(quote! {
             #before
 

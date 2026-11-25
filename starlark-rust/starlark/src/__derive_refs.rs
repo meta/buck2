@@ -70,3 +70,14 @@ pub use crate::values::types::none::NoneType;
 pub use crate::values::types::starlark_value_as_type::StarlarkValueAsType;
 // Re-export for TypeMatcher pagable typetag registration macro.
 pub use crate::values::typing::type_compiled::matcher::TypeMatcherDyn;
+
+/// What `as_type = T` on a native function says: the type that `T` names, and its
+/// documentation.
+pub fn as_type<T: crate::values::starlark_value_as_type::NamesStarlarkType>()
+-> (crate::typing::Ty, crate::docs::DocType) {
+    use crate::values::StarlarkType;
+    (
+        T::Type::get_type_starlark_repr(),
+        crate::docs::DocType::from_starlark_type::<T::Type>(),
+    )
+}

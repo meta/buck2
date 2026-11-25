@@ -68,10 +68,7 @@ impl StarFun {
     fn as_type_expr(&self) -> syn::Expr {
         match &self.as_type {
             Some(x) => syn::parse_quote! {
-                    std::option::Option::Some((
-                        <#x as starlark::values::StarlarkValue>::get_type_starlark_repr(),
-                        starlark::docs::DocType::from_starlark_value::<#x>(),
-                    ))
+                    std::option::Option::Some(starlark::__derive_refs::as_type::<#x>())
             },
             None => syn::parse_quote! {
                 std::option::Option::None

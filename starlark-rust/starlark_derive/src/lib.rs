@@ -24,6 +24,7 @@ use proc_macro::TokenStream;
 
 mod any_lifetime;
 mod bc;
+mod constructor;
 mod freeze;
 mod membership;
 mod module;

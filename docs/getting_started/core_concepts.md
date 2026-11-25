@@ -54,9 +54,10 @@ Here is the anatomy of a target label:
 ## Cell
 
 [Cell](../../concepts/key_concepts/#cells) defines a directory tree of one or
-more buck [packages](../../concepts/key_concepts/#packages). The root of a buck
-cell contains a global configuration file called
-[**`.buckconfig`**](../../concepts/buckconfig).
+more buck [packages](../../concepts/key_concepts/#packages). Cells are declared
+in the `[cells]` section of the project's
+[**`.buckconfig`**](../../concepts/buckconfig). A cell may have its own
+`.buckconfig`, but does not need one.
 
 <FbInternalOnly>
 
@@ -79,12 +80,11 @@ You can run `buck2 audit cell` to inspect the abs path of each cell root.
 
 The existence of a [BUCK file](#buck-file) ({ isInternal() ?
 <code>scripts/$USER/buck2_lab/greeter_bin/BUCK</code> :
-<code>buck2_lab/greeter_bin/BUCK</code> }) defines a buck
-[package](../../concepts/key_concepts/#packages) { isInternal() ?
+<code>buck2_lab/greeter_bin/BUCK</code> }) makes its directory a buck
+[package](../../concepts/key_concepts/#packages) ({ isInternal() ?
 <code>scripts/$USER/buck2_lab/greeter_bin</code> :
-<code>buck2_lab/greeter_bin</code> } isn't just a directory. If a buck target
-uses the source file as input, that target is regarded as the **owner** of the
-source.
+<code>buck2_lab/greeter_bin</code> }). If a buck target uses a source file as
+input, that target is regarded as the **owner** of the source.
 
 ## Target name
 
@@ -94,7 +94,7 @@ file.
 ```python
 rust_binary(
     name = "main",
-    srcs = ["main.rs"],
+    srcs = ["src/main.rs"],
     ...
 )
 ```
@@ -133,12 +133,10 @@ you will soon become very familiar with these patterns during daily development.
 
 #### Tips:
 
-<!--  TODO: change link to buck2 doc once available for macros -->
-
-- Buck targets can be either build rules or
-  [macros](https://buck.build/extending/macros.html), which are
-  wrappers/extensions around native build rules, macros are usually defined .bzl
-  files. <FbInternalOnly> The `rust_binary`, `rust_library` and `rust_unittest`
+- Buck targets are declared by calling build rules or
+  [macros](../../rule_authors/custom_macros/). A macro is a function, usually
+  defined in a `.bzl` file, that calls one or more build rules.
+  <FbInternalOnly> The `rust_binary`, `rust_library` and `rust_unittest`
   used in the lab are actually fbcode macros, not native rules as defined in this
   doc. You may notice that when we run
   [`buck2 targets`](../tutorial_first_build/#step-6-inspecting-your-target-optional)
@@ -435,44 +433,44 @@ can offer extra configurations to do the build.
 
 Buck accepts multiple targets in one command, such as:
 
-- `buck build target1 target2 target3` builds 3 targets in one command
+- `buck2 build target1 target2 target3` builds 3 targets in one command
 
-- `buck build //path/to/dir/...` builds all targets under `path/to/dir`,
+- `buck2 build //path/to/dir/...` builds all targets under `path/to/dir`,
   including sub-dir
 
-- `buck build //path/to/dir:` build all targets under package `path/to/dir`,
+- `buck2 build //path/to/dir:` build all targets under package `path/to/dir`,
   without sub packages
 
-- `buck build @a-file` builds targets listed in a-file, which is a plain text
+- `buck2 build @a-file` builds targets listed in a-file, which is a plain text
   file
 
 Buck builds multiple targets in parallel, unless there are dependencies between
 them.
 
-Once target is built, you can use [buck run](../../users/commands/run/),
-[buck test](../../users/commands/test) and
-[buck install](../../users/commands/install) to test the code.
+Once target is built, you can use [buck2 run](../../users/commands/run/),
+[buck2 test](../../users/commands/test) and
+[buck2 install](../../users/commands/install) to test the code.
 
 As you become more adept, you can explore other powerful buck commands, such as:
 
-- [`buck query`](../../users/commands/query/) with various
+- [`buck2 query`](../../users/commands/query/) with various
   [options](../../users/query/uquery/) to analyze the dependency graph, this set
   of commands is by far the most powerful and complicated buck commands to use;
-- [`buck kill`](../../users/commands/kill/) to stop running
+- [`buck2 kill`](../../users/commands/kill/) to stop running
   [buck daemon](../../concepts/daemon/), this is sometimes needed to recover
   from a failed build due to bad daemon state;
-- [`buck clean`](../../users/commands/clean/) to remove build artifacts from
+- [`buck2 clean`](../../users/commands/clean/) to remove build artifacts from
   [buck-out](../../concepts/buck_out/), this is a remedy to recover from failed
   build due to either bad daemon or bad artifacts in cache;
-- [`buck log`](../../users/commands/log/) to see information about previous
+- [`buck2 log`](../../users/commands/log/) to see information about previous
   builds
-- [`buck bxl`](../../bxl/tutorial/) to run bxl scripts. BXL is a buck2 script
+- [`buck2 bxl`](../../bxl/tutorial/) to run bxl scripts. BXL is a buck2 script
   language using starlark syntax to write complex query or build logic.
 
 #### Tips:
 
-- Buck offers help menus for all commands, try the -h option, you can buck -h or
-  buck build -h to see all available commands and options
+- Buck offers help menus for all commands, try the -h option, you can run
+  `buck2 -h` or `buck2 build -h` to see all available commands and options
 
 <FbInternalOnly>
 
@@ -547,7 +545,7 @@ buck-out,it has the following characteristics:
 #### Tips:
 
 - **Do NOT** delete artifacts manually from buck-out directory and expect buck
-  to rebuild them, buck doesn’t track things under buck-out, use buck clean
+  to rebuild them, buck doesn’t track things under buck-out, use `buck2 clean`
   instead;
 
 <FbInternalOnly>

@@ -39,8 +39,8 @@ of creating BUCK files, defining targets, and building projects.
 
 ### 4. [Tutorial: Adding Dependencies](./tutorial_adding_dependencies.md)
 
-Expand your knowledge by creating libraries, managing dependencies between
-targets, and working with external dependencies.
+Expand your knowledge by creating libraries and managing dependencies between
+targets.
 
 ### 5. [Tutorial: Adding Tests](./tutorial_adding_tests.md)
 

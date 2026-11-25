@@ -226,7 +226,7 @@ fbcode//scripts/$USER/buck2_lab/greeter_bin:main buck-out/v2/gen/fbcode/c32808b9
 ```
 ...
 BUILD SUCCEEDED
-root//buck2_lab/greeter_bin:main /.../buck2_lab/buck-out/v2/gen/root/200212f73efcd57d/buck2_lab/greeter_bin/__main__/main
+root//buck2_lab/greeter_bin:main buck-out/v2/art/root/a8ac7ec86a6bee54/buck2_lab/greeter_bin/__main__/main
 ```
 
 </OssOnly>
@@ -237,12 +237,13 @@ export const TARGET_NAME = isInternal() ?
 
 - `BUILD SUCCEEDED` indicates that Buck2 successfully built our target.
 - {TARGET_NAME} is the full target label name of our target.
-- Think of the `:main` we used in the step 2 as a relative path to the target
+- Think of the `:main` we used in Step 4 as a relative path to the target
   from within its package (`greeter_bin`).
 - The full name {TARGET_NAME} is like an absolute path, uniquely identifying the
-  target within your entire project (fbsource).
-- `buck-out/.../__main__/main` is the path of our binary output. It is the
-  relative path to fbsource. You can use `--show-full-output` instead of
+  target within your entire project.
+- `buck-out/.../__main__/main` is the path of our binary output. It is relative
+  to the project root ({ isInternal() ? <code>fbsource</code> :
+  <code>hello_world</code> }). You can use `--show-full-output` instead of
   `--show-output` to get the absolute path.
 
 ## Step 5: Running Your Application with Buck2

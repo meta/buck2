@@ -16,12 +16,14 @@ Our goal is to understand how Buck2 manages dependencies.
 ## What We'll Do:
 
 1. Create a new library directory
-2. Create a library with a simple function
-3. Define a `rust_binary` target for our library
-4. Build the library independently
-5. Update our binary to depend on and use this new library
+2. Create a library with a simple function and define a `rust_library` target
+   for it
+3. Build the library independently
+4. Update our binary to depend on and use this new library
+5. Build and run the binary
 6. Add a logging dependency to our application
-7. Build and run the binary
+7. See the build fail because a direct dependency is missing
+8. Fix the build by declaring the direct dependency
 
 ## Prerequisites
 
@@ -29,7 +31,7 @@ Our goal is to understand how Buck2 manages dependencies.
 
 ## Step 1: Adding a Library Directory to Your Project
 
-1. Navigate to your project's root directory
+1. Navigate to the folder that contains `greeter_bin`
 
 <FbInternalOnly>
 
@@ -158,7 +160,7 @@ root//buck2_lab/greeter_lib:library /.../greeter_lib/__library__/out/LPPMD/libli
 
 </OssOnly>
 
-Now, navigate back to the project root:
+Now, navigate back to the `buck2_lab` folder:
 
 ```bash
 cd ..
@@ -269,9 +271,43 @@ about what's happening inside our functions. This is a common need for debugging
 or just understanding the flow. To help with this, let's say we've prepared a
 simple, shared logging library for you. <FbInternalOnly> The library is
 `fbcode//buck2/docs/buck2_lab/logging_lib:logging_lib`. </FbInternalOnly>
-<OssOnly> You can find it at
-https://github.com/facebook/buck2/tree/main/docs/buck2_lab/logging_lib and copy
-the folder into `buck2_lab` folder. </OssOnly>
+
+<OssOnly>
+
+Create it in the `buck2_lab` folder:
+
+```bash
+mkdir logging_lib
+mkdir logging_lib/src
+```
+
+Add this code to `logging_lib/src/lib.rs`:
+
+```rust
+pub fn info(message: &str) {
+    println!("[INFO] {}", message);
+}
+
+pub fn warning(message: &str) {
+    println!("\x1b[33m[WARNING] {}\x1b[0m", message);
+}
+
+pub fn error(message: &str) {
+    println!("\x1b[31m[ERROR] {}\x1b[0m", message);
+}
+```
+
+Add this target to `logging_lib/BUCK`:
+
+```python
+rust_library(
+    name = "logging_lib",
+    srcs = ["src/lib.rs"],
+    visibility = ["PUBLIC"],
+)
+```
+
+</OssOnly>
 
 Our first step is to make our existing greeter_lib use this new logging_lib.
 
@@ -304,6 +340,7 @@ rust_library(
 rust_library(
     name = "library",
     srcs = ["src/lib.rs"],
+    crate_root = "src/lib.rs",
     visibility = ["PUBLIC"],
     deps = [
         # Add the dep to our logging_lib
@@ -378,6 +415,8 @@ buck2 run root//buck2_lab/greeter_bin:main
 
 You will encounter a compile-time error like this:
 
+<FbInternalOnly>
+
 ```
 error[E0433]: failed to resolve: use of unresolved module or unlinked crate `logging_lib`
  --> fbcode/scripts/$USER/buck2_lab/greeter_bin/src/main.rs:4:5
@@ -400,6 +439,34 @@ error[E0433]: failed to resolve: use of unresolved module or unlinked crate `log
 error: aborting due to 2 previous errors
 ```
 
+</FbInternalOnly>
+
+<OssOnly>
+
+```
+error[E0433]: cannot find module or crate `logging_lib` in this scope
+ --> buck2_lab/greeter_bin/src/main.rs:2:5
+  |
+2 |     logging_lib::info("Starting...");
+  |     ^^^^^^^^^^^ use of unresolved module or unlinked crate `logging_lib`
+  |
+  = help: you might be missing a crate named `logging_lib`
+
+
+error[E0433]: cannot find module or crate `logging_lib` in this scope
+ --> buck2_lab/greeter_bin/src/main.rs:7:5
+  |
+7 |     logging_lib::info("Exit.");
+  |     ^^^^^^^^^^^ use of unresolved module or unlinked crate `logging_lib`
+  |
+  = help: you might be missing a crate named `logging_lib`
+
+
+error: aborting due to 2 previous errors
+```
+
+</OssOnly>
+
 This means that `logging_lib` cannot be found in our `main` binary.
 
 ### Why did this fail?
@@ -414,7 +481,7 @@ This means that `logging_lib` cannot be found in our `main` binary.
   `logging_lib` crate needs to be explicitly available to `greeter_bin:main`
   during its compilation.
 
-## Step 9: Fixing the Build - Declaring the Direct Dependency
+## Step 8: Fixing the Build - Declaring the Direct Dependency
 
 To fix this, we need to tell Buck2 that `greeter_bin` also has a direct
 dependency on `logging_lib`.

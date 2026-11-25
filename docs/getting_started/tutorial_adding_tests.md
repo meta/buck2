@@ -6,7 +6,7 @@ title: 'Tutorial: Adding tests'
 import { FbInternalOnly, OssOnly, isInternal } from
 'docusaurus-plugin-internaldocs-fb/internal';
 
-In our previous tutorials, we built a binary `main` target and a `library`
+In our previous tutorials, we built a `library` target and a binary `main`
 target that uses it, even incorporating a shared `logging_lib`. Now, let's
 ensure our `library` target works as expected by adding unit tests. Writing
 tests helps us catch bugs early and refactor with confidence.
@@ -167,6 +167,8 @@ buck2 test :test
 
 3. Expected Output: You should see something like this:
 
+<FbInternalOnly>
+
 ```
 ...
 Time elapsed: 6.5s
@@ -175,6 +177,30 @@ Tests finished: Pass 2. Fail 0. Fatal 0. Skip 0. Build failure 0
 
 The key is seeing "Pass" and a summary indicating that all your test cases
 (`test_greet` and `test_greet_empty`) passed.
+
+</FbInternalOnly>
+
+<OssOnly>
+
+```
+✓ Pass: root//buck2_lab/greeter_lib:test (0.0s)
+---- STDOUT ----
+
+running 2 tests
+test tests::test_greet ... ok
+test tests::test_greet_empty ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+...
+Tests finished: Pass 1. Fail 0. Timeout 0. Fatal 0. Skip 0. Omit 0. Infra Failure 0. Build failure 0
+```
+
+The open-source test runner reports one result per test target, so the summary
+says `Pass 1`. The test cases (`test_greet` and `test_greet_empty`) are listed
+in the test's STDOUT.
+
+</OssOnly>
 
 ## Conclusion
 

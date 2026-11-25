@@ -40,39 +40,64 @@ jobs:
           path: artifacts/prelude_hash
           name: prelude_hash
 
+  select_targets:
+    name: Select the targets to build
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.select_targets.outputs.targets }}
+    steps:
+      - name: Select targets
+        id: select_targets
+        env:
+          # macos-15-xlarge is a Meta larger runner; forks get the standard one.
+          MACOS_RUNNER: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
+          # A fork can set the repository variable BUCK2_RELEASE_TARGETS to the target triples
+          # it releases, separated by spaces or commas. GitHub doesn't queue jobs for the other
+          # targets. A runner type that the fork can't get then can't fail the release. Every
+          # target is built when the variable is unset. The docs job of upload_buck2.yml needs
+          # the x86_64-unknown-linux-gnu build.
+          RELEASE_TARGETS: ${{ vars.BUCK2_RELEASE_TARGETS }}
+        run: |
+          # A key is left out instead of set to false: the steps below test `cross` and
+          # `is_windows` for being non-empty.
+          all=$(jq -nc --arg macos "$MACOS_RUNNER" '[
+            {os: "ubuntu-26.04", triple: "aarch64-unknown-linux-gnu", cross: true},
+            {os: "ubuntu-26.04", triple: "aarch64-unknown-linux-musl", cross: true},
+            {os: "ubuntu-26.04", triple: "x86_64-unknown-linux-gnu"},
+            {os: "ubuntu-26.04", triple: "x86_64-unknown-linux-musl", cross: true},
+            {os: "ubuntu-26.04", triple: "riscv64gc-unknown-linux-gnu", cross: true},
+            {os: $macos, triple: "aarch64-apple-darwin", cross: true},
+            {os: $macos, triple: "x86_64-apple-darwin"},
+            {os: "windows-2025", triple: "x86_64-pc-windows-msvc", is_windows: true},
+            {os: "windows-11-arm", triple: "aarch64-pc-windows-msvc", is_windows: true}
+          ]')
+          # build-and-test.yml and publish_dotslash only test whether the variable is empty. They
+          # select no platform for a value that contains no target triple. A value without a
+          # target triple therefore fails here instead of building every target.
+          targets=$(jq -c --arg raw "$RELEASE_TARGETS" '
+            [$raw | splits("[\\s,]+") | select(. != "")] as $wanted
+            | ($wanted - map(.triple)) as $unknown
+            | if $raw == "" then
+                .
+              elif $wanted == [] then
+                error("BUCK2_RELEASE_TARGETS names no target")
+              elif $unknown != [] then
+                error("BUCK2_RELEASE_TARGETS names unknown targets: \($unknown | join(" "))")
+              else
+                map(select(.triple | IN($wanted[])))
+              end
+          ' <<< "$all")
+          echo "Building: $(jq -r 'map(.triple) | join(" ")' <<< "$targets")"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
   build:
     needs:
       - get_prelude_hash
+      - select_targets
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - os: 'ubuntu-26.04'
-            triple: 'aarch64-unknown-linux-gnu'
-            cross: true
-          - os: 'ubuntu-26.04'
-            triple: 'aarch64-unknown-linux-musl'
-            cross: true
-          - os: 'ubuntu-26.04'
-            triple: 'x86_64-unknown-linux-gnu'
-          - os: 'ubuntu-26.04'
-            triple: 'x86_64-unknown-linux-musl'
-            cross: true
-          - os: 'ubuntu-26.04'
-            triple: 'riscv64gc-unknown-linux-gnu'
-            cross: true
-          # macos-15-xlarge is a Meta larger runner; forks get the standard one.
-          - os: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
-            triple: 'aarch64-apple-darwin'
-            cross: true
-          - os: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
-            triple: 'x86_64-apple-darwin'
-          - os: 'windows-2025'
-            triple: 'x86_64-pc-windows-msvc'
-            is_windows: true
-          - os: 'windows-11-arm'
-            triple: 'aarch64-pc-windows-msvc'
-            is_windows: true
+        target: ${{ fromJSON(needs.select_targets.outputs.targets) }}
     runs-on: ${{ matrix.target.os }}
 
     steps:

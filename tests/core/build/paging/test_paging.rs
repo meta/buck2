@@ -1454,3 +1454,43 @@ async fn test_cached_build_metadata_skips_configured_graph(buck: &Buck) -> anyho
     assert_eq!(responses[0][0]["target_rule_type_name"], "analysis_node");
     Ok(())
 }
+
+/// The commands that a release build trains its PGO profile with, as
+/// `_run_training_workload` in `fbcode/buck2/deploy/pgo.py` issues them. A release build fails
+/// when one of them stops working, and only after the change that broke it has landed; this
+/// fails first. Change both together.
+#[buck_test(data_dir = "paging")]
+async fn test_pgo_training_workload(buck: &Buck) -> anyhow::Result<()> {
+    const SETTINGS: [&str; 2] = [
+        "--setting=hydration.enable_paging=true",
+        "--setting=hydration.page_out_on_idle=false",
+    ];
+    const CLIENT_METADATA: &str = "--client-metadata=id=buck2_pgo_training";
+    const COMMON: [&str; 3] = ["-v0", "--console=none", CLIENT_METADATA];
+    async fn daemon_pid(buck: &Buck) -> anyhow::Result<u64> {
+        let status: Value = serde_json::from_str(&buck.status(&SETTINGS).await?.stdout)?;
+        count(&status["process_info"]["pid"])
+    }
+
+    buck.audit(
+        &[
+            &["providers", "--quiet", "//:mysrcrule"][..],
+            &SETTINGS,
+            &COMMON,
+        ]
+        .concat(),
+    )
+    .await?;
+    let daemon = daemon_pid(buck).await?;
+    buck.build(&[&["-M", "none", "//:mysrcrule"][..], &SETTINGS, &COMMON].concat())
+        .await?;
+    for step in ["page-out", "evict", "page-in"] {
+        buck.debug(&[&["hydration", step][..], &SETTINGS, &[CLIENT_METADATA]].concat())
+            .await?;
+    }
+    buck.debug(&[&["flush-pgo-profile"][..], &SETTINGS, &[CLIENT_METADATA]].concat())
+        .await?;
+    // The profile is the daemon's counters: every command has to reach the same daemon.
+    assert_eq!(daemon, daemon_pid(buck).await?);
+    Ok(())
+}

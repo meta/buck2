@@ -623,7 +623,8 @@ impl<'v> StarlarkType<'v> for StarlarkDict<'v> {
         with_dict!(this.repr(), |d| d.set_at(index, alloc_value))
     }
 
-    fn bit_or(this: Self, rhs: DictRef<'v>) -> Dict<'v> {
+    fn bit_or(this: Self, rhs: Self) -> Dict<'v> {
+        let rhs = rhs.borrowed();
         let content = this.repr().content();
         if content.is_empty() {
             return (*rhs).clone();

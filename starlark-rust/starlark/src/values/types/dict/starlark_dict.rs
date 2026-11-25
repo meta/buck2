@@ -24,10 +24,12 @@ use std::marker::PhantomData;
 use dupe::Clone_;
 use dupe::Copy_;
 use dupe::Dupe_;
+use starlark_map::small_map;
 
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
 use crate::collections::Hashed;
+use crate::collections::SmallMap;
 use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
@@ -258,10 +260,22 @@ impl<'v, K, V> StarlarkDict<'v, K, V> {
     /// The entries, as plain values. The dict cannot be changed while the iterator is alive.
     #[inline]
     pub fn entries(self) -> DictValues<'v> {
-        DictValues {
-            dict: self.borrowed(),
-            index: 0,
-        }
+        DictValues::of_borrowed(self.borrowed())
+    }
+
+    /// The entries as plain values, each key with its hash. The dict cannot be changed while
+    /// the iterator is alive.
+    #[inline]
+    pub fn entries_hashed(self) -> impl Iterator<Item = (Hashed<Value<'v>>, Value<'v>)> + 'v {
+        let borrow = self.borrowed();
+        // SAFETY: the closure below takes the borrow, so the iterator that reads the entries
+        // has it for as long as it is alive.
+        let entries = unsafe { content_while_borrowed(&borrow) }.iter_hashed();
+        entries.map(move |(k, v)| {
+            // The borrow lives as long as the iterator.
+            let _borrow = &borrow;
+            (k.copied(), *v)
+        })
     }
 
     /// The keys, as plain values. The dict cannot be changed while the iterator is alive.
@@ -375,14 +389,38 @@ impl<'v, K, V> Display for StarlarkDict<'v, K, V> {
     }
 }
 
+/// The entries of a dict that is borrowed, for an iterator that keeps the borrow.
+///
+/// # Safety
+///
+/// The reference is not used after `borrow` is dropped.
+#[inline]
+unsafe fn content_while_borrowed<'v>(borrow: &DictRef<'v>) -> &'v SmallMap<Value<'v>, Value<'v>> {
+    let content: *const SmallMap<Value<'v>, Value<'v>> = &borrow.content;
+    // SAFETY: the dict is in the heap, which lives for `'v`, and it is not changed while it
+    // is borrowed, which it is for as long as the reference is used.
+    unsafe { &*content }
+}
+
 /// The entries of a dict as plain values: [`StarlarkDict::entries`].
 ///
 /// While it is alive the dict is borrowed, so a change to the dict is the error it is in a
 /// Starlark `for` loop.
-// Indexed, because the borrow lives in the iterator.
 pub struct DictValues<'v> {
-    dict: DictRef<'v>,
-    index: usize,
+    entries: small_map::Iter<'v, Value<'v>, Value<'v>>,
+    /// Keeps the dict from being changed under `entries`.
+    _borrow: DictRef<'v>,
+}
+
+impl<'v> DictValues<'v> {
+    #[inline]
+    fn of_borrowed(borrow: DictRef<'v>) -> Self {
+        DictValues {
+            // SAFETY: the iterator is stored with the borrow.
+            entries: unsafe { content_while_borrowed(&borrow) }.iter(),
+            _borrow: borrow,
+        }
+    }
 }
 
 impl<'v> Iterator for DictValues<'v> {
@@ -390,15 +428,12 @@ impl<'v> Iterator for DictValues<'v> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let (k, v) = self.dict.content.get_index(self.index)?;
-        self.index += 1;
-        Some((*k, *v))
+        self.entries.next().map(|(k, v)| (*k, *v))
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let rem = self.dict.content.len() - self.index;
-        (rem, Some(rem))
+        self.entries.size_hint()
     }
 }
 
@@ -417,7 +452,7 @@ impl<'v, K, V> DictEntries<'v, K, V> {
     pub(crate) fn of_borrowed(dict: DictRef<'v>, frozen: bool) -> Self {
         DictEntries {
             frozen,
-            entries: DictValues { dict, index: 0 },
+            entries: DictValues::of_borrowed(dict),
             _marker: PhantomData,
         }
     }
@@ -525,6 +560,7 @@ mod tests {
             assert_eq!(2, reading.iter().count());
             assert_eq!(2, reading.entries().count());
             assert_eq!(2, reading.keys().count());
+            assert_eq!(2, reading.entries_hashed().count());
             assert!(reading.lookup_str("a").unwrap().is_some());
             assert!(reading.get_str("a").is_some());
             // The handle reads the dict as the dict does.

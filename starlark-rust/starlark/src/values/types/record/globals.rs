@@ -26,7 +26,7 @@ use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::dict::DictType;
+use crate::values::dict::StarlarkDict;
 use crate::values::record::field::Field;
 use crate::values::record::record_type::RecordType;
 use crate::values::string::StarlarkStr;
@@ -65,7 +65,7 @@ pub(crate) fn register_record(builder: &mut GlobalsBuilder) {
     ///
     /// Records are stored deduplicating their field names, making them more memory efficient than dictionaries.
     fn record<'v>(
-        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<ValueOf<'v, RecordTypeView<'v>>> {
         // Every Value must either be a field or a value (the type)

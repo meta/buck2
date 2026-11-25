@@ -50,7 +50,7 @@ use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::dict::DictRef;
+use crate::values::dict::StarlarkDict;
 use crate::values::function::FUNCTION_TYPE;
 use crate::values::types::tuple::value::Tuple;
 
@@ -73,7 +73,7 @@ pub fn partial(builder: &mut GlobalsBuilder) {
     fn partial<'v>(
         #[starlark(require = pos)] func: Value<'v>,
         #[starlark(args)] args: Value<'v>,
-        #[starlark(kwargs)] kwargs: DictRef<'v>,
+        #[starlark(kwargs)] kwargs: StarlarkDict<'v>,
         heap: Heap<'v>,
     ) -> anyhow::Result<ValueOf<'v, Partial<'v>>> {
         debug_assert!(Tuple::from_value(args).is_some());

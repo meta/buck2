@@ -21,20 +21,49 @@ use std::mem;
 
 use either::Either;
 use starlark_derive::starlark_module;
+use starlark_syntax::internal_error;
 
 use crate as starlark;
 use crate::environment::MethodsBuilder;
 use crate::values::Heap;
+use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::DictMut;
-use crate::values::dict::DictRef;
-use crate::values::dict::DictType;
+use crate::values::dict::StarlarkDict;
 use crate::values::list::AllocList;
 use crate::values::list::StarlarkList;
 use crate::values::none::NoneType;
 use crate::values::typing::StarlarkIter;
 
+/// The receiver of a method that reads the dict, as a dict.
+///
+/// The methods take the receiver as a plain value and read it here, in their bodies: a
+/// receiver typed `StarlarkDict` is converted before the arguments are, and the method then
+/// tells the dict's representations apart a second time where it reads the dict. And this is
+/// `StarlarkDict::from_value` rather than a conversion to `dict[typing.Any, typing.Any]`,
+/// which borrows the dict to look at its entries although there is nothing to check about
+/// them: that measured 2 instructions on `d.get(k)`.
+#[inline(always)]
+fn this_dict<'v>(this: Value<'v>) -> starlark::Result<StarlarkDict<'v>> {
+    #[cold]
+    #[inline(never)]
+    fn not_a_dict<'v>(this: Value<'v>) -> starlark::Error {
+        match <StarlarkDict>::unpack_value_err(this) {
+            Err(e) => e,
+            Ok(_) => internal_error!("The receiver is a dict and was not read as one"),
+        }
+    }
+
+    match StarlarkDict::from_value(this) {
+        Some(dict) => Ok(dict),
+        None => Err(not_a_dict(this)),
+    }
+}
+
+// `items`, `keys` and `values` borrow the dict and iterate the borrow by reference. The dict's
+// own iterators hold the borrow, and one of those moved into the allocation of the list
+// measured 18 instructions a call.
 #[starlark_module]
 pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     /// [dict.clear](
@@ -81,11 +110,11 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn get<'v>(
-        this: DictRef<'v>,
+        this: Value<'v>,
         #[starlark(require = pos)] key: Value<'v>,
         #[starlark(require = pos)] default: Option<Value<'v>>,
     ) -> starlark::Result<Value<'v>> {
-        match this.get(key)? {
+        match this_dict(this)?.get(key)? {
             None => Ok(default.unwrap_or_else(Value::new_none)),
             Some(x) => Ok(x),
         }
@@ -106,9 +135,10 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     /// # "#);
     /// ```
     fn items<'v>(
-        this: DictRef<'v>,
+        this: Value<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, StarlarkList<'v, (Value<'v>, Value<'v>)>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkList<'v, (Value<'v>, Value<'v>)>>> {
+        let this = this_dict(this)?.borrowed();
         Ok(heap.alloc(AllocList(this.iter())))
     }
 
@@ -127,9 +157,10 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn keys<'v>(
-        this: DictRef<'v>,
+        this: Value<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, StarlarkList<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkList<'v>>> {
+        let this = this_dict(this)?.borrowed();
         Ok(heap.alloc(AllocList(this.keys())))
     }
 
@@ -305,12 +336,9 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn update<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] pairs: Option<
-            ValueOf<
-                'v,
-                Either<DictType<Value<'v>, Value<'v>>, StarlarkIter<(Value<'v>, Value<'v>)>>,
-            >,
+            ValueOf<'v, Either<StarlarkDict<'v>, StarlarkIter<(Value<'v>, Value<'v>)>>>,
         >,
-        #[starlark(kwargs)] kwargs: DictRef<'v>,
+        #[starlark(kwargs)] kwargs: StarlarkDict<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneType> {
         let pairs = if pairs.map(|x| x.to_value().ptr_eq(this)) == Some(true) {
@@ -324,9 +352,9 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
 
         let mut this = DictMut::from_value(this)?;
         if let Some(pairs) = pairs {
-            match DictRef::from_value(pairs) {
+            match StarlarkDict::from_value(pairs) {
                 Some(dict) => {
-                    for (k, v) in dict.iter_hashed() {
+                    for (k, v) in dict.borrowed().iter_hashed() {
                         this.aref.insert_hashed(k, v);
                     }
                 }
@@ -345,7 +373,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
             }
         }
 
-        for (k, v) in kwargs.iter_hashed() {
+        for (k, v) in kwargs.borrowed().iter_hashed() {
             this.aref.insert_hashed(k, v);
         }
         Ok(NoneType)
@@ -367,9 +395,10 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn values<'v>(
-        this: DictRef<'v>,
+        this: Value<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, StarlarkList<'v>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkList<'v>>> {
+        let this = this_dict(this)?.borrowed();
         Ok(heap.alloc_list_iter(this.values().map(ValueOf::from)))
     }
 }

@@ -255,7 +255,6 @@ mod tests {
     use crate::values::Heap;
     use crate::values::Value;
     use crate::values::dict::AllocDict;
-    use crate::values::dict::DictType;
     use crate::values::dict::StarlarkDict;
     use crate::values::list::AllocList;
     use crate::values::list::StarlarkList;
@@ -360,8 +359,8 @@ mod tests {
             agrees::<Value>(&vs);
             agrees::<StarlarkList<IntView>>(&vs);
             agrees::<StarlarkList<StarlarkStr>>(&vs);
-            agrees::<DictType<IntView, StarlarkStr>>(&vs);
-            agrees::<DictType<StarlarkStr, IntView>>(&vs);
+            agrees::<StarlarkDict<IntView, StarlarkStr>>(&vs);
+            agrees::<StarlarkDict<StarlarkStr, IntView>>(&vs);
             agrees::<StarlarkTuple<IntView>>(&vs);
             agrees::<(IntView, IntView)>(&vs);
             agrees::<(IntView, StarlarkStr)>(&vs);

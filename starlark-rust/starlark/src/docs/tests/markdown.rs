@@ -43,7 +43,7 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::dict::DictType;
+use crate::values::dict::StarlarkDict;
 use crate::values::list::StarlarkList;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
@@ -207,7 +207,7 @@ fn submodule(builder: &mut GlobalsBuilder) {
     }
 
     fn starlark_kwargs<'v>(
-        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, IntView<'v>>>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, StarlarkDict<'v, StarlarkStr, IntView<'v>>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = kwargs;
         Ok(NoneType)

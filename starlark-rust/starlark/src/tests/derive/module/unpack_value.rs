@@ -32,7 +32,7 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::dict::DictType;
+use crate::values::dict::StarlarkDict;
 use crate::values::list::StarlarkList;
 use crate::values::set::SetType;
 use crate::values::types::int::view::IntView;
@@ -60,7 +60,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_dict_list<'v>(
-        v: ValueOf<'v, StarlarkList<'v, DictType<IntView<'v>, IntView<'v>>>>,
+        v: ValueOf<'v, StarlarkList<'v, StarlarkDict<'v, IntView<'v>, IntView<'v>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
             .iter()
@@ -75,7 +75,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_int_dict<'v>(
-        v: ValueOf<'v, DictType<IntView<'v>, IntView<'v>>>,
+        v: ValueOf<'v, StarlarkDict<'v, IntView<'v>, IntView<'v>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
             .try_items::<IntView, IntView>()
@@ -85,7 +85,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_list_dict<'v>(
-        v: ValueOf<'v, DictType<IntView<'v>, StarlarkList<'v, IntView<'v>>>>,
+        v: ValueOf<'v, StarlarkDict<'v, IntView<'v>, StarlarkList<'v, IntView<'v>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
             .iter()
@@ -101,7 +101,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_dict_dict<'v>(
-        v: ValueOf<'v, DictType<IntView<'v>, DictType<IntView<'v>, IntView<'v>>>>,
+        v: ValueOf<'v, StarlarkDict<'v, IntView<'v>, StarlarkDict<'v, IntView<'v>, IntView<'v>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
             .iter()

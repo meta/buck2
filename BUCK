@@ -65,6 +65,16 @@ pagable_transition_alias(
     modifiers = buck2_modifiers(),
 )
 
+buck2_bundle(
+    name = "buck2_e2e_bundle",
+    buck2 = "//buck2:buck2_e2e",
+    buck2_client = "//buck2/app/buck2:buck2_e2e_client-bin",
+    buck2_health_check = "//buck2/buck2_health_check_cli:buck2_health_check_cli",
+    modifiers = buck2_modifiers(),
+    tpx = "//buck2/buck2_tpx_cli:buck2_tpx_cli",
+    visibility = ["PUBLIC"],
+)
+
 # For backcompat with bash aliases and so forth
 # You can use this target to test custom builds of buck2.
 #

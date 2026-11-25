@@ -25,6 +25,7 @@ use starlark_derive::starlark_module;
 use crate as starlark;
 use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
+use crate::values::Absent;
 use crate::values::AllocValue;
 use crate::values::Heap;
 use crate::values::Value;
@@ -263,7 +264,7 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     fn getattr<'v>(
         #[starlark(require = pos)] a: Value<'v>,
         #[starlark(require = pos)] attr: &str,
-        #[starlark(require = pos)] default: Option<Value<'v>>,
+        #[starlark(require = pos, default = Absent)] default: Option<Value<'v>>,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
         // TODO(nga): this doesn't cache string hash, so it is suboptimal.
@@ -410,7 +411,7 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     // which might be not spec-safe.
     fn sorted<'v>(
         #[starlark(require = pos)] x: ValueOf<'v, StarlarkIter<Value<'v>>>,
-        #[starlark(require = named)] key: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] key: Option<Value<'v>>,
         #[starlark(require = named, default = false)] reverse: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<AllocList<impl IntoIterator<Item = Value<'v>> + use<'v>>> {

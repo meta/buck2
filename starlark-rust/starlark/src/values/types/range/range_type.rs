@@ -29,6 +29,7 @@ use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::starlark_simple_value;
 use crate::typing::Ty;
+use crate::values::Absent;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
@@ -186,7 +187,7 @@ impl<'v> StarlarkValue<'v> for Range {
     #[starlark(constructor, speculative_exec_safe)]
     fn range(
         #[starlark(require = pos)] a1: i32,
-        #[starlark(require = pos)] a2: Option<i32>,
+        #[starlark(require = pos, default = Absent)] a2: Option<i32>,
         #[starlark(require = pos, default = 1)] step: i32,
         heap: Heap<'v>,
     ) -> anyhow::Result<ValueOf<'v, Range>> {

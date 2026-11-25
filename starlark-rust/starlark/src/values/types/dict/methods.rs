@@ -25,6 +25,7 @@ use starlark_syntax::internal_error;
 
 use crate as starlark;
 use crate::environment::MethodsBuilder;
+use crate::values::Absent;
 use crate::values::EmptyDict;
 use crate::values::Heap;
 use crate::values::UnpackValue;
@@ -201,7 +202,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn pop<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] key: Value<'v>,
-        default: Option<Value<'v>>,
+        #[starlark(default = Absent)] default: Option<Value<'v>>,
     ) -> starlark::Result<Value<'v>> {
         let mut me = DictMut::from_value(this)?;
         match me.aref.remove_hashed(key.get_hashed()?) {

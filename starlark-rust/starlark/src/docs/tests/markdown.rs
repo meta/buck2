@@ -38,6 +38,7 @@ use crate::docs::multipage::render_markdown_multipage;
 use crate::environment::Globals;
 use crate::environment::GlobalsBuilder;
 use crate::environment::MethodsBuilder;
+use crate::values::Absent;
 use crate::values::EmptyList;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
@@ -161,7 +162,7 @@ fn module(builder: &mut GlobalsBuilder) {
     #[starlark(as_type = Magic)]
     fn Magic(
         #[starlark(require = pos)] a1: i32,
-        #[starlark(require = pos)] a2: Option<i32>,
+        #[starlark(require = pos, default = Absent)] a2: Option<i32>,
         #[starlark(require = pos, default = 1)] step: i32,
     ) -> anyhow::Result<String> {
         let _ = (a1, a2, step);
@@ -173,7 +174,9 @@ fn module(builder: &mut GlobalsBuilder) {
             'v,
             StarlarkList<'v, StarlarkStr>,
         >,
-        hidden_default: Option<ValueOf<'v, StarlarkList<'v, StarlarkStr>>>,
+        #[starlark(default = Absent)] hidden_default: Option<
+            ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
+        >,
         #[starlark(default = "my_default")] string_default: &str,
     ) -> anyhow::Result<NoneType> {
         let _unused = (explicit_default, hidden_default, string_default);

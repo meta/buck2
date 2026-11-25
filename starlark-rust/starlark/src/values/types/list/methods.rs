@@ -23,6 +23,7 @@ use starlark_syntax::convert_indices::convert_indices;
 
 use crate as starlark;
 use crate::environment::MethodsBuilder;
+use crate::values::Absent;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
@@ -236,7 +237,7 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn pop<'v>(
         this: Value<'v>,
-        #[starlark(require = pos)] index: Option<i32>,
+        #[starlark(require = pos, default = Absent)] index: Option<i32>,
     ) -> anyhow::Result<Value<'v>> {
         let this = ListData::from_value_mut(this)?;
         let index = index.unwrap_or_else(|| (this.len() as i32) - 1);

@@ -31,6 +31,7 @@ use crate as starlark;
 use crate::private::Private;
 use crate::typing::OperatorSignature;
 use crate::typing::TypingBinOp;
+use crate::values::Absent;
 use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::Value;
@@ -178,7 +179,7 @@ impl<'v> StarlarkType<'v> for IntView<'v> {
             'v,
             Either<Either<IntView<'v>, StarlarkFloat>, Either<bool, StarlarkStr>>,
         >,
-        base: Option<i32>,
+        #[starlark(default = Absent)] base: Option<i32>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, IntView<'v>>> {
         let num_or_bool = match a.get() {

@@ -22,6 +22,7 @@ use starlark_derive::starlark_module;
 use crate as starlark;
 use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
+use crate::values::Absent;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::tuple::StarlarkTuple;
@@ -111,7 +112,7 @@ pub(crate) fn register_min_max(globals: &mut GlobalsBuilder) {
     // which might be not spec-safe.
     fn max<'v>(
         #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
-        key: Option<Value<'v>>,
+        #[starlark(default = Absent)] key: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         min_max(args, key, eval, false)
@@ -137,7 +138,7 @@ pub(crate) fn register_min_max(globals: &mut GlobalsBuilder) {
     // which might be not spec-safe.
     fn min<'v>(
         #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
-        key: Option<Value<'v>>,
+        #[starlark(default = Absent)] key: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         min_max(args, key, eval, true)

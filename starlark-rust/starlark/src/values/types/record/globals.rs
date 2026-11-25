@@ -24,6 +24,7 @@ use crate as starlark;
 use crate::collections::SmallMap;
 use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
+use crate::values::Absent;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::StarlarkDict;
@@ -95,7 +96,7 @@ pub(crate) fn register_record(builder: &mut GlobalsBuilder) {
     /// ```
     fn field<'v>(
         #[starlark(require = pos)] typ: Value<'v>,
-        default: Option<Value<'v>>,
+        #[starlark(default = Absent)] default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, Field<'v>>> {
         // We compile the type even if we don't have a default to raise the error sooner

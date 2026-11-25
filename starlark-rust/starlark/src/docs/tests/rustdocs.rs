@@ -34,6 +34,7 @@ use crate::environment::MethodsBuilder;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::eval::runtime::params::display::PARAM_FMT_OPTIONAL;
+use crate::values::Absent;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
@@ -89,7 +90,7 @@ fn globals(builder: &mut GlobalsBuilder) {
 
     #[allow(unused_variables)]
     fn default_arg<'v>(
-        arg1: Option<Value<'v>>,
+        #[starlark(default = Absent)] arg1: Option<Value<'v>>,
         #[starlark(default = NoneType)] arg2: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<AllocList<Vec<String>>> {

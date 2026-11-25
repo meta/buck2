@@ -28,6 +28,7 @@ use crate as starlark;
 use crate::environment::MethodsBuilder;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
+use crate::values::Absent;
 use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::UnpackValue;
@@ -741,7 +742,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn lstrip<'v>(
         this: StringValue<'v>,
-        #[starlark(require = pos)] chars: Option<&str>,
+        #[starlark(require = pos, default = Absent)] chars: Option<&str>,
         heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         let res = match chars {
@@ -826,7 +827,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         this: StringValue<'v>,
         #[starlark(require = pos)] old: &str,
         #[starlark(require = pos)] new: &str,
-        #[starlark(require = pos)] count: Option<i32>,
+        #[starlark(require = pos, default = Absent)] count: Option<i32>,
         heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         match count {
@@ -1036,7 +1037,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn rstrip<'v>(
         this: StringValue<'v>,
-        #[starlark(require = pos)] chars: Option<&str>,
+        #[starlark(require = pos, default = Absent)] chars: Option<&str>,
         heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         let res = match chars {
@@ -1237,7 +1238,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn strip<'v>(
         this: StringValue<'v>,
-        #[starlark(require = pos)] chars: Option<&str>,
+        #[starlark(require = pos, default = Absent)] chars: Option<&str>,
         heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         let res = match chars {

@@ -383,9 +383,9 @@ def buck2_e2e_test(
         # link these tests to buck2 or tpx sources.
         if use_compiled_buck2_client_and_tpx:
             compiled_env["LLVM_COVERAGE_ADDITIONAL_OBJECT_PATHS"] = ";".join(
-                ["$(location fbcode//buck2:symlinked_buck2_and_tpx)/" + binary for binary in ["buck2", "buck2-daemon", "buck2-tpx"]]
+                ["$(location fbcode//buck2:buck2_e2e_bundle)/" + binary for binary in ["buck2", "buck2-daemon", "buck2-tpx"]]
             )
-            base_exe = "$(location fbcode//buck2:symlinked_buck2_and_tpx)/buck2"
+            base_exe = "$(location fbcode//buck2:buck2_e2e_bundle)/buck2"
             exe = select({
                 "DEFAULT": base_exe,
                 "ovr_config//os:windows": base_exe + ".exe",

@@ -6,6 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//android:android_toolchain.bzl", "AidlToolchainInfo", "AndroidPlatformInfo", "AndroidToolchainInfo")
 load("@prelude//csharp:toolchain.bzl", "CSharpToolchainInfo")
 load("@prelude//go:toolchain.bzl", "GoToolchainInfo")
@@ -58,8 +59,13 @@ def _cxx_toolchain(exec_group = None):
     # that don't list `toolchains//:` they will experience an error. We can avoid
     # this by ensuring the `within_deps` checks inside buck see either of the
     # toolchains below as a possible default value, even though one of them is
-    # never able to be selected in this expression.
-    toolchain_default = select({"DEFAULT": "toolchains//:" + lang, "config//:none": "toolchains//:cxx_no_default_deps"})
+    # never able to be selected in this expression. Only Meta's macro layers do
+    # that. Elsewhere the unused branch would make every project define
+    # `toolchains//:cxx_no_default_deps`, because unconfigured queries follow it.
+    if is_full_meta_repo():
+        toolchain_default = select({"DEFAULT": "toolchains//:" + lang, "config//:none": "toolchains//:cxx_no_default_deps"})
+    else:
+        toolchain_default = "toolchains//:" + lang
     if exec_group == None:
         return _toolchain(lang, [], default = toolchain_default)
     return attrs.toolchain_dep(default = toolchain_default, providers = [], exec_group = exec_group)

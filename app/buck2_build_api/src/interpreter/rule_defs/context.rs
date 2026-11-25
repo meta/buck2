@@ -29,13 +29,13 @@ use buck2_hash::BuckMutInsertionSet;
 use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_settings::dice::HasBuckSettings;
-use buck2_util::late_binding::LateBinding;
 use derive_more::Display;
 use dice::DiceComputations;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
+use starlark::environment::LateMemberTable;
+use starlark::environment::MemberTableRef;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
@@ -182,18 +182,13 @@ impl<'v> AnalysisActions<'v> {
     }
 }
 
-starlark::methods_static!(
-    ANALYSIS_ACTIONS_METHODS = |builder| {
-        (ANALYSIS_ACTIONS_METHODS_ACTIONS.get().unwrap())(builder);
-        (ANALYSIS_ACTIONS_METHODS_ANON_TARGET.get().unwrap())(builder);
-    }
-);
+/// The methods of `ctx.actions`. They are declared in crates that depend on this one; each adds
+/// its modules when it sets its late bindings.
+pub static ANALYSIS_ACTIONS_MEMBERS: LateMemberTable<128> = LateMemberTable::new();
 
 #[starlark_value(type = "AnalysisActions", no_freeze)]
 impl<'v> StarlarkValue<'v> for AnalysisActions<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ANALYSIS_ACTIONS_METHODS.methods())
-    }
+    const MEMBERS: Option<MemberTableRef> = Some(ANALYSIS_ACTIONS_MEMBERS.table());
 }
 
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
@@ -333,11 +328,6 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
 #[starlark_module]
 #[starlark_types(AnalysisContext<'_> as AnalysisContext, AnalysisActions<'_> as AnalysisActions)]
 pub(crate) fn register_analysis_context(builder: &mut GlobalsBuilder) {}
-
-pub static ANALYSIS_ACTIONS_METHODS_ACTIONS: LateBinding<fn(&mut MethodsBuilder)> =
-    LateBinding::new("ANALYSIS_ACTIONS_METHODS_ACTIONS");
-pub static ANALYSIS_ACTIONS_METHODS_ANON_TARGET: LateBinding<fn(&mut MethodsBuilder)> =
-    LateBinding::new("ANALYSIS_ACTIONS_METHODS_ANON_TARGET");
 
 pub(crate) fn init_analysis_context_ty() {
     AnalysisContextReprLate::init(AnalysisContext::starlark_type_repr(), |value| {

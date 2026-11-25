@@ -16,7 +16,7 @@ use allocative::Allocative;
 use buck2_build_api::artifact_groups::promise::PromiseArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
-use buck2_build_api::interpreter::rule_defs::context::ANALYSIS_ACTIONS_METHODS_ANON_TARGET;
+use buck2_build_api::interpreter::rule_defs::context::ANALYSIS_ACTIONS_MEMBERS;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckMutInsertionMap;
@@ -412,5 +412,8 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
 }
 
 pub(crate) fn init_analysis_actions_methods_anon_target() {
-    ANALYSIS_ACTIONS_METHODS_ANON_TARGET.init(analysis_actions_methods_anon_target);
+    // SAFETY: Late bindings are set as the program starts, before anything is evaluated.
+    unsafe {
+        ANALYSIS_ACTIONS_MEMBERS.extend(&ANALYSIS_ACTIONS_METHODS_ANON_TARGET_MEMBERS);
+    }
 }

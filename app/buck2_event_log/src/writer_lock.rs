@@ -104,6 +104,8 @@ fn lock_file(log: &AbsPath) -> buck2_error::Result<AbsPathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn log(dir: &tempfile::TempDir) -> AbsPathBuf {
@@ -137,7 +139,14 @@ mod tests {
 
         drop(lock);
         assert!(lock_file.exists());
-        assert!(is_writer_finished(&log).await?);
+        // A process that another test starts holds the lock until it runs its program.
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while !is_writer_finished(&log).await? {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            buck2_error::Ok(())
+        })
+        .await??;
         assert!(!lock_file.exists());
         Ok(())
     }

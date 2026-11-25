@@ -245,6 +245,7 @@ async fn wait_for_exit_without_reaping(pid: i32, timeout: Duration) -> ChildStat
 #[cfg(test)]
 mod tests {
     use std::process::Child as StdChild;
+    use std::process::Stdio;
 
     use buck2_util::process::background_command;
 
@@ -254,6 +255,8 @@ mod tests {
         background_command("sh")
             .arg("-c")
             .arg(script)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .expect("should spawn sh")
     }
@@ -303,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wait_times_out_on_a_running_child() {
-        let mut child = spawn_sh("sleep 1000");
+        let mut child = spawn_sh("exec sleep 1000");
         let start = Instant::now();
         let state = wait_for_exit_without_reaping(pid_of(&child), Duration::from_millis(300)).await;
         let elapsed = Instant::now() - start;

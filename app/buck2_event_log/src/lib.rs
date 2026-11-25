@@ -121,6 +121,7 @@ mod tests {
     async fn failure(script: &str, wait: bool, exited: bool) -> Option<String> {
         let mut command = async_background_command("sh");
         command.args(["-c", script]).kill_on_drop(true);
+        command.stdout(Stdio::null());
         command.stderr(if wait { Stdio::piped() } else { Stdio::null() });
         let child = FutureChildOutput::new(command.spawn().unwrap(), wait);
         while exited && !child.task.is_finished() {
@@ -139,7 +140,7 @@ mod tests {
 
         assert_eq!(failure("true", false, true).await, None);
         // Still uploading: that is not waited for, and not a failure.
-        assert_eq!(failure("sleep 600", false, false).await, None);
+        assert_eq!(failure("exec sleep 600", false, false).await, None);
     }
 
     #[tokio::test]

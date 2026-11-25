@@ -169,6 +169,7 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
     use std::process::Child;
     use std::process::Command;
+    use std::process::Stdio;
     use std::time::Duration;
     use std::time::Instant;
 
@@ -177,7 +178,10 @@ mod tests {
     fn spawn_sh(script: &str, new_group: bool) -> Child {
         // ast-grep-ignore: rust/buck2-no-command-new
         let mut cmd = Command::new("sh");
-        cmd.arg("-c").arg(script);
+        cmd.arg("-c")
+            .arg(script)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         if new_group {
             cmd.process_group(0);
         }
@@ -210,7 +214,7 @@ mod tests {
 
     #[test]
     fn test_a_running_child_has_not_exited() {
-        let mut child = spawn_sh("sleep 1000", false);
+        let mut child = spawn_sh("exec sleep 1000", false);
         assert_eq!(child_state(child.id() as i32), ChildState::Running);
         child.kill().unwrap();
         child.wait().unwrap();
@@ -225,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_a_stopped_child_is_running() {
-        let mut child = spawn_sh("sleep 1000", false);
+        let mut child = spawn_sh("exec sleep 1000", false);
         let pid = child.id() as i32;
         // SAFETY: `kill` has no memory safety requirements.
         unsafe { libc::kill(pid, libc::SIGSTOP) };
@@ -246,7 +250,6 @@ mod tests {
     fn test_terminate_and_kill_group() {
         use std::io::BufRead;
         use std::io::BufReader;
-        use std::process::Stdio;
 
         // ast-grep-ignore: rust/buck2-no-command-new
         let mut leader = Command::new("sh")
@@ -254,6 +257,7 @@ mod tests {
             .arg("trap 'exit 5' TERM; sleep 1000 & echo ready; wait")
             .process_group(0)
             .stdout(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()
             .unwrap();
         let mut line = String::new();
@@ -282,7 +286,7 @@ mod tests {
         drop(KillGroupOnDrop::new(child.id() as i32));
         assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGKILL));
 
-        let mut child = spawn_sh("sleep 1000", true);
+        let mut child = spawn_sh("exec sleep 1000", true);
         let mut guard = KillGroupOnDrop::new(child.id() as i32);
         guard.disarm();
         drop(guard);
@@ -296,7 +300,6 @@ mod tests {
     fn test_process_is_gone_counts_a_zombie_as_gone() {
         use std::io::BufRead;
         use std::io::BufReader;
-        use std::process::Stdio;
 
         // `sleep 0` exits at once, and its parent, which `exec`s `sleep 1000`, never reaps it.
         // ast-grep-ignore: rust/buck2-no-command-new
@@ -304,6 +307,7 @@ mod tests {
             .arg("-c")
             .arg("sleep 0 & echo $!; exec sleep 1000")
             .stdout(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()
             .unwrap();
         let mut line = String::new();

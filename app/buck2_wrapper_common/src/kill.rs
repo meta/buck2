@@ -539,13 +539,16 @@ mod tests {
     fn test_process_exists_kill() {
         let mut command = if !cfg!(windows) {
             let mut command = background_command("sh");
-            command.args(["-c", "sleep 10000"]);
+            command.args(["-c", "exec sleep 10000"]);
             command
         } else {
             let mut command = background_command("powershell");
             command.args(["-c", "Start-Sleep -Seconds 10000"]);
             command
         };
+        command
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
         let mut child = command.spawn().unwrap();
         let pid = Pid::from_u32(child.id()).unwrap();
         // TODO T187306095: we only check for existence once, because flakiness

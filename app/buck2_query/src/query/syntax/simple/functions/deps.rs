@@ -21,6 +21,7 @@ use crate::query::environment::QueryTarget;
 use crate::query::environment::TraversalFilter;
 use crate::query::syntax::simple::eval::error::QueryError;
 use crate::query::syntax::simple::eval::evaluator::QueryEvaluator;
+use crate::query::syntax::simple::eval::regexes::FilterRegexes;
 use crate::query::syntax::simple::eval::set::TargetSet;
 use crate::query::syntax::simple::eval::values::QueryEvaluationValue;
 use crate::query::syntax::simple::eval::values::QueryValue;
@@ -91,6 +92,7 @@ struct Filter<'a, Env: QueryEnvironment> {
     inner_env: &'a Env,
     functions: &'a dyn QueryFunctions<Env = Env>,
     expr: &'a CapturedExpr<'a>,
+    regexes: FilterRegexes,
 }
 
 impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
@@ -110,7 +112,11 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
                             self.functions,
                             Box::new(DepsContextFunctions { target }),
                         );
-                        let evaluator = QueryEvaluator::new(self.inner_env, &augmented_functions);
+                        let evaluator = QueryEvaluator::for_filter(
+                            self.inner_env,
+                            &augmented_functions,
+                            &self.regexes,
+                        );
                         match evaluator.eval_parsed_query(self.expr.expr).await {
                             Ok(v) => match v.value {
                                 QueryEvaluationValue::TargetSet(v) => Ok(v),
@@ -129,6 +135,7 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
                     inner_env: env,
                     functions,
                     expr,
+                    regexes: FilterRegexes::default(),
                 })
             }
             None => None,

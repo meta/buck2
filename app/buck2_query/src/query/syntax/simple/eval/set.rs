@@ -16,7 +16,6 @@ use buck2_hash::BuckMutInsertionSet;
 use display_container::fmt_container;
 use dupe::IterDupedExt;
 use fancy_regex::Regex;
-use fancy_regex::RegexBuilder;
 use pagable::Pagable;
 
 use crate::query::environment::QueryTarget;
@@ -24,6 +23,8 @@ use crate::query::syntax::simple::eval::file_set::FileNode;
 use crate::query::syntax::simple::eval::file_set::FileSet;
 use crate::query::syntax::simple::eval::label_indexed;
 use crate::query::syntax::simple::eval::label_indexed::LabelIndexedSet;
+use crate::query::syntax::simple::eval::regexes::FILTER_NAME_DFA_SIZE_LIMIT;
+use crate::query::syntax::simple::eval::regexes::compile_regex;
 
 #[derive(Debug, Clone, Allocative, Pagable)]
 pub struct TargetSet<T: QueryTarget> {
@@ -205,21 +206,32 @@ impl<T: QueryTarget> TargetSet<T> {
         attribute: &str,
         value: &str,
     ) -> buck2_error::Result<TargetSet<T>> {
-        let regex = Regex::new(value)?;
+        self.attrregexfilter_matching(attribute, &compile_regex(value, None)?)
+    }
+
+    pub(crate) fn attrregexfilter_matching(
+        &self,
+        attribute: &str,
+        regex: &Regex,
+    ) -> buck2_error::Result<TargetSet<T>> {
         let filter = move |s: &'_ str| -> buck2_error::Result<bool> { Ok(regex.is_match(s)?) };
         self.attrfilter(attribute, &filter)
     }
 
     /// Filter targets by fully qualified name using regex partial match.
     pub fn filter_name(&self, regex: &str) -> buck2_error::Result<TargetSet<T>> {
-        let mut re = RegexBuilder::new(regex);
-        re.delegate_dfa_size_limit(100 << 20);
-        let re = re.build()?;
+        self.filter_name_matching(&compile_regex(regex, Some(FILTER_NAME_DFA_SIZE_LIMIT))?)
+    }
+
+    pub(crate) fn filter_name_matching(&self, re: &Regex) -> buck2_error::Result<TargetSet<T>> {
         self.filter(|node| Ok(re.is_match(&node.label_for_filter())?))
     }
 
     pub fn kind(&self, regex: &str) -> buck2_error::Result<TargetSet<T>> {
-        let re = Regex::new(regex)?;
+        self.kind_matching(&compile_regex(regex, None)?)
+    }
+
+    pub(crate) fn kind_matching(&self, re: &Regex) -> buck2_error::Result<TargetSet<T>> {
         self.filter(|node| Ok(re.is_match(&*node.rule_type())?))
     }
 

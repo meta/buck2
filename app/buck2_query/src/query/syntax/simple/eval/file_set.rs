@@ -51,8 +51,7 @@ impl FileSet {
         Self { files }
     }
 
-    pub(crate) fn filter_name(&self, regex: &str) -> buck2_error::Result<Self> {
-        let re = Regex::new(regex)?;
+    pub(crate) fn filter_name(&self, re: &Regex) -> buck2_error::Result<Self> {
         self.filter(|node| Ok(re.is_match(&node.0.to_string())?))
     }
 

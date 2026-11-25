@@ -14,6 +14,7 @@ pub mod file_set;
 pub mod label_indexed;
 pub mod literals;
 pub mod multi_query;
+pub(crate) mod regexes;
 pub mod set;
 pub mod tests;
 pub mod values;

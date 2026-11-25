@@ -64,7 +64,7 @@ impl QueryTarget for TestTarget {
     }
 
     fn rule_type(&self) -> Cow<'_, str> {
-        unimplemented!()
+        Cow::Owned(format!("rule{}", self.id.0))
     }
 
     fn name(&self) -> Cow<'_, str> {
@@ -97,9 +97,9 @@ impl QueryTarget for TestTarget {
 
     fn attr_any_matches(
         _attr: &Self::Attr<'_>,
-        _filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
+        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<bool> {
-        unimplemented!()
+        filter("value")
     }
 
     fn special_attrs_for_each<
@@ -142,10 +142,10 @@ impl QueryTarget for TestTarget {
 
     fn map_any_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
         &self,
-        _key: &str,
-        _func: F,
+        key: &str,
+        mut func: F,
     ) -> buck2_error::Result<R> {
-        unimplemented!()
+        Ok(func((key == "attr").then_some(&TestTargetAttr)))
     }
 }
 
@@ -687,6 +687,7 @@ mod query_function_args {
     use crate::query::syntax::simple::eval::evaluator::QueryEvaluator;
     use crate::query::syntax::simple::eval::file_set::FileNode;
     use crate::query::syntax::simple::eval::literals::extract_target_literals;
+    use crate::query::syntax::simple::eval::regexes::COMPILED;
     use crate::query::syntax::simple::eval::values::QueryEvaluationValue;
     use crate::query::syntax::simple::functions::DefaultQueryFunctions;
     use crate::query::syntax::simple::functions::DefaultQueryFunctionsModule;
@@ -815,6 +816,76 @@ mod query_function_args {
             ),
             "{err:#}"
         );
+        Ok(())
+    }
+
+    /// A regex in a traversal filter keeps the children it matches, for every node visited.
+    #[tokio::test]
+    async fn traversal_filter_with_a_regex() -> buck2_error::Result<()> {
+        let env = env();
+        assert_eq!(
+            eval(&env, "deps(set(1), 2, filter('[23]', first_order_deps()))").await?,
+            "[1, 2, 3]"
+        );
+        assert_eq!(
+            eval(&env, "deps(set(1), 2, filter('2', first_order_deps()))").await?,
+            "[1, 2]"
+        );
+        assert_eq!(
+            eval(&env, "deps(set(1), 2, filter('3', first_order_deps()))").await?,
+            "[1]"
+        );
+        let err = eval(&env, "deps(set(1), 2, filter('(', first_order_deps()))")
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("Parsing error"), "{err:#}");
+        Ok(())
+    }
+
+    /// A traversal compiles its filter's regex once however many nodes it visits, and keeps
+    /// nothing for the next traversal; outside a filter every call compiles.
+    #[tokio::test]
+    async fn traversal_compiles_its_filter_regex_once() -> buck2_error::Result<()> {
+        let env = env();
+        // Every target has the rule type `rule<id>` and an attribute `attr = "value"`.
+        let filters = [
+            "filter('[23]', first_order_deps())",
+            "kind('rule[23]', first_order_deps())",
+            "attrregexfilter(attr, 'val', first_order_deps())",
+        ];
+        let mut cases = Vec::new();
+        for filter in filters {
+            for _ in 0..2 {
+                cases.push((format!("deps(set(1), 2, {filter})"), "[1, 2, 3]", 1));
+            }
+            cases.push((
+                format!("rdeps(set(1), set(3), 2, {filter})"),
+                "[1, 2, 3]",
+                1,
+            ));
+            cases.push((
+                format!("somepath(set(1), set(3), {filter})"),
+                "[1, 2, 3]",
+                1,
+            ));
+            cases.push((
+                format!("allpaths(set(1), set(3), {filter})"),
+                "[1, 2, 3]",
+                1,
+            ));
+        }
+        for call in [
+            "filter('[23]', set(1 2 3))",
+            "kind('rule[23]', set(1 2 3))",
+            "attrregexfilter(attr, 'val', set(2 3))",
+        ] {
+            cases.push((format!("{call} + {call}"), "[2, 3]", 2));
+        }
+        for (query, result, compiled) in cases {
+            let before = COMPILED.get();
+            assert_eq!(eval(&env, &query).await?, result, "{query}");
+            assert_eq!(COMPILED.get() - before, compiled, "{query}");
+        }
         Ok(())
     }
 }

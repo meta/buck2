@@ -10,10 +10,13 @@
 
 //! Implementation of the cli and query_* attr query language.
 
+use std::sync::Arc;
+
 use buck2_hash::BuckMutInsertionSet;
 use buck2_query_parser::Expr;
 use buck2_query_parser::parse_expr;
 use buck2_query_parser::spanned::Spanned;
+use fancy_regex::Regex;
 use futures::FutureExt;
 use variant_name::VariantName;
 
@@ -21,19 +24,53 @@ use crate::query::environment::QueryEnvironment;
 use crate::query::syntax::simple::eval::error::QueryError;
 use crate::query::syntax::simple::eval::file_set::FileNode;
 use crate::query::syntax::simple::eval::file_set::FileSet;
+use crate::query::syntax::simple::eval::regexes::FilterRegexes;
+use crate::query::syntax::simple::eval::regexes::compile_regex;
 use crate::query::syntax::simple::eval::set::TargetSet;
 use crate::query::syntax::simple::eval::values::QueryEvaluationValue;
 use crate::query::syntax::simple::eval::values::QueryResult;
 use crate::query::syntax::simple::eval::values::QueryValue;
 use crate::query::syntax::simple::functions::QueryFunctions;
+
 pub struct QueryEvaluator<'e, Env: QueryEnvironment> {
     env: &'e Env,
     functions: &'e dyn QueryFunctions<Env = Env>,
+    filter_regexes: Option<&'e FilterRegexes>,
 }
 
 impl<'e, Env: QueryEnvironment> QueryEvaluator<'e, Env> {
     pub fn new(env: &'e Env, functions: &'e dyn QueryFunctions<Env = Env>) -> Self {
-        Self { env, functions }
+        Self {
+            env,
+            functions,
+            filter_regexes: None,
+        }
+    }
+
+    /// Evaluates a traversal filter for one node. `regexes` belongs to the
+    /// traversal, so the next node finds what this one compiled.
+    pub(crate) fn for_filter(
+        env: &'e Env,
+        functions: &'e dyn QueryFunctions<Env = Env>,
+        regexes: &'e FilterRegexes,
+    ) -> Self {
+        Self {
+            env,
+            functions,
+            filter_regexes: Some(regexes),
+        }
+    }
+
+    /// The compiled `pattern`, built with `delegate_dfa_size_limit` if given.
+    pub(crate) fn regex(
+        &self,
+        pattern: String,
+        dfa_size_limit: Option<usize>,
+    ) -> buck2_error::Result<Arc<Regex>> {
+        Ok(match self.filter_regexes {
+            Some(regexes) => regexes.get_or_compile(pattern, dfa_size_limit)?,
+            None => Arc::new(compile_regex(&pattern, dfa_size_limit)?),
+        })
     }
 
     pub fn env(&self) -> &Env {

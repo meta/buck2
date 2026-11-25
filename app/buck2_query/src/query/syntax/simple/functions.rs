@@ -25,6 +25,7 @@ use crate::query::environment::QueryEnvironment;
 use crate::query::syntax::simple::eval::error::QueryError;
 use crate::query::syntax::simple::eval::evaluator::QueryEvaluator;
 use crate::query::syntax::simple::eval::file_set::FileSet;
+use crate::query::syntax::simple::eval::regexes::FILTER_NAME_DFA_SIZE_LIMIT;
 use crate::query::syntax::simple::eval::set::TargetSet;
 use crate::query::syntax::simple::eval::values::QueryResult;
 use crate::query::syntax::simple::eval::values::QueryValue;
@@ -334,14 +335,13 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// returns targets whose `deps` attribute contains at least one target suffixed with 'validation'.
     async fn attrregexfilter(
         &self,
+        evaluator: &QueryEvaluator<'_, Env>,
         attr: String,
         value: String,
         targets: TargetSet<Env::Target>,
     ) -> QueryFuncResult<Env> {
-        Ok(self
-            .implementation
-            .attrregexfilter(&attr, &value, &targets)?
-            .into())
+        let regex = evaluator.regex(value, None)?;
+        Ok(targets.attrregexfilter_matching(&attr, &regex)?.into())
     }
 
     /// Target build file.
@@ -475,14 +475,20 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// //buck2/app/buck2_validation:buck2_validation
     /// ```
     /// returns all targets within `//buck2/app` that have a label with a `validation` suffix.
-    async fn filter(&self, regex: String, set: QueryValueSet<Env::Target>) -> QueryFuncResult<Env> {
+    async fn filter(
+        &self,
+        evaluator: &QueryEvaluator<'_, Env>,
+        regex: String,
+        set: QueryValueSet<Env::Target>,
+    ) -> QueryFuncResult<Env> {
         match set {
-            QueryValueSet::TargetSet(targets) => Ok(self
-                .implementation
-                .filter_target_set(&regex, &targets)?
-                .into()),
+            QueryValueSet::TargetSet(targets) => {
+                let regex = evaluator.regex(regex, Some(FILTER_NAME_DFA_SIZE_LIMIT))?;
+                Ok(targets.filter_name_matching(&regex)?.into())
+            }
             QueryValueSet::FileSet(files) => {
-                Ok(self.implementation.filter_file_set(&regex, &files)?.into())
+                let regex = evaluator.regex(regex, None)?;
+                Ok(files.filter_name(&regex)?.into())
             }
         }
     }
@@ -512,8 +518,14 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// $ buck2 query "kind('java.*', deps('//foo:bar'))"
     /// ```
     /// This command returns targets matching rule type `java.*` (e.g., `java_library`, `java_binary`) in the transitive dependencies of `//foo:bar`.
-    async fn kind(&self, regex: String, targets: TargetSet<Env::Target>) -> QueryFuncResult<Env> {
-        Ok(targets.kind(&regex)?.into())
+    async fn kind(
+        &self,
+        evaluator: &QueryEvaluator<'_, Env>,
+        regex: String,
+        targets: TargetSet<Env::Target>,
+    ) -> QueryFuncResult<Env> {
+        let regex = evaluator.regex(regex, None)?;
+        Ok(targets.kind_matching(&regex)?.into())
     }
 
     /// Not implemented.
@@ -810,15 +822,6 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         targets.nattrfilter(attr, &|v| Ok(v == value))
     }
 
-    pub fn attrregexfilter(
-        &self,
-        attr: &str,
-        value: &str,
-        targets: &TargetSet<Env::Target>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
-        targets.attrregexfilter(attr, value)
-    }
-
     pub fn buildfile(&self, targets: &TargetSet<Env::Target>) -> buck2_error::Result<FileSet> {
         targets.buildfile()
     }
@@ -853,19 +856,6 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         }
         .invoke_deps(env, functions, targets, depth, captured_expr)
         .await
-    }
-
-    /// Filter targets by fully qualified name using regex partial match.
-    pub fn filter_target_set(
-        &self,
-        regex: &str,
-        targets: &TargetSet<Env::Target>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
-        targets.filter_name(regex)
-    }
-
-    pub fn filter_file_set(&self, regex: &str, files: &FileSet) -> buck2_error::Result<FileSet> {
-        files.filter_name(regex)
     }
 
     pub fn inputs(&self, targets: &TargetSet<Env::Target>) -> buck2_error::Result<FileSet> {

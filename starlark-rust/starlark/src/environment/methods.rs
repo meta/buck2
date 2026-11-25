@@ -269,13 +269,14 @@ impl MethodsBuilder {
 
     /// Set a method. Only used by `starlark_module` macro
     ///
-    /// `sig` builds the signature at the brand of this builder's heap.
+    /// `sig` builds the signature at the brand of this builder's heap. It is a function pointer
+    /// and not a closure type, so that this is one function and not one per native function.
     #[doc(hidden)]
     pub fn set_method(
         &mut self,
         name: &str,
         components: NativeCallableComponents,
-        sig: impl for<'fh> FnOnce(FrozenHeap<'fh>) -> ParametersSpec<Value<'fh>>,
+        sig: for<'fh> fn(FrozenHeap<'fh>) -> ParametersSpec<Value<'fh>>,
         f: NativeMethFn,
     ) {
         let ty = components.make_type(None);

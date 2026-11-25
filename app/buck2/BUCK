@@ -101,26 +101,8 @@ _BUCK2_BIN_RUSTC_FLAGS = (["--cfg=buck2_memfrag"] if _memfrag else []) + select(
     "DEFAULT": [],
 })
 
-buck_rust_binary(
-    name = "buck2-bin",
-    srcs = ["bin/buck2.rs"],
-    allow_cache_upload = True,
-    crate = "buck2",
-    crate_root = "bin/buck2.rs",
-    env = {
-        # This is only set for release builds.
-        "BUCK2_RELEASE_TIMESTAMP": read_config("buck", "release_timestamp", ""),
-        # This config value is set by the upload script, and controls the output of `--version`. We
-        # would like to use build info for this, but it is unfortunately not reliably available, see
-        # T140147872.
-        "BUCK2_SET_EXPLICIT_VERSION": read_config("buck", "set_explicit_version", ""),
-        # This config value is set by the upload script, and controls the output of `--internal-version` on windows
-        "BUCK2_WIN_INTERNAL_VERSION": read_config("buck", "win_internal_version", ""),
-    },
-    # @oss-disable[end= ]: pgo = "//buck2/facebook/pgo:pgo",
-    rustc_flags = _BUCK2_BIN_RUSTC_FLAGS,
-    unittests = False,
-    deps = [
+_BUCK2_BIN_DEPS = (
+    [
         "fbsource//third-party/rust:tracing",
         "//buck2/app/buck2:buck2",
         "//buck2/app/buck2_build_info:buck2_build_info",
@@ -174,7 +156,29 @@ buck_rust_binary(
         ]
         if _memfrag
         else []
-    ),
+    )
+)
+
+buck_rust_binary(
+    name = "buck2-bin",
+    srcs = ["bin/buck2.rs"],
+    allow_cache_upload = True,
+    crate = "buck2",
+    crate_root = "bin/buck2.rs",
+    env = {
+        # This is only set for release builds.
+        "BUCK2_RELEASE_TIMESTAMP": read_config("buck", "release_timestamp", ""),
+        # This config value is set by the upload script, and controls the output of `--version`. We
+        # would like to use build info for this, but it is unfortunately not reliably available, see
+        # T140147872.
+        "BUCK2_SET_EXPLICIT_VERSION": read_config("buck", "set_explicit_version", ""),
+        # This config value is set by the upload script, and controls the output of `--internal-version` on windows
+        "BUCK2_WIN_INTERNAL_VERSION": read_config("buck", "win_internal_version", ""),
+    },
+    # @oss-disable[end= ]: pgo = "//buck2/facebook/pgo:pgo",
+    rustc_flags = _BUCK2_BIN_RUSTC_FLAGS,
+    unittests = False,
+    deps = _BUCK2_BIN_DEPS,
 )
 
 platform_utils = None # @oss-enable

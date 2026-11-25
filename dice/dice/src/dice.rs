@@ -662,6 +662,10 @@ pub struct StorageIoSnapshot {
     pub bytes_out: u64,
     pub data_keys_in: u64,
     pub bytes_in: u64,
+    /// Of `data_keys_out`, the rows written for values that the page-out writing them did
+    /// not go on to page out, because it was cancelled or failed first. The next page-out
+    /// of such a value writes its rows again.
+    pub data_keys_discarded: u64,
 }
 
 impl StorageIoSnapshot {
@@ -673,6 +677,9 @@ impl StorageIoSnapshot {
             bytes_out: self.bytes_out.saturating_sub(earlier.bytes_out),
             data_keys_in: self.data_keys_in.saturating_sub(earlier.data_keys_in),
             bytes_in: self.bytes_in.saturating_sub(earlier.bytes_in),
+            data_keys_discarded: self
+                .data_keys_discarded
+                .saturating_sub(earlier.data_keys_discarded),
         }
     }
 }

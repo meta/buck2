@@ -606,7 +606,7 @@ pub trait PagableStorage: Send + Sync + 'static {
         finished: &ArcSerCache,
         storage_context: &StorageContext,
     ) -> Result<DataKey, PageOutError> {
-        let (key, _ticket) =
+        let (key, _ticket, _rows) =
             self.page_out_item_ticketed(item_data, item_arcs, finished, storage_context)?;
         finished.bind_covered(self, &self.commit_frontier());
         Ok(key)
@@ -614,16 +614,18 @@ pub trait PagableStorage: Send + Sync + 'static {
 
     /// [`page_out_item`](Self::page_out_item), also returning a ticket that
     /// covers the item's row and every arc row it references, including those
-    /// another worker wrote during this page-out. The arcs it writes are left
-    /// in `finished` until the caller binds them with
-    /// [`ArcSerCache::bind_covered`] once their rows have committed.
+    /// another worker wrote during this page-out, and how many rows the call
+    /// stored: the item's, and one for each arc that no other item had
+    /// claimed. The arcs it writes are left in `finished` until the caller
+    /// binds them with [`ArcSerCache::bind_covered`] once their rows have
+    /// committed.
     fn page_out_item_ticketed(
         &self,
         item_data: Vec<u8>,
         item_arcs: Vec<Box<dyn ArcEraseDyn>>,
         finished: &ArcSerCache,
         storage_context: &StorageContext,
-    ) -> Result<(DataKey, WriteTicket), PageOutError> {
+    ) -> Result<(DataKey, WriteTicket, usize), PageOutError> {
         enum Task {
             Start {
                 arc: Box<dyn ArcEraseDyn>,
@@ -652,6 +654,7 @@ pub trait PagableStorage: Send + Sync + 'static {
         // another item still in progress, so that once this item is handed
         // back and its value evicted, nothing its row references is unbound.
         let mut written = Vec::new();
+        let mut arc_rows = 0;
         let mut tasks: Vec<Task> = item_arcs
             .iter()
             .zip(&item_slots)
@@ -719,6 +722,7 @@ pub trait PagableStorage: Send + Sync + 'static {
                     child_slots,
                 } => match resolve_and_store(self, data, &child_slots) {
                     Ok((key, ticket)) => {
+                        arc_rows += 1;
                         slot.set_success(key, ticket);
                         written.push((arc, key, ticket));
                     }
@@ -733,7 +737,8 @@ pub trait PagableStorage: Send + Sync + 'static {
         if !written.is_empty() {
             finished.unbound.lock().append(&mut written);
         }
-        resolve_and_store(self, item_data, &item_slots)
+        let (key, ticket) = resolve_and_store(self, item_data, &item_slots)?;
+        Ok((key, ticket, arc_rows + 1))
     }
 }
 

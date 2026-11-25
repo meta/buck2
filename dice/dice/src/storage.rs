@@ -529,6 +529,7 @@ impl DiceStorage {
         // Process this many keys in parallel at a time, limit peak RSS
         const CHUNK_SIZE: usize = 32768;
         let finished = Arc::new(ArcSerCache::new());
+        let rows_before = self.io_metrics.data_keys_out.load(Ordering::Relaxed);
         let num_workers = env_concurrency("BUCK2_DICE_PAGE_OUT_WORKERS");
         let pending = Arc::new(PendingEvictions::default());
         let awaiting_commit = AwaitingCommit {
@@ -645,6 +646,11 @@ impl DiceStorage {
         awaiting_commit
             .commit_covered(&self.storage.commit_frontier())
             .await;
+        // Every row was written for some value, and a value is paged out by now or will
+        // not be by this page-out.
+        let rows = self.io_metrics.data_keys_out.load(Ordering::Relaxed) - rows_before;
+        self.io_metrics
+            .record_discarded(rows.saturating_sub(pending.rows_paged_out()));
         // Nothing looks up a slot from here on. The slots go before the sweep: an arc that a
         // slot still holds is not freed by it.
         drop(awaiting_commit);
@@ -825,7 +831,7 @@ impl DiceStorage {
             if cancelled() {
                 break;
             }
-            if let Some((data_key, serialized_bytes, ticket)) =
+            if let Some((data_key, serialized_bytes, ticket, rows)) =
                 self.page_out_value(&key_dyn, &value, finished)?
             {
                 pending.push(
@@ -836,6 +842,7 @@ impl DiceStorage {
                         serialized_bytes,
                     },
                     ticket,
+                    rows,
                 );
             } else {
                 non_pageable.push((dice_key, value));
@@ -852,12 +859,15 @@ impl DiceStorage {
         Ok(())
     }
 
+    /// Writes `value` and everything it references, and returns its key, the size of its
+    /// own row, the ticket that covers its rows, and how many rows this wrote. `None` if
+    /// the value was not written.
     fn page_out_value(
         &self,
         key_dyn: &DiceKeyErased,
         value: &DiceValidValue,
         finished: &ArcSerCache,
-    ) -> anyhow::Result<Option<(DataKey, u64, WriteTicket)>> {
+    ) -> anyhow::Result<Option<(DataKey, u64, WriteTicket, usize)>> {
         let storage_context = self.storage.storage_context();
         let mut serializer = SerializerForPaging::new(storage_context);
         let serialize_result = match key_dyn {
@@ -882,7 +892,9 @@ impl DiceStorage {
                     .storage
                     .page_out_item_ticketed(data, arcs, finished, storage_context)
                 {
-                    Ok((data_key, ticket)) => Ok(Some((data_key, serialized_bytes, ticket))),
+                    Ok((data_key, ticket, rows)) => {
+                        Ok(Some((data_key, serialized_bytes, ticket, rows)))
+                    }
                     Err(PageOutError::Failed(e)) => Err(e),
                     Err(PageOutError::AlreadyFailed) => Ok(None),
                 }
@@ -1008,13 +1020,20 @@ struct PendingEvictions {
     /// scans them, so a scan of everything waiting never holds up a worker.
     incoming: parking_lot::Mutex<Vec<PendingEviction>>,
     waiting: parking_lot::Mutex<Vec<PendingEviction>>,
+    /// The rows written for the values taken so far.
+    rows_paged_out: AtomicU64,
 }
 
-type PendingEviction = (DiceKey, PageOutResult, WriteTicket);
+/// A value, the ticket that covers its rows, and how many rows were written for it.
+type PendingEviction = (DiceKey, PageOutResult, WriteTicket, usize);
 
 impl PendingEvictions {
-    fn push(&self, key: DiceKey, result: PageOutResult, ticket: WriteTicket) {
-        self.incoming.lock().push((key, result, ticket));
+    fn push(&self, key: DiceKey, result: PageOutResult, ticket: WriteTicket, rows: usize) {
+        self.incoming.lock().push((key, result, ticket, rows));
+    }
+
+    fn rows_paged_out(&self) -> u64 {
+        self.rows_paged_out.load(Ordering::Relaxed)
     }
 
     /// Drops every pending value, leaving them resident.
@@ -1028,8 +1047,12 @@ impl PendingEvictions {
         let mut waiting = self.waiting.lock();
         waiting.append(&mut self.incoming.lock());
         waiting
-            .extract_if(.., |(_, _, ticket)| frontier.covers(ticket))
-            .map(|(key, result, _)| (key, result))
+            .extract_if(.., |(_, _, ticket, _)| frontier.covers(ticket))
+            .map(|(key, result, _, rows)| {
+                self.rows_paged_out
+                    .fetch_add(rows as u64, Ordering::Relaxed);
+                (key, result)
+            })
             .collect()
     }
 }
@@ -1201,6 +1224,7 @@ struct StorageIoMetrics {
     bytes_out: AtomicU64,
     data_keys_in: AtomicU64,
     bytes_in: AtomicU64,
+    data_keys_discarded: AtomicU64,
 }
 
 impl StorageIoMetrics {
@@ -1214,12 +1238,18 @@ impl StorageIoMetrics {
         self.bytes_in.fetch_add(bytes, Ordering::Relaxed);
     }
 
+    fn record_discarded(&self, data_keys: u64) {
+        self.data_keys_discarded
+            .fetch_add(data_keys, Ordering::Relaxed);
+    }
+
     fn snapshot(&self) -> StorageIoSnapshot {
         StorageIoSnapshot {
             data_keys_out: self.data_keys_out.load(Ordering::Relaxed),
             bytes_out: self.bytes_out.load(Ordering::Relaxed),
             data_keys_in: self.data_keys_in.load(Ordering::Relaxed),
             bytes_in: self.bytes_in.load(Ordering::Relaxed),
+            data_keys_discarded: self.data_keys_discarded.load(Ordering::Relaxed),
         }
     }
 }

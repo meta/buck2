@@ -251,6 +251,10 @@ message PageOutSummary {
   optional uint64 data_key_bytes_out = 19;
   optional uint64 data_keys_in = 20;
   optional uint64 data_key_bytes_in = 21;
+  /// Of `data_keys_out`, the rows this page-out wrote for values that it did
+  /// not go on to page out, because it was cancelled or failed first. The
+  /// next page-out of such a value writes its rows again.
+  optional uint64 data_keys_discarded = 43;
   /// Cumulative memory paging has moved since daemon start, measured from the
   /// allocator where values are actually dropped and rebuilt rather than
   /// inferred from serialized sizes. An arc still shared with a resident value

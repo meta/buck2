@@ -3141,6 +3141,13 @@ fn cancel_once_both_rows_are_stored() -> bool {
     staged_page_out_cancelled()
 }
 
+/// The rows that page-outs of `dice` wrote for values they did not go on to page out.
+fn rows_discarded(dice: &Dice) -> u64 {
+    dice.storage_io_metrics()
+        .expect("configured storage")
+        .data_keys_discarded
+}
+
 fn staged_page_out_cancelled() -> bool {
     STAGED_PAGE_OUT_CANCELLED.load(Ordering::SeqCst)
 }
@@ -3389,6 +3396,7 @@ async fn cancelled_page_out_retains_durable_root_backing() -> anyhow::Result<()>
         (1, 0, 0),
         "the durable root must stay resident with backing even after cancellation"
     );
+    assert_eq!(rows_discarded(&dice), 0, "both rows back the root");
 
     let writes = dice
         .storage_io_metrics()
@@ -3435,6 +3443,11 @@ async fn cancelled_page_out_does_not_back_unwritten_root() -> anyhow::Result<()>
         (counts.backed, counts.candidates, counts.paged_out),
         (0, 1, 0),
         "frontier 2 covers the arc but not root ticket 2"
+    );
+    assert_eq!(
+        rows_discarded(&dice),
+        2,
+        "the root was not paged out, so neither its row nor its arc's is of use"
     );
     assert_eq!(dice.evict_backed().await, 0);
     Ok(())

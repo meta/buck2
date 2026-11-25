@@ -356,7 +356,7 @@ fn page_out_item_ticketed(
         arc.pagable_serialize(&mut serializer)?;
     }
     let (data, arcs) = serializer.finish();
-    let (key, _ticket) = storage
+    let (key, _ticket, _rows) = storage
         .page_out_item_ticketed(data, arcs, finished, storage_context)
         .map_err(|error| match error {
             PageOutError::Failed(error) => error,

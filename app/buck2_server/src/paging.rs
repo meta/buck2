@@ -728,6 +728,7 @@ async fn paging_measured(
         data_key_bytes_out: io_delta.map(|d| d.bytes_out),
         data_keys_in: io_delta.map(|d| d.data_keys_in),
         data_key_bytes_in: io_delta.map(|d| d.bytes_in),
+        data_keys_discarded: io_delta.map(|d| d.data_keys_discarded),
         daemon_memory_offloaded_bytes: memory.map(|m| m.bytes_offloaded),
         daemon_memory_restored_bytes: memory.map(|m| m.bytes_restored),
         memory_offloaded_bytes: memory_delta.map(|d| d.bytes_offloaded),

@@ -1710,7 +1710,7 @@ mod tests {
         arc.pagable_serialize(&mut serializer)?;
         let (data, arcs) = serializer.finish();
         let finished = ArcSerCache::new();
-        let (item_key, ticket) = storage
+        let (item_key, ticket, _rows) = storage
             .page_out_item_ticketed(data, arcs, &finished, context)
             .map_err(|error| match error {
                 PageOutError::Failed(error) => error,

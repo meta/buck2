@@ -250,3 +250,33 @@ async fn test_log_summary_downloads_one_snapshot(
 ) -> anyhow::Result<()> {
     test_log_summary_downloads(buck, tmp_path, &[(100_000, 200_000)], 0, 0).await
 }
+
+/// A command whose own event log cannot be written runs without one. Here the log cannot be
+/// opened, because a file is where the directory of writer locks goes.
+#[buck_test(env = [("BUCK2_HARD_ERROR", "false")])]
+async fn test_command_runs_without_its_event_log(buck: &Buck) -> anyhow::Result<()> {
+    let log_dir = buck.cwd().join("buck-out").join("v2").join("log");
+    std::fs::create_dir_all(&log_dir)?;
+    std::fs::write(log_dir.join("writing"), "")?;
+
+    buck.uquery(&["//:EEE"]).await?;
+
+    let logs = std::fs::read_dir(&log_dir)?
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| name.ends_with("_events.pb.zst"))
+        .count();
+    assert_eq!(logs, 0);
+    Ok(())
+}
+
+/// It fails if it cannot write a copy of the log that the user asked for.
+#[buck_test(env = [("BUCK2_HARD_ERROR", "false")])]
+async fn test_command_fails_without_a_copy_of_its_event_log(buck: &Buck) -> anyhow::Result<()> {
+    let copy = buck.cwd().join("no_such_dir").join("copy.json");
+    let copy = copy.to_string_lossy();
+
+    let failed = buck.uquery(&["--event-log", &copy, "//:EEE"]).await;
+
+    assert!(failed.is_err());
+    Ok(())
+}

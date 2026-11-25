@@ -24,7 +24,6 @@ use pin_project::pin_project;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
-use crate::FutureChildOutput;
 use crate::read::EventLogPathBuf;
 use crate::utils::Compression;
 use crate::utils::LogMode;
@@ -90,8 +89,6 @@ pub(crate) struct NamedEventLogWriter {
     path: EventLogPathBuf,
     file: EventLogWriter,
     event_log_type: EventLogType,
-    /// If this writing is done by a subprocess, that process.
-    process: Option<FutureChildOutput>,
 }
 
 impl NamedEventLogWriter {
@@ -100,7 +97,6 @@ impl NamedEventLogWriter {
         file: impl AsyncWrite + std::marker::Send + std::marker::Unpin + std::marker::Sync + 'static,
         bytes_written: Option<Arc<AtomicU64>>,
         event_log_type: EventLogType,
-        process: Option<FutureChildOutput>,
     ) -> Self {
         let file = match path.encoding.compression {
             Compression::None => {
@@ -119,18 +115,14 @@ impl NamedEventLogWriter {
             path,
             file,
             event_log_type,
-            process,
         }
     }
 
     pub(crate) async fn flush(&mut self) -> buck2_error::Result<()> {
         match self.file.flush().await {
             Ok(_) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                // The subprocess exited with some kind of error. That is logged separately, so
-                // here we just ignore it.
-                Ok(())
-            }
+            // What read the pipe that the user had the log copied to is gone.
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
             Err(e) => Err(buck2_error::Error::from(e).context(format!(
                 "Error flushing log file at {}",
                 self.path.path.display()
@@ -141,10 +133,8 @@ impl NamedEventLogWriter {
     pub(crate) async fn shutdown(&mut self) {
         match self.file.shutdown().await {
             Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                // The subprocess exited with some kind of error. That is logged separately, so
-                // here we just ignore it.
-            }
+            // What read the pipe that the user had the log copied to is gone.
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
             Err(e) => {
                 soft_error_or_panic!(
                     "event_log_flush_failed",
@@ -153,10 +143,6 @@ impl NamedEventLogWriter {
                 );
             }
         }
-    }
-
-    pub(crate) fn child(mut self) -> Option<FutureChildOutput> {
-        self.process.take()
     }
 
     fn serialize_event<'b, T>(&self, buf: &mut Vec<u8>, event: &T) -> buck2_error::Result<()>
@@ -185,11 +171,9 @@ impl NamedEventLogWriter {
     async fn write_all(&mut self, buf: &[u8]) -> buck2_error::Result<()> {
         match self.file.write_all(buf).await {
             Ok(_) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                // The subprocess exited with some kind of error. That is logged separately, so
-                // here we just ignore it.
-                Ok(())
-            }
+            // What read the pipe that the user had the log copied to is gone. The command
+            // goes on without the rest of the copy.
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
             Err(e) => Err(buck2_error::Error::from(e).context("Failed to write event")),
         }
     }

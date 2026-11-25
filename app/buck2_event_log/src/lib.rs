@@ -28,6 +28,7 @@ pub mod user_event_types;
 pub mod utils;
 pub mod write;
 pub mod writer;
+pub mod writer_lock;
 
 pub fn should_upload_log() -> buck2_error::Result<bool> {
     if buck2_core::is_open_source() {

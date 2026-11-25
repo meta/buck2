@@ -14,8 +14,12 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use buck2_common::argv::SanitizedArgv;
+use buck2_core::soft_error;
+use buck2_event_log::FutureChildOutput;
+use buck2_event_log::wait_for_child_and_log;
 use buck2_event_log::write::EventLogFiles;
 use buck2_event_log::write::WriteEventLog;
+use buck2_event_log::write::start_event_log_uploader;
 use buck2_events::BuckEvent;
 use buck2_fs::working_dir::AbsWorkingDir;
 
@@ -23,14 +27,20 @@ use crate::subscribers::subscriber::EventSubscriber;
 use crate::ticker::Tick;
 
 /// Writes the events of a command to its event log, and to the copies of the log that the
-/// command's arguments ask for.
+/// command's arguments ask for, and has the log uploaded while it is written.
+///
+/// A command whose log cannot be written goes on without the rest of it. One that cannot
+/// write a copy the user asked for fails.
 ///
 /// The log is opened before the copies: opening it removes the old logs of its directory, and
 /// that is every file there, so a copy in that directory has to be created after. The copies
 /// are ended before the log, which waits for its upload when it is ended.
 pub(crate) struct EventLog {
-    log: WriteEventLog,
+    /// `None` once the log could not be written.
+    log: Option<WriteEventLog>,
     copies: Option<WriteEventLog>,
+    /// The process that uploads the log, from when the log is opened.
+    uploader: Option<FutureChildOutput>,
 }
 
 impl EventLog {
@@ -60,7 +70,23 @@ impl EventLog {
             start_time,
             log_size_counter_bytes,
         );
-        Self { log, copies }
+        Self {
+            log: Some(log),
+            copies,
+            uploader: None,
+        }
+    }
+
+    /// Takes the outcome of writing to the log. A failure ends the log and is reported.
+    fn log_written(&mut self, res: buck2_error::Result<()>) -> buck2_error::Result<()> {
+        if let Err(e) = res {
+            // This frees the log's writer lock, so the uploader uploads what the file holds
+            // and exits. A log without its end is uploaded on purpose: what was written is
+            // worth having, and the soft error says that the rest is missing.
+            self.log = None;
+            soft_error!("event_log_write_failed", e);
+        }
+        Ok(())
     }
 }
 
@@ -71,7 +97,19 @@ impl EventSubscriber for EventLog {
     }
 
     async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
-        self.log.write_events(events).await?;
+        if let Some(log) = &mut self.log {
+            let was_open = log.command_log().is_some();
+            let res = log.write_events(events).await;
+            if !was_open
+                && let Some(path) = log.command_log()
+                && let Some(event) = events.first()
+            {
+                // Not being able to start the uploader fails the command, where not being
+                // able to write the log does not.
+                self.uploader = start_event_log_uploader(path, &event.trace_id()?)?;
+            }
+            self.log_written(res)?;
+        }
         if let Some(copies) = &mut self.copies {
             copies.write_events(events).await?;
         }
@@ -96,7 +134,10 @@ impl EventSubscriber for EventLog {
         &mut self,
         result: &buck2_cli_proto::CommandResult,
     ) -> buck2_error::Result<()> {
-        self.log.write_result(result).await?;
+        if let Some(log) = &mut self.log {
+            let res = log.write_result(result).await;
+            self.log_written(res)?;
+        }
         if let Some(copies) = &mut self.copies {
             copies.write_result(result).await?;
         }
@@ -106,7 +147,10 @@ impl EventSubscriber for EventLog {
     /// Flush all log files during on tick to avoid buffering data in memory which we might lose if
     /// we hit an error.
     async fn tick(&mut self, _tick: &Tick) -> buck2_error::Result<()> {
-        self.log.flush_files().await?;
+        if let Some(log) = &mut self.log {
+            let res = log.flush_files().await;
+            self.log_written(res)?;
+        }
         if let Some(copies) = &mut self.copies {
             copies.flush_files().await?;
         }
@@ -117,7 +161,12 @@ impl EventSubscriber for EventLog {
         if let Some(copies) = &mut self.copies {
             copies.exit().await;
         }
-        self.log.exit().await;
+        if let Some(log) = &mut self.log {
+            log.exit().await;
+        }
+        if let Some(uploader) = self.uploader {
+            wait_for_child_and_log(uploader, "Event Log").await;
+        }
         Ok(())
     }
 }

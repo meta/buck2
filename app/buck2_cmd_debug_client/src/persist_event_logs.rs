@@ -24,6 +24,7 @@ use buck2_data::PersistEventLogSubprocess;
 use buck2_data::instant_event::Data;
 use buck2_error::BuckErrorContext;
 use buck2_event_log::ttl::manifold_event_log_ttl;
+use buck2_event_log::writer_lock::is_writer_finished;
 use buck2_events::BuckEvent;
 use buck2_events::daemon_id::DaemonId;
 use buck2_events::sink::remote::RemoteEventSink;
@@ -32,12 +33,8 @@ use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_wrapper_common::invocation_id::TraceId;
 use tokio::fs::File;
-use tokio::fs::OpenOptions;
 use tokio::io;
-use tokio::io::AsyncReadExt;
 use tokio::io::AsyncSeekExt;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
 use tokio::time::Duration;
 use tokio::time::Instant;
 use tokio::time::sleep;
@@ -51,7 +48,8 @@ pub(crate) enum PersistEventLogError {
     ReadBytesOverflow,
 }
 
-/// Read binary event log from stdin and simultaneously write it to disk and optionally upload to Manifold.
+/// Upload to Manifold the binary event log that another process writes to disk, while it is
+/// written: until that process releases the log's writer lock.
 ///
 /// This command is launched by the buck client to continue log streaming
 /// after client command finishes. It is not intended to be used directly.
@@ -59,10 +57,8 @@ pub(crate) enum PersistEventLogError {
 pub struct PersistEventLogsCommand {
     #[clap(long, help = "Name this log will take in Manifold")]
     manifold_name: String,
-    #[clap(long, help = "Where to write this log to on disk")]
+    #[clap(long, help = "Where this log is written to on disk")]
     local_path: String,
-    #[clap(long, help = "If present, only write to disk and don't upload")]
-    no_upload: bool,
     #[clap(
         long,
         help = "UUID of invocation that called this subcommand for logging purposes"
@@ -81,9 +77,8 @@ impl PersistEventLogsCommand {
         events_ctx.log_invocation_record = false;
         let sink = create_scribe_sink(&ctx)?;
         let trace_id = self.trace_id.clone();
-        ctx.with_runtime(|mut ctx| async move {
-            let mut stdin = io::BufReader::new(ctx.stdin());
-            let (local_result, remote_result) = self.write_and_upload(&mut stdin).await;
+        ctx.with_runtime(|_ctx| async move {
+            let (local_result, remote_result) = self.read_and_upload().await;
 
             let (local_error_messages, local_error_category, local_success) =
                 status_from_result(local_result);
@@ -104,13 +99,10 @@ impl PersistEventLogsCommand {
         ExitResult::success()
     }
 
-    async fn write_and_upload(
-        self,
-        stdin: impl io::AsyncBufRead + Unpin,
-    ) -> (buck2_error::Result<()>, buck2_error::Result<()>) {
+    async fn read_and_upload(self) -> (buck2_error::Result<()>, buck2_error::Result<()>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let file = match create_log_file(self.local_path).await {
-            Ok(f) => Mutex::new(f),
+        let (file, watched) = match open_log_file(&self.local_path).await {
+            Ok(files) => files,
             Err(e) => {
                 return (
                     Err(e),
@@ -121,69 +113,64 @@ impl PersistEventLogsCommand {
                 );
             }
         };
-        let write = write_task(&file, tx, stdin);
-        let upload = upload_task(&file, rx, self.manifold_name, self.no_upload);
+        let watch = watch_task(&self.local_path, watched, tx);
+        let upload = upload_task(file, rx, self.manifold_name);
 
-        // Wait for both tasks to finish. If the upload fails we want to keep writing to disk
-        let (write_result, upload_result) = tokio::join!(write, upload);
-        (write_result, upload_result)
+        // Wait for both tasks to finish.
+        tokio::join!(watch, upload)
     }
 }
 
-async fn write_task(
-    file_mutex: &Mutex<File>,
+/// How often the size of the log is looked at.
+const WATCH_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Reports how much of the log at `local_path` its writer has written, until the writer no
+/// longer writes it. The size is that of `file`, the open log, and not of what is at the path:
+/// a log can be removed as soon as it is written, to make room for newer logs.
+async fn watch_task(
+    local_path: &str,
+    file: File,
     tx: tokio::sync::mpsc::UnboundedSender<u64>,
-    mut stdin: impl io::AsyncBufRead + Unpin,
 ) -> buck2_error::Result<()> {
-    let mut write_position = 0;
-    let mut buf = vec![0; 64 * 1024]; // maximum pipe size in linux
+    let local_path = AbsPathBuf::new(local_path)?;
+    let mut reported = 0;
     loop {
-        let bytes_read = stdin.read(&mut buf).await?;
-        if bytes_read == 0 {
-            break; // closed stdin
+        // Asked before the size is read: a writer that is finished has written all of the log.
+        let finished = is_writer_finished(&local_path).await?;
+        let len = file.metadata().await?.len();
+        if len > reported {
+            let _ignored = tx.send(len - reported); // If this errors, that means the upload task died.
+            reported = len;
         }
-        let mut file = file_mutex.lock().await;
-        write_to_file(&mut file, write_position, &buf[..bytes_read]).await?;
-        drop(file);
-        write_position += bytes_read as u64;
-        let _ignored = tx.send(bytes_read as u64); // If this errors, that means the upload task died.
+        if finished {
+            return Ok(());
+        }
+        sleep(WATCH_INTERVAL).await;
     }
-
-    Ok(())
 }
 
-async fn create_log_file(local_path: String) -> Result<tokio::fs::File, buck2_error::Error> {
+/// Opens the log at `local_path`, to upload it and to watch its size.
+async fn open_log_file(local_path: &str) -> Result<(File, File), buck2_error::Error> {
     let local_path = AbsPathBuf::new(local_path)?;
 
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .write(true)
-        .read(true)
-        .open(&local_path)
-        .await
-        .with_buck_error_context(|| {
-            format!(
-                "Failed to open event log for writing at `{}`",
-                local_path.display()
-            )
-        })?;
-    Ok(file)
+    let file = File::open(&local_path).await.with_buck_error_context(|| {
+        format!(
+            "Failed to open event log for reading at `{}`",
+            local_path.display()
+        )
+    })?;
+    let watched = file.try_clone().await?;
+    Ok((file, watched))
 }
 
 async fn upload_task(
-    file_mutex: &Mutex<File>,
+    file: File,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
     manifold_name: String,
-    no_upload: bool,
 ) -> buck2_error::Result<()> {
-    if no_upload {
-        return Ok(());
-    }
-
     let manifold_client = ManifoldClient::new().await?;
     let manifold_path = format!("flat/{manifold_name}");
-    let mut uploader = Uploader::new(file_mutex, &manifold_path, &manifold_client)?;
+    let mut uploader = Uploader::new(file, &manifold_path, &manifold_client)?;
 
     loop {
         tokio::select! {
@@ -225,7 +212,7 @@ async fn upload_task(
 /// - decide when to upload a chunk of the log file
 /// - do the actual upload, which is mostly managed by `ManifoldChunkedUploader`
 struct Uploader<'a> {
-    file_mutex: &'a Mutex<File>,
+    file: File,
     manifold: ManifoldChunkedUploader<'a>,
     reader: ChunkReader,
     total_bytes: u64,
@@ -234,7 +221,7 @@ struct Uploader<'a> {
 
 impl<'a> Uploader<'a> {
     fn new(
-        file_mutex: &'a Mutex<File>,
+        file: File,
         manifold_path: &'a str,
         manifold_client: &'a ManifoldClient,
     ) -> buck2_error::Result<Self> {
@@ -245,7 +232,7 @@ impl<'a> Uploader<'a> {
         );
 
         Ok(Self {
-            file_mutex,
+            file,
             manifold,
             reader: ChunkReader::new()?,
             total_bytes: 0,
@@ -255,12 +242,11 @@ impl<'a> Uploader<'a> {
 
     /// Uploads at most 'chunk size' bytes to Manifold
     async fn upload_chunk(&mut self) -> buck2_error::Result<()> {
-        let mut file = self.file_mutex.lock().await;
-        file.seek(io::SeekFrom::Start(self.manifold.position()))
+        self.file
+            .seek(io::SeekFrom::Start(self.manifold.position()))
             .await
             .buck_error_context("Failed to seek log file")?;
-        let buf = self.reader.read(&mut *file).await?;
-        drop(file);
+        let buf = self.reader.read(&mut self.file).await?;
 
         self.manifold.write(buf.into()).await?;
         Ok(())
@@ -285,19 +271,6 @@ impl<'a> Uploader<'a> {
     fn wait(&self) -> Duration {
         MAX_WAIT.saturating_sub(Instant::now() - self.last_upload_attempt)
     }
-}
-
-async fn write_to_file(
-    file: &mut File,
-    write_position: u64,
-    buf: &[u8],
-) -> Result<(), buck2_error::Error> {
-    file.seek(io::SeekFrom::Start(write_position))
-        .await
-        .buck_error_context("Failed to seek log file")?;
-    file.write_all(buf).await?;
-    file.flush().await?;
-    Ok(())
 }
 
 fn status_from_result(res: buck2_error::Result<()>) -> (Vec<String>, Option<String>, bool) {

@@ -970,13 +970,16 @@ async fn test_daemon_start_waits_for_tenant_outputs(buck: &Buck) -> anyhow::Resu
 async fn test_unshared_forkserver_state_lives_in_buck_out(buck: &mut Buck) -> anyhow::Result<()> {
     buck.set_daemon_routing(false)?;
     buck.targets(&["//:rule"]).await?;
-    assert!(
-        buck.cwd()
-            .join("buck-out")
-            .join("v2")
-            .join("forkserver")
-            .is_dir()
-    );
+    // The forkserver makes its state directory when it starts, which a command does not wait
+    // for.
+    let state = buck.cwd().join("buck-out").join("v2").join("forkserver");
+    tokio::time::timeout(THIRTY_SECONDS, async {
+        while !state.is_dir() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("The forkserver did not make its state directory")?;
     Ok(())
 }
 

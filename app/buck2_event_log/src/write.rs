@@ -20,6 +20,7 @@ use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_events::BuckEvent;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_fs::working_dir::AbsWorkingDir;
 use buck2_wrapper_common::invocation_id::TraceId;
@@ -40,15 +41,18 @@ use crate::user_event_types::try_get_user_event;
 use crate::utils::Encoding;
 use crate::utils::EventLogErrors;
 use crate::utils::Invocation;
-use crate::wait_for_child_and_log;
 use crate::writer::EventLogType;
 use crate::writer::NamedEventLogWriter;
 use crate::writer::SerializeForLog;
+use crate::writer_lock::WriterLock;
 
 /// The files that a `WriteEventLog` writes.
 pub enum EventLogFiles {
-    /// The command's event log in `logdir`, which is uploaded while it is written. The oldest
-    /// logs in `logdir` are removed to leave `retained_event_logs` with this one.
+    /// The command's event log in `logdir`. The oldest logs in `logdir` are removed to leave
+    /// `retained_event_logs` with this one.
+    ///
+    /// The writer holds the log's `WriterLock` while it writes it, for a process that uploads
+    /// the log from its file: see `start_event_log_uploader`.
     Command {
         logdir: AbsNormPathBuf,
         command_name: String,
@@ -62,8 +66,14 @@ pub enum EventLogFiles {
 }
 
 enum LogWriterState {
-    Unopened { files: EventLogFiles },
-    Opened { writers: Vec<NamedEventLogWriter> },
+    Unopened {
+        files: EventLogFiles,
+    },
+    Opened {
+        writers: Vec<NamedEventLogWriter>,
+        /// Held if the command's event log is what is written.
+        writer_lock: Option<WriterLock>,
+    },
     Closed,
 }
 
@@ -92,6 +102,14 @@ impl WriteEventLog {
             start_time,
             buf: Vec::new(),
             log_size_counter_bytes,
+        }
+    }
+
+    /// The file of the command's event log, once it is open, if that is what is written.
+    pub fn command_log(&self) -> Option<&AbsPath> {
+        match &self.state {
+            LogWriterState::Opened { writer_lock, .. } => writer_lock.as_ref().map(|l| l.log()),
+            LogWriterState::Unopened { .. } | LogWriterState::Closed => None,
         }
     }
 
@@ -154,6 +172,7 @@ impl WriteEventLog {
         let LogWriterState::Unopened { files } = &self.state else {
             return Err(internal_error!("Event log is opened once"));
         };
+        let mut writer_lock = None;
         let writers = match files {
             EventLogFiles::Command {
                 logdir,
@@ -173,14 +192,19 @@ impl WriteEventLog {
                     path: logdir.as_abs_path().join(file_name),
                     encoding,
                 };
-                vec![
-                    start_persist_event_log_subprocess(
-                        path,
-                        event.trace_id()?.clone(),
-                        self.log_size_counter_bytes.clone(),
-                    )
-                    .await?,
-                ]
+                let lock = WriterLock::acquire(path.path.clone()).await?;
+                let counter = self.log_size_counter_bytes.clone();
+                match open_event_log_for_writing(path, counter, EventLogType::System).await {
+                    Ok(writer) => {
+                        writer_lock = Some(lock);
+                        vec![writer]
+                    }
+                    Err(e) => {
+                        // Nothing else removes the lock file of a log that does not exist.
+                        lock.release().await;
+                        return Err(e);
+                    }
+                }
             }
             EventLogFiles::Copies {
                 event_log,
@@ -224,7 +248,10 @@ impl WriteEventLog {
             }
         };
 
-        self.state = LogWriterState::Opened { writers };
+        self.state = LogWriterState::Opened {
+            writers,
+            writer_lock,
+        };
         self.log_invocation(event.trace_id()?).await
     }
 
@@ -233,8 +260,11 @@ impl WriteEventLog {
         let state = std::mem::replace(&mut self.state, LogWriterState::Closed);
 
         async move {
-            let mut writers = match state {
-                LogWriterState::Opened { writers } => writers,
+            let (mut writers, writer_lock) = match state {
+                LogWriterState::Opened {
+                    writers,
+                    writer_lock,
+                } => (writers, writer_lock),
                 LogWriterState::Unopened { .. } | LogWriterState::Closed => {
                     // Nothing to do in this case, though this should be unreachable
                     // since we just did a write_ln.
@@ -245,25 +275,26 @@ impl WriteEventLog {
             for writer in writers.iter_mut() {
                 writer.shutdown().await
             }
-
-            // NOTE: We call `into_iter()` here and that implicitly drops the `writer.file`, which
-            // is necessary for an actual `close` call to be send to the child FD (it is a bit of
-            // an odd behavior in Tokio that `shutdown` doesn't do that).
-            let futs = writers
-                .into_iter()
-                .filter_map(|w| w.child())
-                .map(|proc| wait_for_child_and_log(proc, "Event Log"));
-
-            buck2_util::future::join_all(futs.collect::<Vec<_>>()).await;
+            if let Some(writer_lock) = writer_lock {
+                writer_lock.release().await;
+            }
         }
     }
 }
 
-async fn start_persist_event_log_subprocess(
-    path: EventLogPathBuf,
-    trace_id: TraceId,
-    bytes_written: Option<Arc<AtomicU64>>,
-) -> buck2_error::Result<NamedEventLogWriter> {
+/// Starts a process that uploads the event log at `path` of the command `trace_id` while its
+/// writer writes it. It reads the file until the writer releases the log's `WriterLock`, and
+/// so does not end with the process that starts it.
+///
+/// Returns the process, for the caller to report its failure when the command ends. Starts
+/// none if event logs are not uploaded.
+pub fn start_event_log_uploader(
+    path: &AbsPath,
+    trace_id: &TraceId,
+) -> buck2_error::Result<Option<FutureChildOutput>> {
+    if !should_upload_log()? {
+        return Ok(None);
+    }
     let current_exe = std::env::current_exe().buck_error_context("No current_exe")?;
     let mut command = buck2_util::process::async_background_command(current_exe);
     // @oss-disable: #[cfg(unix)]
@@ -272,17 +303,14 @@ async fn start_persist_event_log_subprocess(
         // Ensure that if we get CTRL-C, the persist-event-logs process does not get it.
         command.process_group(0);
     }
-    let manifold_name = &format!("{}{}", trace_id, path.extension());
+    let manifold_name = &format!("{trace_id}{}", Encoding::PROTO_ZSTD.extensions[0]);
     // TODO T184566736: detach subprocess
     command
         .args(["debug", "persist-event-logs"])
         .args(["--manifold-name", manifold_name])
-        .args(["--local-path".as_ref(), path.path.as_os_str()])
+        .args(["--local-path".as_ref(), path.as_os_str()])
         .args(["--trace-id", &trace_id.to_string()]);
-    if !should_upload_log()? {
-        command.arg("--no-upload");
-    };
-    command.stdout(Stdio::null()).stdin(Stdio::piped());
+    command.stdin(Stdio::null()).stdout(Stdio::null());
 
     let block = should_block_on_log_upload()?;
     if block {
@@ -291,21 +319,13 @@ async fn start_persist_event_log_subprocess(
         command.stderr(Stdio::null());
     }
 
-    let mut child = command.spawn().with_buck_error_context(|| {
+    let child = command.spawn().with_buck_error_context(|| {
         format!(
-            "Failed to open event log subprocess for writing at `{}`",
-            path.path.display()
+            "Failed to start the upload of the event log at `{}`",
+            path.display()
         )
     })?;
-    let pipe = child.stdin.take().expect("stdin was piped");
-
-    Ok(NamedEventLogWriter::new(
-        path,
-        pipe,
-        bytes_written,
-        EventLogType::System,
-        Some(FutureChildOutput::new(child, block)),
-    ))
+    Ok(Some(FutureChildOutput::new(child, block)))
 }
 
 async fn open_event_log_for_writing(
@@ -330,7 +350,6 @@ async fn open_event_log_for_writing(
         file,
         bytes_written,
         event_log_type,
-        None,
     ))
 }
 
@@ -374,7 +393,7 @@ impl WriteEventLog {
 
     pub async fn flush_files(&mut self) -> buck2_error::Result<()> {
         let writers = match &mut self.state {
-            LogWriterState::Opened { writers } => writers,
+            LogWriterState::Opened { writers, .. } => writers,
             LogWriterState::Unopened { .. } | LogWriterState::Closed => return Ok(()),
         };
 
@@ -500,7 +519,7 @@ where
             )
         })?;
 
-    let mut writer = NamedEventLogWriter::new(output_log, file, None, EventLogType::System, None);
+    let mut writer = NamedEventLogWriter::new(output_log, file, None, EventLogType::System);
 
     let mut buf = Vec::new();
     writer.write_events(&mut buf, &[&invocation]).await?;
@@ -578,6 +597,7 @@ mod tests {
     use crate::tail::TailOptions;
     use crate::tail::WriterState;
     use crate::utils::Compression;
+    use crate::writer_lock::is_writer_finished;
 
     impl WriteEventLog {
         async fn new_test(log: EventLogPathBuf) -> buck2_error::Result<Self> {
@@ -586,18 +606,23 @@ mod tests {
                     writers: vec![
                         open_event_log_for_writing(log, None, EventLogType::System).await?,
                     ],
+                    writer_lock: None,
                 },
-                sanitized_argv: Argv {
-                    argv: vec!["buck2".to_owned()],
-                    expanded_argv: ExpandedArgv::from_literals(vec!["buck2".to_owned()]),
-                }
-                .no_need_to_sanitize(),
+                sanitized_argv: sanitized_argv(),
                 working_dir: AbsWorkingDir::current_dir()?,
                 start_time: SystemTime::UNIX_EPOCH,
                 buf: Vec::new(),
                 log_size_counter_bytes: None,
             })
         }
+    }
+
+    fn sanitized_argv() -> SanitizedArgv {
+        Argv {
+            argv: vec!["buck2".to_owned()],
+            expanded_argv: ExpandedArgv::from_literals(vec!["buck2".to_owned()]),
+        }
+        .no_need_to_sanitize()
     }
 
     fn make_event() -> BuckEvent {
@@ -884,6 +909,35 @@ mod tests {
             "expecting the stream to end after the writer is reported finished"
         );
 
+        Ok(())
+    }
+
+    /// The writer of a command's event log holds the log's writer lock from when it opens the
+    /// log until it has written all of it.
+    #[tokio::test]
+    async fn test_writer_lock_is_held_while_the_log_is_written() -> buck2_error::Result<()> {
+        let dir = TempDir::new()?;
+        let files = EventLogFiles::Command {
+            logdir: AbsNormPathBuf::try_from(dir.path().canonicalize()?)?,
+            command_name: "build".to_owned(),
+            retained_event_logs: 2,
+        };
+        let mut log = WriteEventLog::new(
+            files,
+            AbsWorkingDir::current_dir()?,
+            sanitized_argv(),
+            SystemTime::UNIX_EPOCH,
+            None,
+        );
+        assert!(log.command_log().is_none());
+
+        log.write_events(&[Arc::new(make_event())]).await?;
+        let path = log.command_log().unwrap().to_owned();
+        assert!(path.exists());
+        assert!(!is_writer_finished(&path).await?);
+
+        log.exit().await;
+        assert!(is_writer_finished(&path).await?);
         Ok(())
     }
 

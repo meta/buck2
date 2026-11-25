@@ -170,9 +170,11 @@ def run_buildscript(
     cwd: Path,
 ) -> str:
     try:
+        # Bytes that are not UTF-8 are kept as surrogates (see `is_utf8`).
         return subprocess.check_output(
             os.path.abspath(buildscript),
             encoding="utf-8",
+            errors="surrogateescape",
             env=env,
             cwd=cwd,
         )
@@ -180,7 +182,20 @@ def run_buildscript(
         print(f"Failed to run {buildscript} because {ex}", file=sys.stderr)
         sys.exit(1)
     except subprocess.CalledProcessError as ex:
+        # Like Cargo, show what the build script printed before it failed: cc-rs,
+        # for one, reports the C compiler's errors on stdout.
+        sys.stdout.flush()
+        sys.stdout.buffer.write(ex.output.encode("utf-8", errors="surrogateescape"))
+        sys.stdout.flush()
         sys.exit(ex.returncode)
+
+
+def is_utf8(line: str) -> bool:
+    try:
+        line.encode("utf-8")
+        return True
+    except UnicodeEncodeError:
+        return False
 
 
 class Args(NamedTuple):
@@ -267,6 +282,15 @@ def main() -> None:  # noqa: C901
 
     flags = ""
     for line in script_output.split("\n"):
+        if not is_utf8(line):
+            # Cargo does not read directives from a line that is not UTF-8.
+            print(
+                line.encode("utf-8", errors="surrogateescape").decode(
+                    "utf-8", errors="replace"
+                ),
+                end="\n",
+            )
+            continue
         # Cargo reads each directive from the trimmed line.
         directive = line.strip()
         cargo_rustc_cfg_match = cargo_rustc_cfg_pattern.match(directive)

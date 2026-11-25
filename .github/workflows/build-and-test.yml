@@ -83,5 +83,5 @@ jobs:
         cache-on-failure: true
         save-if: ${{ github.ref == 'refs/heads/main' }}
     - name: Run the tests
-      run: bash .github/scripts/report_failure.sh "tests (${{ matrix.name }})" python3 test.py --ci --git --test-only
+      run: python3 test.py --ci --git --test-only
       shell: bash

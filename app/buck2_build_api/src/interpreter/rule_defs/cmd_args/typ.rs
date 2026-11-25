@@ -60,6 +60,8 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
+use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 use starlark::values::string::StarlarkStr;
@@ -806,17 +808,17 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
     fn cmd_args(
         #[starlark(args)] args: CmdArgsPositional<'v>,
         #[starlark(default = EmptyList)] hidden: StarlarkCommandLineValueUnpack<'v>,
-        delimiter: Option<StringValue<'v>>,
+        #[starlark(default = NoneType)] delimiter: NoneOr<StringValue<'v>>,
         #[starlark(default = "{}")] format: StringValue<'v>,
-        prepend: Option<StringValue<'v>>,
-        quote: Option<&str>,
+        #[starlark(default = NoneType)] prepend: NoneOr<StringValue<'v>>,
+        #[starlark(default = NoneType)] quote: NoneOr<&str>,
         #[starlark(default = false)] ignore_artifacts: bool,
         #[starlark(default = false, require = named, doc_hidden = true)]
         experimental_salt_hidden: bool,
-        absolute_prefix: Option<StringValue<'v>>,
-        absolute_suffix: Option<StringValue<'v>>,
+        #[starlark(default = NoneType)] absolute_prefix: NoneOr<StringValue<'v>>,
+        #[starlark(default = NoneType)] absolute_suffix: NoneOr<StringValue<'v>>,
         #[starlark(default = 0)] parent: u32,
-        relative_to: Option<
+        #[starlark(default = NoneType)] relative_to: NoneOr<
             Either<ValueOf<'v, RelativeOrigin<'v>>, (ValueOf<'v, RelativeOrigin<'v>>, u32)>,
         >,
         #[starlark(default = EmptyList)] replace_regex: Either<
@@ -827,7 +829,12 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
     ) -> starlark::Result<ValueOf<'v, StarlarkCmdArgsView<'v>>> {
         // `{}` formats an argument as itself.
         let format = (format.as_str() != "{}").then_some(format);
-        let quote = quote.map(QuoteStyle::parse).transpose()?;
+        let delimiter = delimiter.into_option();
+        let prepend = prepend.into_option();
+        let quote = quote.into_option().map(QuoteStyle::parse).transpose()?;
+        let absolute_prefix = absolute_prefix.into_option();
+        let absolute_suffix = absolute_suffix.into_option();
+        let relative_to = relative_to.into_option();
         let mut builder = StarlarkCommandLineData::default();
         if delimiter.is_some()
             || format.is_some()

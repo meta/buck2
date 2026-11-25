@@ -292,7 +292,9 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
-        #[starlark(require = named)] cfg: Option<Either<StringValue<'v>, &'v dyn TransitionValue>>,
+        #[starlark(require = named, default = NoneType)] cfg: NoneOr<
+            Either<StringValue<'v>, &'v dyn TransitionValue>,
+        >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -300,7 +302,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         let required_providers = dep_like_attr_handle_providers_arg(providers)?;
         let label_coercion_ctx = attr_coercion_context_for_bzl(eval)?;
 
-        let transition_id = match cfg {
+        let transition_id = match cfg.into_option() {
             Some(Either::Left(target)) => Some(Arc::new(TransitionId::Target(
                 label_coercion_ctx.coerce_providers_label(&target)?,
             ))),

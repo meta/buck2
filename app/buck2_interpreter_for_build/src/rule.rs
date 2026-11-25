@@ -72,6 +72,8 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::StarlarkDict;
 use starlark::values::list::StarlarkList;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
+use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
@@ -1044,8 +1046,8 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             'v,
             StarlarkDict<'v, StarlarkStr, StarlarkAttribute>,
         >,
-        #[starlark(require = named)] cfg: Option<&'v dyn TransitionValue>,
-        #[starlark(require = named)] supports_incoming_transition: Option<bool>,
+        #[starlark(require = named, default = NoneType)] cfg: NoneOr<&'v dyn TransitionValue>,
+        #[starlark(require = named, default = NoneType)] supports_incoming_transition: NoneOr<bool>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] is_configuration_rule: bool,
         #[starlark(require = named, default = false)] is_toolchain_rule: bool,
@@ -1062,8 +1064,8 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         let rule = StarlarkRuleCallable::new(
             RuleImpl::BuildRule(r#impl.to_unchecked().with_signature()),
             attrs,
-            cfg,
-            supports_incoming_transition,
+            cfg.into_option(),
+            supports_incoming_transition.into_option(),
             doc,
             is_configuration_rule,
             is_toolchain_rule,

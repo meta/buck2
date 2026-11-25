@@ -271,8 +271,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] prefer_remote: bool,
         #[starlark(require = named, default = true)] low_pass_filter: bool,
         #[starlark(require = named, default = false)] always_print_stderr: bool,
-        #[starlark(require = named)] weight: Option<u32>,
-        #[starlark(require = named)] weight_percentage: Option<u32>,
+        #[starlark(require = named, default = NoneType)] weight: NoneOr<u32>,
+        #[starlark(require = named, default = NoneType)] weight_percentage: NoneOr<u32>,
         #[starlark(require = named, default = EmptyDict)] dep_files: ValueOf<
             'v,
             StarlarkDict<'v, StarlarkStr, ArtifactTag>,
@@ -281,8 +281,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             'v,
             StarlarkListOrTuple<'v, StarlarkDepFileFingerprint<'v>>,
         >,
-        #[starlark(require = named)] metadata_env_var: Option<&str>,
-        #[starlark(require = named)] metadata_path: Option<&str>,
+        #[starlark(require = named, default = NoneType)] metadata_env_var: NoneOr<&str>,
+        #[starlark(require = named, default = NoneType)] metadata_path: NoneOr<&str>,
         #[starlark(require = named, default = EmptyList)] incremental_metadata_ignore_tags: ValueOf<
             'v,
             StarlarkListOrTuple<'v, ArtifactTag>,
@@ -294,7 +294,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] allow_dep_file_cache_upload: bool,
         #[starlark(require = named, default = false)] allow_offline_output_cache: bool,
         #[starlark(require = named, default = false)] force_full_hybrid_if_capable: bool,
-        #[starlark(require = named)] exe: Option<
+        #[starlark(require = named, default = NoneType)] exe: NoneOr<
             Either<ValueOf<'v, WorkerRunInfo<'v>>, ValueOf<'v, RunInfo<'v>>>,
         >,
         #[starlark(require = named, default = false)] unique_input_inodes: bool,
@@ -450,7 +450,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         }
 
         // TODO(nga): we should not accept output artifacts in worker.
-        let (starlark_exe, starlark_worker, starlark_remote_worker) = match exe {
+        let (starlark_exe, starlark_worker, starlark_remote_worker) = match exe.into_option() {
             Some(Either::Left(worker_run)) => {
                 let worker = worker_run.worker();
                 let remote_worker = worker_run.remote_worker();
@@ -466,7 +466,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             None => (StarlarkCmdArgs::default(), None, None),
         };
 
-        let weight = match (weight, weight_percentage) {
+        let weight = match (weight.into_option(), weight_percentage.into_option()) {
             (None, None) => WeightClass::Permits(1),
             (Some(v), None) => {
                 if v == 0 {
@@ -550,7 +550,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             );
         }
 
-        let metadata_param = match (metadata_env_var, metadata_path) {
+        let metadata_param = match (metadata_env_var.into_option(), metadata_path.into_option()) {
             (Some(env_var), Some(path)) => {
                 let path: ForwardRelativePathBuf = path.to_owned().try_into()?;
                 this.state()?.claim_output_path(eval, &path)?;

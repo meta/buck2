@@ -27,6 +27,8 @@ use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
+use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
@@ -84,14 +86,14 @@ fn transition_info_creator(globals: &mut GlobalsBuilder) {
             TransitionImplParams,
             ImplSingleReturnTy<'static>,
         >,
-        #[starlark(require = named)] attrs: Option<
+        #[starlark(require = named, default = NoneType)] attrs: NoneOr<
             ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, TransitionInfo<'v>>> {
         Ok(heap.alloc(TransitionInfo {
             r#impl: heap.alloc(r#impl.to_unchecked()),
-            attrs,
+            attrs: attrs.into_option(),
         }))
     }
 }

@@ -26,6 +26,8 @@ use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::typing::StarlarkIter;
 
 #[starlark_module]
@@ -52,7 +54,7 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
     fn declare_output<'v>(
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] prefix: &str,
-        #[starlark(require = pos)] filename: Option<&str>,
+        #[starlark(require = pos, default = NoneType)] filename: NoneOr<&str>,
         #[starlark(require = named, default = false)] dir: bool,
         #[starlark(require = named, default = true)] has_content_based_path: bool,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -60,7 +62,7 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         // We take either one or two positional arguments, namely (filename) or (prefix, filename).
         // The prefix argument is optional, but first, so we pretend the filename is optional
         // and fix them up here.
-        let (prefix, filename) = match filename {
+        let (prefix, filename) = match filename.into_option() {
             None => (None, prefix),
             Some(filename) => (Some(prefix), filename),
         };

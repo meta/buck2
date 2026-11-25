@@ -60,6 +60,8 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::StarlarkDict;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
+use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 use starlark::values::structs::Struct;
@@ -337,7 +339,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             Either<ImplSingleReturnTy<'static>, ImplSplitReturnTy<'static>>,
         >,
         #[starlark(require = named)] refs: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
-        #[starlark(require = named)] attrs: Option<
+        #[starlark(require = named, default = NoneType)] attrs: NoneOr<
             ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         >,
         #[starlark(require = named, default = false)] split: bool,
@@ -361,7 +363,10 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             .ok_or(buck2_error::Error::from(TransitionError::OnlyBzl))?
             .clone();
 
-        let attrs = attrs.map(|a| a.try_to_vec::<StringValue>()).transpose()?;
+        let attrs = attrs
+            .into_option()
+            .map(|a| a.try_to_vec::<StringValue>())
+            .transpose()?;
         if let Some(attrs) = &attrs {
             let attrs_set: BuckMutSet<StringValue> = attrs.iter().copied().collect();
             if attrs_set.len() != attrs.len() {

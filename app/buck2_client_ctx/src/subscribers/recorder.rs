@@ -1269,6 +1269,7 @@ impl InvocationRecorder {
                 .and_then(duration_as_millis),
             system_total_memory_bytes: self.system_info.system_total_memory_bytes,
             container_memory_limit_bytes: self.system_info.container_memory_limit_bytes,
+            fog_template: self.system_info.fog_template.clone(),
             file_watcher_stats: self.file_watcher_stats.take(),
             file_watcher_duration_ms: self.file_watcher_duration.and_then(duration_as_millis),
             time_to_last_action_execution_end_ms: self
@@ -3336,6 +3337,41 @@ mod tests {
         // One snapshot leaves nothing to compare, and neither does a kernel that does not count.
         assert_eq!(swap_in_after(&[Some(10)]).await, None);
         assert_eq!(swap_in_after(&[None, None]).await, None);
+    }
+
+    /// The record of a command whose daemon described its host this way.
+    async fn record_after_system_info(
+        system_info: buck2_data::SystemInfo,
+    ) -> buck2_data::InvocationRecord {
+        let trace_id = TraceId::new();
+        let start = SystemTime::now();
+        let mut recorder = InvocationRecorder::new(trace_id.clone(), None, start, vec![]);
+        recorder
+            .handle_events(&[Arc::new(BuckEvent::new(
+                start,
+                trace_id,
+                None,
+                None,
+                buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+                    data: Some(system_info.into()),
+                }),
+            ))])
+            .await
+            .unwrap();
+        record_of(&recorder.create_record_event())
+    }
+
+    #[tokio::test]
+    async fn test_fog_template_is_copied_from_system_info() {
+        let record = record_after_system_info(buck2_data::SystemInfo {
+            fog_template: Some("dev7_xlarge_2tb_rv".to_owned()),
+            ..Default::default()
+        })
+        .await;
+        assert_eq!(record.fog_template.as_deref(), Some("dev7_xlarge_2tb_rv"));
+
+        let record = record_after_system_info(buck2_data::SystemInfo::default()).await;
+        assert_eq!(record.fog_template, None);
     }
 
     /// With no local cache lookups between the snapshots there is no average: the field is

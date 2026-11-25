@@ -273,6 +273,38 @@ pub fn system_fingerprint() -> Option<String> {
     }
 }
 
+/// The name of the VM template this devserver was provisioned from, e.g. `dev7_xlarge_2tb_rv`, as
+/// the file every Meta devserver describes itself in records it. `None` on any other host, and on
+/// a devserver whose file names no template. The file is read once per process: a devserver keeps
+/// its template until it is provisioned again.
+pub fn fog_template() -> Option<String> {
+    #[cfg(fbcode_build)]
+    {
+        static FOG_TEMPLATE: OnceLock<Option<String>> = OnceLock::new();
+        FOG_TEMPLATE
+            .get_or_init(|| {
+                fog_template_in(&std::fs::read_to_string("/etc/devserver.whoami").ok()?)
+            })
+            .clone()
+    }
+    #[cfg(not(fbcode_build))]
+    {
+        None
+    }
+}
+
+/// The `fog_template` of a devserver's description of itself, which is a JSON object.
+#[cfg(fbcode_build)]
+fn fog_template_in(whoami: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Whoami {
+        fog_template: Option<String>,
+    }
+
+    let whoami: Whoami = serde_json::from_str(whoami).ok()?;
+    whoami.fog_template
+}
+
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
@@ -376,5 +408,38 @@ mod agent_id_tests {
             agent_id("invocation_id=inv, id=claude_code"),
             Some("claude_code".to_owned()),
         );
+    }
+}
+
+#[cfg(all(test, fbcode_build))]
+mod fog_template_tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_template_a_devserver_names() {
+        assert_eq!(
+            fog_template_in(
+                r#"{"hostname":"devvm1.abc0.facebook.com","fog_reservation_pool":null,"fog_template":"dev7_xlarge_2tb_rv"}"#
+            ),
+            Some("dev7_xlarge_2tb_rv".to_owned()),
+        );
+    }
+
+    #[test]
+    fn a_devserver_that_names_no_template_has_none() {
+        assert_eq!(
+            fog_template_in(r#"{"hostname":"devvm1.abc0.facebook.com","fog_template":null}"#),
+            None,
+        );
+        assert_eq!(
+            fog_template_in(r#"{"hostname":"devvm1.abc0.facebook.com"}"#),
+            None,
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_json_object_has_none() {
+        assert_eq!(fog_template_in(""), None);
+        assert_eq!(fog_template_in("not json"), None);
     }
 }

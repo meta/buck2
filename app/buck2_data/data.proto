@@ -3696,6 +3696,8 @@ message InvocationRecord {
   optional uint64 system_total_memory_bytes = 46;
   // See `SystemInfo.container_memory_limit_bytes`.
   optional uint64 container_memory_limit_bytes = 776;
+  // See `SystemInfo.fog_template`.
+  optional string fog_template = 780;
   // Information of file changes provided by file watcher
   FileWatcherStats file_watcher_stats = 47;
   // How long did we spend querying the file watcher
@@ -4567,6 +4569,10 @@ message SystemInfo {
   // the host, this is the container's own size. Absent outside such
   // containers.
   optional uint64 container_memory_limit_bytes = 15;
+  // The name of the VM template that the devserver the daemon runs on was
+  // provisioned from, e.g. `dev7_xlarge_2tb_rv`. Absent off Meta devservers,
+  // and on a devserver that does not say.
+  optional string fog_template = 16;
 }
 
 message CpuCounter {

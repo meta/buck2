@@ -62,6 +62,7 @@ use buck2_events::BuckEvent;
 use buck2_events::Event;
 use buck2_events::daemon_id::DaemonId;
 use buck2_events::dispatch::EventDispatcher;
+use buck2_events::metadata::fog_template;
 use buck2_events::source::ChannelEventSource;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::materialize::materializer::FinalArtifactMaterialization;
@@ -1118,6 +1119,7 @@ impl BuckdServer {
                 },
                 num_cores: Some(num_cores() as u64),
                 container_memory_limit_bytes: container_memory_limit_bytes(),
+                fog_template: fog_template(),
             });
 
             // Fire off a snapshot before we start doing anything else. We use the metrics emitted here

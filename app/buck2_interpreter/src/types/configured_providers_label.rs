@@ -9,6 +9,7 @@
  */
 
 use std::hash::Hash;
+use std::hash::Hasher;
 
 use allocative::Allocative;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
@@ -68,6 +69,7 @@ pub struct StarlarkConfiguredProvidersLabel {
     #[freeze(identity)]
     #[starlark_pagable(pagable)]
     label: ConfiguredProvidersLabel,
+    hash: u64,
 }
 
 starlark_simple_value!(StarlarkConfiguredProvidersLabel);
@@ -83,7 +85,8 @@ impl Serialize for StarlarkConfiguredProvidersLabel {
 
 impl StarlarkConfiguredProvidersLabel {
     pub fn new(label: ConfiguredProvidersLabel) -> Self {
-        StarlarkConfiguredProvidersLabel { label }
+        let hash = label_hash(&label);
+        StarlarkConfiguredProvidersLabel { label, hash }
     }
 
     pub fn inner(&self) -> &ConfiguredProvidersLabel {
@@ -101,8 +104,14 @@ where
     }
 
     fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
-        this.label.hash(hasher);
+        hasher.write_u64(this.hash);
     }
+}
+
+fn label_hash(label: &ConfiguredProvidersLabel) -> u64 {
+    let mut hasher = StarlarkHasher::new();
+    label.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// A label is used to represent a configured target.
@@ -369,20 +378,18 @@ mod tests {
         fn configured_providers_label<'v>(
             heap: Heap<'v>,
         ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredProvidersLabel>> {
-            let label = StarlarkConfiguredProvidersLabel {
-                label: ConfiguredProvidersLabel::new(
-                    ConfiguredTargetLabel::testing_parse(
-                        "foo//bar:baz",
-                        ConfigurationData::testing_new(),
-                    ),
-                    ProvidersName::NonDefault(triomphe::Arc::new(NonDefaultProvidersName::Named(
-                        ArcSlice::new([
-                            ProviderName::new("qux".to_owned())?,
-                            ProviderName::new("quux".to_owned())?,
-                        ]),
-                    ))),
+            let label = StarlarkConfiguredProvidersLabel::new(ConfiguredProvidersLabel::new(
+                ConfiguredTargetLabel::testing_parse(
+                    "foo//bar:baz",
+                    ConfigurationData::testing_new(),
                 ),
-            };
+                ProvidersName::NonDefault(triomphe::Arc::new(NonDefaultProvidersName::Named(
+                    ArcSlice::new([
+                        ProviderName::new("qux".to_owned())?,
+                        ProviderName::new("quux".to_owned())?,
+                    ]),
+                ))),
+            ));
             Ok(ValueOf::alloc(heap, label))
         }
 
@@ -422,6 +429,41 @@ mod tests {
         a.eq(
             "'\"foo//bar:baz[qux][quux]\"'",
             "json.encode(providers_label())",
+        );
+    }
+
+    #[test]
+    fn test_configured_providers_label_hash_follows_equality() {
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        // A loaded module's values are frozen.
+        a.module(
+            "frozen.bzl",
+            r#"
+frozen_dict = {configured_providers_label(): "frozen"}
+frozen_label = configured_providers_label()
+frozen_set = set([configured_providers_label()])
+"#,
+        );
+        // Two separately built labels are equal, so one finds the other in a
+        // dict and a set, frozen or not.
+        a.pass(
+            r#"
+load("frozen.bzl", "frozen_dict", "frozen_label", "frozen_set")
+a = configured_providers_label()
+b = configured_providers_label()
+assert_eq(a, b)
+d = {a: 1}
+assert_eq(d[b], 1)
+s = set([a])
+assert_true(b in s)
+assert_eq(frozen_dict[a], "frozen")
+assert_true(a in frozen_set)
+assert_eq(d[frozen_label], 1)
+assert_true(frozen_label in s)
+assert_eq(frozen_dict[frozen_label], "frozen")
+assert_eq({frozen_label: 2}[a], 2)
+"#,
         );
     }
 }

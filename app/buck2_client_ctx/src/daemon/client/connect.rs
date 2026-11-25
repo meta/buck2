@@ -1198,6 +1198,26 @@ pub async fn establish_connection_existing(
         .await
 }
 
+/// The status of the daemon in `daemon_dir`, for a command that reports on daemons it does not
+/// run anything in: asked once and within `timeout`, without following the daemon's logs.
+pub async fn existing_daemon_status(
+    daemon_dir: &DaemonDir,
+    timeout: Duration,
+    snapshot: bool,
+    include_tokio_runtime_metrics: bool,
+) -> buck2_error::Result<buck2_cli_proto::StatusResponse> {
+    let deadline = StartupDeadline::duration_from_now(timeout)?;
+    deadline
+        .run(
+            "asking an existing Buck daemon for its status",
+            async move {
+                let mut channel = BuckdProcessInfo::load(daemon_dir)?.create_channel().await?;
+                request_status(&mut channel.client, snapshot, include_tokio_runtime_metrics).await
+            },
+        )
+        .await
+}
+
 /// How long a namespace daemon that was just stopped may keep its lifetime lock after its process
 /// was seen to go: the kernel releases the lock as the last of the daemon's threads ends.
 const LIFETIME_LOCK_RELEASE_GRACE: Duration = Duration::from_secs(5);
@@ -1788,31 +1808,38 @@ struct DaemonStatus {
     start_instant: Option<Instant>,
 }
 
-async fn get_daemon_status(
+async fn request_status(
     client: &mut DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
-) -> buck2_error::Result<DaemonStatus> {
-    // NOTE: No tailers in bootstrap client, we capture logs if we fail to connect, but
-    // otherwise we leave them alone.
+    snapshot: bool,
+    include_tokio_runtime_metrics: bool,
+) -> buck2_error::Result<buck2_cli_proto::StatusResponse> {
+    // No tailers: a status request does not follow the daemon's logs.
     let mut events_ctx = EventsCtx::new(None, vec![Box::new(StdoutStderrForwarder)]);
-    // Subtracting server uptime from the request start makes RPC latency move the estimated
-    // daemon start earlier, so it cannot exclude a relevant OOM record.
-    let status_request_start = Instant::now();
     let status = DaemonEventsCtx::without_tailers(&mut events_ctx)
         .unpack_oneshot({
             client.status(tonic::Request::new(buck2_cli_proto::StatusRequest {
-                snapshot: false,
-                include_tokio_runtime_metrics: false,
+                snapshot,
+                include_tokio_runtime_metrics,
             }))
         })
         .await?;
 
-    let status: buck2_cli_proto::StatusResponse = match status {
+    match status {
         CommandOutcome::Success(r) => Ok(r),
         CommandOutcome::Failure(_) => Err(buck2_error!(
             ErrorTag::DaemonStatus,
             "Unexpected failure message in status()"
         )),
-    }?;
+    }
+}
+
+async fn get_daemon_status(
+    client: &mut DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
+) -> buck2_error::Result<DaemonStatus> {
+    // Subtracting server uptime from the request start makes RPC latency move the estimated
+    // daemon start earlier, so it cannot exclude a relevant OOM record.
+    let status_request_start = Instant::now();
+    let status = request_status(client, false, false).await?;
 
     let start_instant = status
         .uptime

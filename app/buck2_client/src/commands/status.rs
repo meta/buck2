@@ -14,8 +14,9 @@ use buck2_cli_proto::StatusResponse;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::daemon::client::connect::BuckdConnectOptions;
+use buck2_client_ctx::daemon::client::connect::buckd_connect_timeout;
 use buck2_client_ctx::daemon::client::connect::connect_buckd;
-use buck2_client_ctx::daemon::client::connect::establish_connection_existing;
+use buck2_client_ctx::daemon::client::connect::existing_daemon_status;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::subscribers::stdout_stderr_forwarder::StdoutStderrForwarder;
 use buck2_common::argv::Argv;
@@ -64,20 +65,21 @@ impl StatusCommand {
                     }
                 }
 
+                let timeout = buckd_connect_timeout()?;
                 let mut statuses = Vec::new();
                 for dir in daemon_dirs {
-                    if let Ok(bootstrap_client) = establish_connection_existing(&dir).await {
-                        statuses.push(process_status(
-                            bootstrap_client
-                                .to_connector()
-                                .with_flushing()
-                                .status(
-                                    &mut events_ctx,
-                                    self.snapshot,
-                                    self.include_tokio_runtime_metrics,
-                                )
-                                .await?,
-                        )?);
+                    let status = existing_daemon_status(
+                        &dir,
+                        timeout,
+                        self.snapshot,
+                        self.include_tokio_runtime_metrics,
+                    )
+                    .await;
+                    match status {
+                        Ok(status) => statuses.push(process_status(status)?),
+                        Err(error) => {
+                            tracing::debug!("No status from the daemon in `{}`: {:#}", dir, error)
+                        }
                     }
                 }
 

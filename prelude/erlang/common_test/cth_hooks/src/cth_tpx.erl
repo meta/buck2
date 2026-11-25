@@ -47,7 +47,7 @@
 %% For tests purposes
 
 -include_lib("kernel/include/logger.hrl").
--include("method_ids.hrl").
+-include_lib("common/include/method_ids.hrl").
 
 %% ----------------------- Types --------------------------
 

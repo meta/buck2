@@ -150,11 +150,11 @@ def _type_arg():
      and is particularly useful for grouping genrules that share an
      underlying logical "type".
 
-     For example, if you have the following `cxx_genrule` defined
+     For example, if you have the following `genrule` defined
      in the root directory of your Buck project
 
     ```
-    cxx_genrule(
+    genrule(
       name = 'cxx_gen',
       type = 'epilog',
       cmd  = 'touch finish.txt; cp finish.txt $OUT',
@@ -162,16 +162,16 @@ def _type_arg():
     )
     ```
 
-     then the following `buck query` command
+     then the following `buck2 uquery` command
 
     ```
-    buck query "attrfilter( type, 'epilog', '//...' )"
+    buck2 uquery "attrfilter( type, 'epilog', '//...' )"
     ```
 
      returns
 
     ```
-    //:cxx_gen
+    root//:cxx_gen
     ```
 """,
         ),

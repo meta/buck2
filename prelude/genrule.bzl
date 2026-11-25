@@ -88,8 +88,7 @@ _USE_CACHE_MODE = is_full_meta_repo()
 
 # Extra attributes required by every genrule based on genrule_impl
 def genrule_attributes() -> dict[str, Attr]:
-    attributes = {
-        "allow_offline_output_cache": attrs.bool(default = False),
+    attributes = genrule_common.allow_offline_output_cache_arg() | {
         "always_print_stderr": attrs.bool(default = False),
         "metadata_env_var": attrs.option(attrs.string(), default = None),
         "metadata_path": attrs.option(attrs.string(), default = None),
@@ -492,7 +491,8 @@ genrule = prelude_rule(
     impl = genrule_impl,
     docs = """
         A `genrule()` is used to generate files from a shell
-         command. It must produce a single output file or folder.
+         command. It produces one output file or folder, named by `out`,
+         or several named outputs, listed in `outs`.
     """,
     examples = """
         This genrule() uses a Python script to derive a new
@@ -508,9 +508,9 @@ genrule = prelude_rule(
           srcs = [
             'AndroidManifest.xml',
           ],
-          bash = '$(exe //python/android:basic_to_full) ' \
+          bash = '$(exe //python/android:basic_to_full) ' +
               '$SRCDIR/AndroidManifest.xml > $OUT',
-          cmd_exe = '$(exe //python/android:basic_to_full) ' \
+          cmd_exe = '$(exe //python/android:basic_to_full) ' +
               '%SRCDIR%\\AndroidManifest.xml > %OUT%',
           out = 'AndroidManifest.xml',
         )
@@ -522,9 +522,9 @@ genrule = prelude_rule(
           srcs = [
             'AndroidManifest.xml',
           ],
-          bash = '$(exe //python/android:basic_to_full) ' \
+          bash = '$(exe //python/android:basic_to_full) ' +
               '$SRCDIR/AndroidManifest.xml > $OUT/AndroidManifest.xml',
-          cmd_exe = '$(exe //python/android:basic_to_full) ' \
+          cmd_exe = '$(exe //python/android:basic_to_full) ' +
               '%SRCDIR%\\AndroidManifest.xml > %OUT%\\AndroidManifest.xml',
           outs =  {
             "manifest": [ "AndroidManifest.xml" ],
@@ -536,11 +536,11 @@ genrule = prelude_rule(
         For named outputs, build with any of the following:
 
         ```
-          buck build //:generate_manifest_with_named_outputs
+          buck2 build //:generate_manifest_with_named_outputs
         ```
 
         ```
-          buck build //:generate_manifest_with_named_outputs[manifest]
+          buck2 build '//:generate_manifest_with_named_outputs[manifest]'
         ```
 
         Consume in `srcs` with:
@@ -580,22 +580,11 @@ genrule = prelude_rule(
                 attrs.set(attrs.string(), sorted = False),
                 default = None,
                 doc = """
-                Default output which must be present if the `outs` arg is present. Otherwise does not apply.
+                The default output of a genrule that has `outs`. Otherwise does not apply.
 
                  If a rule with `outs` is consumed without an output label, the default output is returned. The
                  default output does not need to be present in any of the named outputs defined in `outs`.
-
-                 Note that a maximum of one value may be present in this list. For example:
-
-                ```
-                default_outs = [ "output_one", ]
-                ```
-                is valid, whereas
-
-                ```
-                default_outs = [ "output_one", "output_two", ]
-                ```
-                is not.
+                 Without `default_outs`, the default output is the directory that holds the named outputs.
             """,
             ),
             "executable_outs": attrs.option(
@@ -641,27 +630,6 @@ genrule = prelude_rule(
                   cmd = "echo something> $OUT/out1.txt && echo another> $OUT/out2.txt",
                 )
                 ```
-
-                 Note that a maximum of one value may be present in the list in this map. For example:
-
-                ```
-                outs = {
-                  "output1": [
-                    "out1.txt",
-                  ],
-                },
-                ```
-                is valid, whereas
-
-                ```
-                outs = {
-                  "output1": [
-                    "out1.txt",
-                    "out2.txt",
-                  ],
-                },
-                ```
-                is not.
             """,
             ),
         }
@@ -674,7 +642,7 @@ genrule = prelude_rule(
                 attrs.bool(),
                 default = None,
                 doc = """
-                Whether this target should be executed in a sandbox or not.
+                Not read by the rule: it has no effect on how the command runs.
             """,
             ),
             "executable": attrs.option(
@@ -690,17 +658,12 @@ genrule = prelude_rule(
                 attrs.bool(),
                 default = None,
                 doc = """
-                Opts this genrule in to remote execution. Note that it is only safe to
-                 execute a genrule remotely if it is completely hermetic and completely
-                 and correctly describes its dependencies. Defaults to false. This parameter
-                 is unstable. It is subject to removal, default reversal, and other arbitrary
-                 changes in the future.
+                Not read by the rule: it has no effect on how the command runs.
             """,
             ),
             "_exec_os_type": buck.exec_os_type_arg(),
         }
         | genrule_common.error_handler_arg()
-        | genrule_common.allow_offline_output_cache_arg()
         | buck.licenses_arg()
         | buck.labels_arg()
         | buck.contacts_arg()

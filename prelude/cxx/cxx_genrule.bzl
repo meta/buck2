@@ -207,7 +207,7 @@ cxx_genrule = prelude_rule(
                 attrs.bool(),
                 default = None,
                 doc = """
-                Whether this target should be executed in a sandbox or not.
+                Not read by the rule: it has no effect on how the command runs.
             """,
             ),
             "outs": attrs.option(attrs.dict(key = attrs.string(), value = attrs.set(attrs.string(), sorted = False), sorted = False), default = None),

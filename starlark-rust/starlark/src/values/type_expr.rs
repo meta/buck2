@@ -34,13 +34,13 @@ use crate::values::ValueOf;
 /// Rust's: a nominal type is its [`StarlarkType`] impl (a single-representation type is its
 /// own, a type with several representations is its view, `bool` is the Rust `bool`), for
 /// which [`#[starlark_value]`](crate::values::starlark_value) writes this impl,
-/// `list[T]` is [`ListType<T>`](crate::values::list::ListType) and the other containers
-/// likewise, `A | B` is `Either<A, B>` or a `#[derive(UnpackValue)]` enum, `None | T` is
+/// `list[T]` is [`StarlarkList<'v, T>`](crate::values::list::StarlarkList) and the other
+/// containers likewise, `A | B` is `Either<A, B>` or a `#[derive(UnpackValue)]` enum, `None | T` is
 /// [`NoneOr<T>`](crate::values::none::NoneOr), `typing.Any` is [`Value`], and so on. Each
 /// Starlark type has one implementer, so that two Rust spellings never have to be reconciled;
 /// unions are the exception, since a union can be spelled in several orders. The handles to a
-/// value (`ValueTyped<T>`, `&T`, `ListRef` and the like) are what a type is read through, not
-/// a type.
+/// value (`ValueTyped<T>`, `&T`, `&TupleRef` and the like) are what a type is read through,
+/// not a type.
 ///
 /// Membership and inspection are one operation: [`get`](Self::get) says whether a value is of
 /// the type by producing the handle it is read through, so nothing that is not a type can
@@ -56,9 +56,10 @@ pub trait StarlarkTypeExpr<'v>: Sized {
     fn starlark_type_repr() -> Ty;
 
     /// What a value of this type is read through: `ValueTyped<'v, Foo>` for a nominal type with
-    /// one representation, the view for one with several, the reading for a typed container
-    /// (the [`ValueOf`] handle together with what the read found, such as
-    /// [`ListOf`](crate::values::list::ListOf)), `Option<T::Get>` for `NoneOr<T>`,
+    /// one representation, the view for one with several, the type itself for a list
+    /// ([`StarlarkList`](crate::values::list::StarlarkList)), the reading for another typed
+    /// container (the [`ValueOf`] handle together with what the read found, such as
+    /// [`TupleOf`](crate::values::tuple::TupleOf)), `Option<T::Get>` for `NoneOr<T>`,
     /// `Either<A::Get, B::Get>` for a union.
     ///
     /// For a [`StarlarkType`] it is a handle: it is copied freely and converts back into the
@@ -145,7 +146,7 @@ impl<'v, TLeft: StarlarkTypeExprHashable<'v>, TRight: StarlarkTypeExprHashable<'
 
 /// What a variant of a `#[derive(UnpackValue)]` union holds: a [`ValueOf`] of a type
 /// expression, a type expression that is its own [`Get`](StarlarkTypeExpr::Get), such as a
-/// view, or a reference that a type is read through, such as `&ListRef`. The derive reads the
+/// view, or a reference that a type is read through, such as `&TupleRef`. The derive reads the
 /// type expression off the payload to test the variant.
 pub trait UnionPayload<'v>: Sized {
     /// The type expression the payload stands for.
@@ -203,7 +204,6 @@ macro_rules! union_payload_is_conversion {
 
 union_payload_is_conversion! {
     &'v str;
-    &'v crate::values::list::ListRef<'v>;
     &'v crate::values::tuple::TupleRef<'v>;
     crate::values::dict::DictRef<'v>;
     crate::values::set::SetRef<'v>;

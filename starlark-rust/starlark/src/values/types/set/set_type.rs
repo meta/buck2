@@ -134,7 +134,7 @@ impl<'v, T: StarlarkTypeExpr<'v>> SetOf<'v, T> {
     }
 
     /// The items, re-checked unless the set is frozen, as for
-    /// [`ValueOf<ListType<T>>::iter`](ValueOf::iter).
+    /// [`StarlarkList::iter`](crate::values::list::StarlarkList::iter).
     pub fn iter(self) -> impl Iterator<Item = crate::Result<ValueOf<'v, T>>> + 'v
     where
         T: 'v,

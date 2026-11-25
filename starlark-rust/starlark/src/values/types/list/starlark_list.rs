@@ -25,6 +25,7 @@ use std::slice;
 use dupe::Clone_;
 use dupe::Copy_;
 use dupe::Dupe_;
+use either::Either;
 
 use crate::any::IsStaticType;
 use crate::any::ProvidesStaticType;
@@ -40,6 +41,7 @@ use crate::values::list::value::ListData;
 use crate::values::list::value::ListGen;
 use crate::values::list::value::ListRepr;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
+use crate::values::tuple::TupleType;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::UnionPayload;
 
@@ -299,6 +301,31 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkList<'v, T> {
         U: UnpackValue<'v, Type = T> + 'v,
     {
         self.try_items().collect()
+    }
+}
+
+/// A type that `[]` belongs to: [`StarlarkList`] and
+/// [`StarlarkListOrTuple`](crate::values::list_or_tuple::StarlarkListOrTuple).
+pub trait EmptyListType: sealed::Sealed {}
+
+impl<'v, T> EmptyListType for StarlarkList<'v, T> {}
+impl<'v, T> EmptyListType for Either<StarlarkList<'v, T>, TupleType<T>> {}
+
+mod sealed {
+    use either::Either;
+
+    use crate::values::list::StarlarkList;
+    use crate::values::tuple::TupleType;
+
+    pub trait Sealed {}
+    impl<'v, T> Sealed for StarlarkList<'v, T> {}
+    impl<'v, T> Sealed for Either<StarlarkList<'v, T>, TupleType<T>> {}
+}
+
+impl<'v, T: StarlarkTypeExpr<'v> + EmptyListType> ValueOf<'v, T> {
+    /// The empty list.
+    pub fn empty_list() -> Self {
+        Self::new_unchecked(Value::new_empty_list())
     }
 }
 

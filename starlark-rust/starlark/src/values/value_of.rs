@@ -60,8 +60,8 @@ use crate::values::type_expr::StarlarkTypeExprStable;
 /// A [`Value`] known to be of the type `T`: it was checked when it was constructed.
 ///
 /// `T` is a [`StarlarkTypeExpr`], spelled as the type is: `Foo` for a nominal type, its view
-/// for a type with several representations, [`ListType<T>`](crate::values::list::ListType)
-/// for `list[T]`, [`NoneOr<T>`](crate::values::none::NoneOr) for `None | T`, a
+/// for a type with several representations,
+/// [`StarlarkList<'v, T>`](crate::values::list::StarlarkList) for `list[T]`, [`NoneOr<T>`](crate::values::none::NoneOr) for `None | T`, a
 /// `#[derive(UnpackValue)]` enum for a union. A `ValueOf<T>` is an `UnpackValue` and an
 /// `AllocValue`, so it is both a parameter binding and a return type; and it is the field type
 /// for a Starlark value that Rust code holds on to, because it freezes to a `ValueOf` at the
@@ -280,7 +280,7 @@ impl<T: StarlarkTypeExpr<'static>> ValueOf<'static, T> {
     ///
     /// Data at the `'static` brand is immortal, so it can be used at every brand; see
     /// [`HeapEdge::immortal`]. The type follows the brand: a
-    /// `ValueOf<'static, ListType<Value<'static>>>` becomes a `ValueOf<'v, ListType<Value<'v>>>`.
+    /// `ValueOf<'static, StarlarkList<'static>>` becomes a `ValueOf<'v, StarlarkList<'v>>`.
     #[inline]
     pub fn at<'v>(self) -> ValueOf<'v, ReinfectStatic<'v, T>>
     where

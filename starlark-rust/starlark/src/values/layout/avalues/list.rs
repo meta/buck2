@@ -42,7 +42,7 @@ use crate::values::layout::heap::maybe_uninit_slice_util::maybe_uninit_write_fro
 use crate::values::layout::heap::repr::AValueHeader;
 use crate::values::layout::heap::repr::AValueRepr;
 use crate::values::layout::heap::repr::ForwardPtr;
-use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::list::value::ListGen;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
 use crate::values::types::array::Array;
@@ -186,7 +186,7 @@ impl<'fh> FrozenHeap<'fh> {
     pub(crate) fn alloc_list_iter<T: StarlarkTypeExpr<'fh>>(
         self,
         elems: impl IntoIterator<Item = ValueOf<'fh, T>>,
-    ) -> ValueOf<'fh, ListType<T>> {
+    ) -> ValueOf<'fh, StarlarkList<'fh, T>> {
         // The items are `T`s, so the list is a `list[T]`.
         ValueOf::new_unchecked(self.alloc_list_values(elems.into_iter().map(ValueOf::to_value)))
     }
@@ -212,7 +212,7 @@ impl<'fh> FrozenHeap<'fh> {
 
 impl<'v> Heap<'v> {
     /// Allocate a list with the given elements.
-    pub(crate) fn alloc_list(self, elems: &[Value<'v>]) -> ValueOf<'v, ListType<Value<'v>>> {
+    pub(crate) fn alloc_list(self, elems: &[Value<'v>]) -> ValueOf<'v, StarlarkList<'v>> {
         let array = self.alloc_array(elems.len());
         array.extend_from_slice(elems);
         // Every value is a `typing.Any`, so the list is a `list[typing.Any]`.
@@ -224,7 +224,7 @@ impl<'v> Heap<'v> {
     pub(crate) fn alloc_list_iter<T: StarlarkTypeExpr<'v>>(
         self,
         elems: impl IntoIterator<Item = ValueOf<'v, T>>,
-    ) -> ValueOf<'v, ListType<T>> {
+    ) -> ValueOf<'v, StarlarkList<'v, T>> {
         // The items are `T`s, so the list is a `list[T]`.
         ValueOf::new_unchecked(self.alloc_list_values(elems.into_iter().map(ValueOf::to_value)))
     }
@@ -241,7 +241,7 @@ impl<'v> Heap<'v> {
         self,
         a: &[Value<'v>],
         b: &[Value<'v>],
-    ) -> ValueOf<'v, ListType<Value<'v>>> {
+    ) -> ValueOf<'v, StarlarkList<'v>> {
         let array = self.alloc_array(a.len() + b.len());
         array.extend_from_slice(a);
         array.extend_from_slice(b);

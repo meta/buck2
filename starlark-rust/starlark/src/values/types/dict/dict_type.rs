@@ -166,7 +166,7 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> DictOf<'v, K, V> {
     }
 
     /// The entries, re-checked unless the dict is frozen, as for
-    /// [`ValueOf<ListType<T>>::iter`](ValueOf::iter).
+    /// [`StarlarkList::iter`](crate::values::list::StarlarkList::iter).
     pub fn iter(self) -> DictEntries<'v, K, V> {
         DictEntries {
             frozen: self.to_value().is_frozen(),

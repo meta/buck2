@@ -147,7 +147,7 @@ pub fn recursive_ty<T: StarlarkRecursiveType>() -> Ty {
 ///     /// What `cmd_args` takes: a value that can be put on a command line, or a list of these.
 ///     pub StarlarkCmdArgsInput<'v>;
 ///     name "CmdArgsInput";
-///     is Either<StarlarkCmdArgsLike, ListType<StarlarkCmdArgsInput>>;
+///     is Either<StarlarkCmdArgsLike, StarlarkList<'v, StarlarkCmdArgsInput>>;
 /// }
 /// ```
 ///
@@ -191,7 +191,7 @@ pub fn recursive_ty<T: StarlarkRecursiveType>() -> Ty {
 ///
 /// # Where the expression may mention the name
 ///
-/// Only under a container: `ListType`, `DictType`, `SetType`, `TupleType`. A mention anywhere
+/// Only under a container: `StarlarkList`, `DictType`, `SetType`, `TupleType`. A mention anywhere
 /// else, as in `Either<Foo, Name>` or `NoneOr<Name>`, would make the type contain itself, and
 /// it does not compile: the marker's `Get` is the expression's, which would contain itself as
 /// well.

@@ -50,7 +50,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::list::AllocList;
-use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::string::StarlarkStr;
 
 fn hash_of(value: Value) -> crate::Result<u64> {
@@ -511,7 +511,7 @@ fn test_handle_hash() {
         assert_eq!(hash_of(s.to_value()).unwrap(), by_handle.finish());
         assert_eq!(hash_of(s.to_value()).unwrap(), by_try.finish());
 
-        let list = |items| -> ValueOf<ListType<Value>> {
+        let list = |items| -> ValueOf<StarlarkList> {
             ValueOf::new(heap.alloc(AllocList::<Vec<i32>>(items)).to_value()).unwrap()
         };
         let e = list(vec![1])

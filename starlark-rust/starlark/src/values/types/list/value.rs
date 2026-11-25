@@ -56,7 +56,6 @@ use crate::values::comparison::equals_slice;
 use crate::values::error::ValueError;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
-use crate::values::list::ListType;
 use crate::values::list::StarlarkList;
 
 #[derive(Clone, Default, Trace, Debug, ProvidesStaticType, Allocative)]
@@ -428,7 +427,7 @@ fn repeated<'v>(
     list: StarlarkList<'v>,
     times: i32,
     heap: Heap<'v>,
-) -> ValueOf<'v, ListType<Value<'v>>> {
+) -> ValueOf<'v, StarlarkList<'v>> {
     let content = list.content();
     let mut result = Vec::with_capacity(content.len() * cmp::max(0, times) as usize);
     for _ in 0..times {
@@ -523,16 +522,16 @@ impl<'v> StarlarkType<'v> for StarlarkList<'v> {
         unsafe { with_list!(this.repr(), |l| l.iter_stop()) }
     }
 
-    fn add(this: Self, other: Self, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+    fn add(this: Self, other: Self, heap: Heap<'v>) -> ValueOf<'v, StarlarkList<'v>> {
         let other = other.content();
         heap.alloc_list_concat(this.content(), other)
     }
 
-    fn mul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+    fn mul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, StarlarkList<'v>> {
         repeated(this, times, heap)
     }
 
-    fn rmul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+    fn rmul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, StarlarkList<'v>> {
         repeated(this, times, heap)
     }
 

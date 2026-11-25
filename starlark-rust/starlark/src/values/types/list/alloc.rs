@@ -23,7 +23,7 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::type_expr::StarlarkTypeExpr;
 
 /// Utility to allocate a list from iterator.
@@ -55,12 +55,12 @@ impl<'v, T: StarlarkTypeExpr<'v>> AllocList<iter::Empty<ValueOf<'v, T>>> {
     /// use starlark::values::Heap;
     /// use starlark::values::ValueOf;
     /// use starlark::values::list::AllocList;
-    /// use starlark::values::list::ListType;
+    /// use starlark::values::list::StarlarkList;
     /// use starlark::values::string::StarlarkStr;
     ///
     /// Heap::temp(|heap| {
-    ///     let names: ValueOf<ListType<StarlarkStr>> = heap.alloc(AllocList::empty());
-    ///     assert!(names.list().is_empty());
+    ///     let names: ValueOf<StarlarkList<StarlarkStr>> = heap.alloc(AllocList::empty());
+    ///     assert!(names.is_empty());
     /// });
     /// ```
     ///
@@ -76,7 +76,7 @@ where
     L: IntoIterator,
     L::Item: AllocValue<'v>,
 {
-    type Type = ListType<<L::Item as AllocValue<'v>>::Type>;
+    type Type = StarlarkList<'v, <L::Item as AllocValue<'v>>::Type>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         heap.alloc_list_iter(self.0.into_iter().map(|x| heap.alloc(x)))
@@ -88,7 +88,7 @@ where
     L: IntoIterator,
     L::Item: AllocFrozenValue<'fv>,
 {
-    type Type = ListType<<L::Item as AllocFrozenValue<'fv>>::Type>;
+    type Type = StarlarkList<'fv, <L::Item as AllocFrozenValue<'fv>>::Type>;
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         heap.alloc_list_iter(self.0.into_iter().map(|x| heap.alloc(x)))
@@ -102,32 +102,32 @@ mod tests {
     use crate::values::ValueOf;
     use crate::values::int::IntView;
     use crate::values::list::AllocList;
-    use crate::values::list::ListType;
+    use crate::values::list::StarlarkList;
     use crate::values::string::StarlarkStr;
 
     #[test]
     fn test_empty_takes_its_item_type_from_the_context() {
-        fn names<'v>(heap: Heap<'v>) -> ValueOf<'v, ListType<StarlarkStr>> {
+        fn names<'v>(heap: Heap<'v>) -> ValueOf<'v, StarlarkList<'v, StarlarkStr>> {
             heap.alloc(AllocList::empty())
         }
         Heap::temp(|heap| {
             let list = names(heap);
-            assert!(list.list().is_empty());
+            assert!(list.is_empty());
             // A new list each time, not the immutable constant.
             assert!(!list.to_value().is_frozen());
             assert!(!list.to_value().ptr_eq(names(heap).to_value()));
         });
         FrozenHeap::temp(|heap| {
-            let list: ValueOf<ListType<StarlarkStr>> = heap.alloc(AllocList::empty());
-            assert!(list.list().is_empty());
+            let list: ValueOf<StarlarkList<StarlarkStr>> = heap.alloc(AllocList::empty());
+            assert!(list.is_empty());
         });
     }
 
     #[test]
     fn test_alloc_by_type() {
         Heap::temp(|heap| {
-            let list = ValueOf::<ListType<IntView>>::alloc(heap, AllocList([1, 2, 3]));
-            assert_eq!(3, list.list().content().len());
+            let list = ValueOf::<StarlarkList<IntView>>::alloc(heap, AllocList([1, 2, 3]));
+            assert_eq!(3, list.len());
         });
     }
 }

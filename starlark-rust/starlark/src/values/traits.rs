@@ -477,7 +477,7 @@ pub trait StarlarkType<'v>:
     ///
     /// * The operand is any [`UnpackValue`](crate::values::UnpackValue): `&Self` for a type
     ///   with one representation; for a type with several, `Self`, the view, or a reference
-    ///   the type is read through, such as [`&ListRef`](crate::values::list::ListRef); a union
+    ///   the type is read through, such as [`&TupleRef`](crate::values::tuple::TupleRef); a union
     ///   such as `Either<&Self, &str>`.
     /// * The result is `bool`, or `starlark::Result<bool>` for a body that compares the values
     ///   it contains.

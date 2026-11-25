@@ -31,7 +31,7 @@ use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
 use crate::values::dict::DictType;
 use crate::values::list::AllocList;
-use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::none::NoneType;
 use crate::values::typing::StarlarkIter;
 
@@ -108,7 +108,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn items<'v>(
         this: DictRef<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, ListType<(Value<'v>, Value<'v>)>>> {
+    ) -> anyhow::Result<ValueOf<'v, StarlarkList<'v, (Value<'v>, Value<'v>)>>> {
         Ok(heap.alloc(AllocList(this.iter())))
     }
 
@@ -129,7 +129,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn keys<'v>(
         this: DictRef<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, ListType<Value<'v>>>> {
+    ) -> anyhow::Result<ValueOf<'v, StarlarkList<'v>>> {
         Ok(heap.alloc(AllocList(this.keys())))
     }
 
@@ -369,7 +369,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn values<'v>(
         this: DictRef<'v>,
         heap: Heap<'v>,
-    ) -> anyhow::Result<ValueOf<'v, ListType<Value<'v>>>> {
+    ) -> anyhow::Result<ValueOf<'v, StarlarkList<'v>>> {
         Ok(heap.alloc_list_iter(this.values().map(ValueOf::from)))
     }
 }

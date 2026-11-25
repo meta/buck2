@@ -136,12 +136,17 @@ enum MemberKind {
 #[repr(C, align(64))]
 pub struct Member {
     name: &'static str,
-    /// The first sixteen bytes of `name`: with the length, the whole of a name that short.
+    /// The first sixteen bytes of `name`: with `short_len`, the whole of a name that short.
     head: [u64; 2],
     kind: MemberKind,
     /// The position among the members as they were declared.
     index: u32,
+    /// The length of `name` if it is at most sixteen bytes, and otherwise, as in an empty
+    /// slot, a length that no name has.
+    short_len: u32,
 }
+
+const _: () = assert!(size_of::<Member>() == 64);
 
 impl Member {
     const EMPTY: Member = Member {
@@ -149,7 +154,16 @@ impl Member {
         head: [0; 2],
         kind: MemberKind::Empty,
         index: 0,
+        short_len: u32::MAX,
     };
+
+    const fn short_len(name: &str) -> u32 {
+        if name.len() <= 16 {
+            name.len() as u32
+        } else {
+            u32::MAX
+        }
+    }
 
     /// A method. `function` is the function `value` was declared with.
     #[doc(hidden)]
@@ -163,6 +177,7 @@ impl Member {
             head: name_head(name),
             kind: MemberKind::Method { value, function },
             index: 0,
+            short_len: Self::short_len(name),
         }
     }
 
@@ -174,6 +189,7 @@ impl Member {
             head: name_head(name),
             kind: MemberKind::Attribute { value },
             index: 0,
+            short_len: Self::short_len(name),
         }
     }
 
@@ -264,8 +280,8 @@ pub const fn concat_slots(first: usize, second: usize) -> usize {
 /// It is a perfect hash table: the multiplier is chosen, when the table is built at compile
 /// time, so that no two of its names share a slot. A lookup therefore reads one slot. A hit
 /// is confirmed by the whole name, because a name that is not in the table can have the hash
-/// of one that is; a name of up to sixteen bytes is compared as two words held in the slot
-/// and in the [`Symbol`], with no pointer followed.
+/// of one that is; a name of up to sixteen bytes is compared as its length and two words,
+/// which the slot and the [`Symbol`] both hold in place, with no pointer followed.
 #[repr(C)]
 pub struct MemberTable<S: ?Sized = [Member]> {
     multiplier: u32,
@@ -526,10 +542,10 @@ impl MemberTable {
     #[inline(always)]
     pub(crate) fn get(&'static self, name: &Symbol) -> Option<&'static Member> {
         let member = self.slot(name.small_hash());
-        if member.name.len() == name.len()
-            && member.head == name.head()
-            && (name.len() <= 16 || member.name == name.as_str())
-            && !matches!(member.kind, MemberKind::Empty)
+        // A name of up to sixteen bytes is its length and the two words. An empty slot and
+        // a longer name have a `short_len` that no symbol's length is.
+        if (member.short_len as usize == name.len() && member.head == name.in_place())
+            || (name.len() > 16 && member.name == name.as_str())
         {
             Some(member)
         } else {

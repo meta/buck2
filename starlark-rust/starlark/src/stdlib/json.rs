@@ -35,7 +35,7 @@ use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::AllocDict;
-use crate::values::dict::DictType;
+use crate::values::dict::StarlarkDict;
 use crate::values::float::StarlarkFloat;
 use crate::values::list::AllocList;
 use crate::values::string::str_type::StarlarkStr;
@@ -95,7 +95,7 @@ impl<'fv> AllocFrozenValue<'fv> for serde_json::Number {
 }
 
 impl<'a, 'v> AllocValue<'v> for &'a serde_json::Map<String, serde_json::Value> {
-    type Type = DictType<StarlarkStr, Value<'v>>;
+    type Type = StarlarkDict<'v, StarlarkStr, Value<'v>>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         // For some reason `IntoIter` is implemented only for `String, Value` parameters,
@@ -105,7 +105,7 @@ impl<'a, 'v> AllocValue<'v> for &'a serde_json::Map<String, serde_json::Value> {
 }
 
 impl<'v> AllocValue<'v> for serde_json::Map<String, serde_json::Value> {
-    type Type = DictType<StarlarkStr, Value<'v>>;
+    type Type = StarlarkDict<'v, StarlarkStr, Value<'v>>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         (&self).alloc_value(heap)
@@ -113,7 +113,7 @@ impl<'v> AllocValue<'v> for serde_json::Map<String, serde_json::Value> {
 }
 
 impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Map<String, serde_json::Value> {
-    type Type = DictType<StarlarkStr, Value<'fv>>;
+    type Type = StarlarkDict<'fv, StarlarkStr, Value<'fv>>;
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         AllocDict(self.iter().map(|(k, v)| (k.as_str(), v))).alloc_frozen_value(heap)
@@ -121,7 +121,7 @@ impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Map<String, serde_json::
 }
 
 impl<'fv> AllocFrozenValue<'fv> for serde_json::Map<String, serde_json::Value> {
-    type Type = DictType<StarlarkStr, Value<'fv>>;
+    type Type = StarlarkDict<'fv, StarlarkStr, Value<'fv>>;
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         (&self).alloc_frozen_value(heap)

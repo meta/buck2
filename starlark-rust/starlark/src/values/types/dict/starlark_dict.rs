@@ -447,17 +447,6 @@ pub struct DictEntries<'v, K, V> {
     _marker: PhantomData<fn() -> (K, V)>,
 }
 
-impl<'v, K, V> DictEntries<'v, K, V> {
-    /// The entries of a dict that was read as a `dict[K, V]`.
-    pub(crate) fn of_borrowed(dict: DictRef<'v>, frozen: bool) -> Self {
-        DictEntries {
-            frozen,
-            entries: DictValues::of_borrowed(dict),
-            _marker: PhantomData,
-        }
-    }
-}
-
 impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> Iterator for DictEntries<'v, K, V> {
     type Item = crate::Result<(ValueOf<'v, K>, ValueOf<'v, V>)>;
 
@@ -478,6 +467,11 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> Iterator for DictEntr
 /// The handle to a dict reads it as the dict does: these are [`StarlarkDict`]'s methods of
 /// the same names, so that a field is read without a step in between.
 impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>> ValueOf<'v, StarlarkDict<'v, K, V>> {
+    /// The empty dict.
+    pub fn empty_dict() -> Self {
+        Self::new_unchecked(Value::new_empty_dict())
+    }
+
     /// The dict. Its entries are not checked here: what reads them as `K`s and `V`s checks
     /// each, as [`StarlarkDict::iter`] says. ([`try_get`](ValueOf::try_get) is this with
     /// every entry checked first.)

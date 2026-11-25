@@ -18,23 +18,19 @@
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;
-use std::convert::Infallible;
 use std::ops::Deref;
 
 use dupe::Dupe;
 use either::Either;
 
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueOf;
 use crate::values::dict::Dict;
 use crate::values::dict::value::DictGen;
-use crate::values::types::dict::dict_type::DictOf;
-use crate::values::types::dict::dict_type::DictType;
 
-/// Borrowed `Dict`.
-pub struct DictRef<'v> {
+/// A dict, borrowed: it cannot be changed while this is alive. What is public borrows a dict
+/// inside [`StarlarkDict`](crate::values::dict::StarlarkDict)'s methods and iterators.
+pub(crate) struct DictRef<'v> {
     pub(crate) aref: Either<Ref<'v, Dict<'v>>, &'v Dict<'v>>,
 }
 
@@ -53,16 +49,16 @@ impl<'v> Clone for DictRef<'v> {
 
 impl<'v> Dupe for DictRef<'v> {}
 
-/// Mutably borrowed `Dict`.
-pub struct DictMut<'v> {
-    /// Mutable reference to the dict
-    pub aref: RefMut<'v, Dict<'v>>,
+/// A dict, borrowed to change it: reading the dict while this is alive panics, so the crate
+/// holds it across nothing that could.
+pub(crate) struct DictMut<'v> {
+    pub(crate) aref: RefMut<'v, Dict<'v>>,
 }
 
 impl<'v> DictRef<'v> {
     /// Downcast the value to a dict.
     #[inline]
-    pub fn from_value(x: Value<'v>) -> Option<DictRef<'v>> {
+    pub(crate) fn from_value(x: Value<'v>) -> Option<DictRef<'v>> {
         if let Some(x) = x.downcast_ref::<DictGen<Dict<'v>>>() {
             Some(DictRef {
                 aref: Either::Right(&x.0),
@@ -79,7 +75,7 @@ impl<'v> DictRef<'v> {
 impl<'v> DictMut<'v> {
     /// Downcast the value to a mutable dict reference.
     #[inline]
-    pub fn from_value(x: Value<'v>) -> anyhow::Result<DictMut<'v>> {
+    pub(crate) fn from_value(x: Value<'v>) -> anyhow::Result<DictMut<'v>> {
         #[derive(thiserror::Error, Debug)]
         #[error("Value is not dict, value type: `{0}`")]
         struct NotDictError(&'static str);
@@ -111,18 +107,5 @@ impl<'v> Deref for DictRef<'v> {
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.aref
-    }
-}
-
-impl<'v> UnpackValue<'v> for DictRef<'v> {
-    type Type = DictType<Value<'v>, Value<'v>>;
-    type Error = Infallible;
-
-    #[inline]
-    fn unpack(
-        _value: ValueOf<'v, Self::Type>,
-        get: DictOf<'v, Value<'v>, Value<'v>>,
-    ) -> Result<Self, Infallible> {
-        Ok(get.dict())
     }
 }

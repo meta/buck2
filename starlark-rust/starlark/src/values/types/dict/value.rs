@@ -69,7 +69,6 @@ use crate::values::dict::DictRef;
 use crate::values::dict::StarlarkDict;
 use crate::values::error::ValueError;
 use crate::values::string::str_type::hash_string_value;
-use crate::values::types::dict::dict_type::DictType;
 
 #[derive(
     Clone,
@@ -130,18 +129,18 @@ static_starlark_value!(
 );
 
 impl<'v> AllocValue<'v> for Dict<'v> {
-    type Type = DictType<Value<'v>, Value<'v>>;
+    type Type = StarlarkDict<'v>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc(heap, DictGen(RefCell::new(self))).into()
+        ValueOf::alloc(heap, DictGen(RefCell::new(self)))
     }
 }
 
 impl<'fv> AllocFrozenValue<'fv> for Dict<'fv> {
-    type Type = DictType<Value<'fv>, Value<'fv>>;
+    type Type = StarlarkDict<'fv>;
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
-        ValueOf::alloc_frozen(heap, DictGen(self)).into()
+        ValueOf::alloc_frozen(heap, DictGen(self))
     }
 }
 

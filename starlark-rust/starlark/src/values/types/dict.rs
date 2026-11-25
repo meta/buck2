@@ -19,7 +19,6 @@
 
 mod alloc;
 
-mod dict_type;
 pub(crate) mod globals;
 pub(crate) mod methods;
 mod refs;
@@ -27,11 +26,8 @@ mod starlark_dict;
 pub(crate) mod value;
 
 pub use crate::values::dict::alloc::AllocDict;
-pub use crate::values::dict::dict_type::DictOf;
-pub use crate::values::dict::dict_type::DictType;
-pub use crate::values::dict::dict_type::EmptyDictType;
-pub use crate::values::dict::refs::DictMut;
-pub use crate::values::dict::refs::DictRef;
+pub(crate) use crate::values::dict::refs::DictMut;
+pub(crate) use crate::values::dict::refs::DictRef;
 pub use crate::values::dict::starlark_dict::DictEntries;
 pub use crate::values::dict::starlark_dict::DictValues;
 pub use crate::values::dict::starlark_dict::StarlarkDict;

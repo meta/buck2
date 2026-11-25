@@ -191,7 +191,7 @@ pub fn recursive_ty<T: StarlarkRecursiveType>() -> Ty {
 ///
 /// # Where the expression may mention the name
 ///
-/// Only under a container: `StarlarkList`, `StarlarkTuple`, `DictType`, `SetType`. A mention
+/// Only under a container: `StarlarkList`, `StarlarkTuple`, `StarlarkDict`, `SetType`. A mention
 /// anywhere else, as in `Either<Foo, Name>` or `NoneOr<Name>`, would make the type contain
 /// itself, and it does not compile: the marker's `Get` is the expression's, which would
 /// contain itself as well.

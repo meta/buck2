@@ -26,8 +26,8 @@ use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::Dict;
+use crate::values::dict::StarlarkDict;
 use crate::values::type_expr::StarlarkTypeExpr;
-use crate::values::types::dict::dict_type::DictType;
 
 /// Utility to allocate a dict from iterator.
 ///
@@ -67,11 +67,11 @@ impl<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>>
     /// use starlark::values::Heap;
     /// use starlark::values::ValueOf;
     /// use starlark::values::dict::AllocDict;
-    /// use starlark::values::dict::DictType;
+    /// use starlark::values::dict::StarlarkDict;
     /// use starlark::values::string::StarlarkStr;
     ///
     /// Heap::temp(|heap| {
-    ///     let env: ValueOf<DictType<StarlarkStr, StarlarkStr>> = heap.alloc(AllocDict::empty());
+    ///     let env: ValueOf<StarlarkDict<StarlarkStr, StarlarkStr>> = heap.alloc(AllocDict::empty());
     ///     assert!(env.dict().is_empty());
     /// });
     /// ```
@@ -89,7 +89,7 @@ where
     K: AllocValue<'v>,
     V: AllocValue<'v>,
 {
-    type Type = DictType<K::Type, V::Type>;
+    type Type = StarlarkDict<'v, K::Type, V::Type>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         let iter = self.0.into_iter();
@@ -111,7 +111,7 @@ where
     K: AllocFrozenValue<'fv>,
     V: AllocFrozenValue<'fv>,
 {
-    type Type = DictType<K::Type, V::Type>;
+    type Type = StarlarkDict<'fv, K::Type, V::Type>;
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         let iter = self.0.into_iter();
@@ -133,12 +133,12 @@ mod tests {
     use crate::values::Heap;
     use crate::values::ValueOf;
     use crate::values::dict::AllocDict;
-    use crate::values::dict::DictType;
+    use crate::values::dict::StarlarkDict;
     use crate::values::string::StarlarkStr;
 
     #[test]
     fn test_empty_takes_its_types_from_the_context() {
-        fn env<'v>(heap: Heap<'v>) -> ValueOf<'v, DictType<StarlarkStr, StarlarkStr>> {
+        fn env<'v>(heap: Heap<'v>) -> ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>> {
             heap.alloc(AllocDict::empty())
         }
         Heap::temp(|heap| {
@@ -149,7 +149,8 @@ mod tests {
             assert!(!dict.to_value().ptr_eq(env(heap).to_value()));
         });
         FrozenHeap::temp(|heap| {
-            let dict: ValueOf<DictType<StarlarkStr, StarlarkStr>> = heap.alloc(AllocDict::empty());
+            let dict: ValueOf<StarlarkDict<StarlarkStr, StarlarkStr>> =
+                heap.alloc(AllocDict::empty());
             assert!(dict.dict().is_empty());
         });
     }

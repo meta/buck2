@@ -24,8 +24,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::AllocDict;
-use crate::values::dict::DictRef;
-use crate::values::dict::DictType;
+use crate::values::dict::StarlarkDict;
 use crate::values::int::IntView;
 use crate::values::list::AllocList;
 use crate::values::list::StarlarkList;
@@ -118,7 +117,7 @@ enum References<'v> {
     Str(&'v str),
     List(StarlarkList<'v>),
     Tuple(StarlarkTuple<'v>),
-    Dict(DictRef<'v>),
+    Dict(StarlarkDict<'v>),
     Set(SetRef<'v>),
 }
 
@@ -127,7 +126,7 @@ fn test_reference_payloads() {
     assert_eq!(
         Either::<
             Either<Either<StarlarkStr, StarlarkList>, StarlarkTuple>,
-            Either<DictType<Value, Value>, SetType<Value>>,
+            Either<StarlarkDict, SetType<Value>>,
         >::starlark_type_repr(),
         References::starlark_type_repr()
     );

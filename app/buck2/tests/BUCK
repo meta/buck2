@@ -1,14 +1,6 @@
-load("@fbcode_macros//build_defs:python_unittest.bzl", "python_unittest")
-load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
+load(":tests.bzl", "e2e_bin_smoke_test")
 
 oncall("build_infra")
 
-# Guards `buck2_e2e-bin`: the test binary must build, start, and report `--version`.
-python_unittest(
-    name = "test_e2e_bin_smoke",
-    srcs = ["test_e2e_bin_smoke.py"],
-    env = {
-        "BUCK2_E2E_BIN": "$(location fbcode//buck2/app/buck2:buck2_e2e-bin)",
-    },
-    network_access = network_access_utils.none(),
-)
+# Defined in tests.bzl so the fbcode-only binary reference stays out of open source.
+e2e_bin_smoke_test()

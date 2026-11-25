@@ -134,6 +134,19 @@ pub fn check_defaulted<'v, T: UnpackValue<'v>, D: ParamDefault + DefaultFor<'v, 
     }
 }
 
+/// The argument of a `Value` parameter that has a default: an argument that was left out is the
+/// default. Nothing is converted, and a default of any type is of the parameter's.
+#[inline(always)]
+pub fn check_defaulted_value<'v, D: ParamDefault>(
+    x: Option<Value<'v>>,
+    default: impl FnOnce() -> D,
+) -> Value<'v> {
+    match x {
+        None => param_default_at(default()),
+        Some(x) => x,
+    }
+}
+
 /// We already know the parameter is set, so we just unpack it.
 #[inline(always)]
 pub fn check_unpack<'v, T: UnpackValue<'v>>(name: &str, x: Value<'v>) -> crate::Result<T> {

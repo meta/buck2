@@ -451,11 +451,11 @@ fn render_unpack_option_value(option_value: syn::Expr, arg: &StarArg) -> syn::Ex
         syn::parse_quote! {
             starlark::__derive_refs::parse_args::check_optional(#name_str, #option_value)?
         }
-    } else if arg.is_value() {
-        // We call `check_required` even if `default` is set because for `Value`,
-        // default is pulled into `ParametersSpec`.
+    } else if let (Some(default), true) = (&arg.default, arg.is_value()) {
+        // A `Value` parameter takes every value: there is nothing to check its default against.
+        let default = render_default(default);
         syn::parse_quote! {
-            starlark::__derive_refs::parse_args::check_required(#name_str, #option_value)?
+            starlark::__derive_refs::parse_args::check_defaulted_value(#option_value, || #default)
         }
     } else if let Some(default) = &arg.default {
         // Spanned as the default, so that one that is not of the parameter's type is reported
@@ -684,30 +684,21 @@ fn render_native_callable_components(x: &StarFun) -> syn::Result<TokenStream> {
     ))
 }
 
-#[allow(clippy::large_enum_variant)]
 enum SignatureRegularArgMode {
     Required,
     Optional,
-    Defaulted(syn::Expr),
 }
 
 impl SignatureRegularArgMode {
     fn from_star_arg(arg: &StarArg) -> SignatureRegularArgMode {
         if arg.is_option() {
             SignatureRegularArgMode::Optional
-        } else if let Some(default) = &arg.default {
-            // A `Value` parameter gets its default from the signature, since it has nothing
-            // to convert. Any other is optional in the signature, and the function binds an
-            // argument that was left out from the default, where the conversion of a
-            // constant folds.
-            if arg.is_value() {
-                let default = render_default(default);
-                SignatureRegularArgMode::Defaulted(syn::parse_quote! {
-                    starlark::__derive_refs::param_spec::param_default_at(#default)
-                })
-            } else {
-                SignatureRegularArgMode::Optional
-            }
+        } else if arg.default.is_some() {
+            // A parameter with a default is optional in the signature, and the function binds
+            // an argument that was left out from the default: there the conversion of a
+            // constant folds, and a function that takes its arguments by position only does
+            // not need the signature at all.
+            SignatureRegularArgMode::Optional
         } else {
             SignatureRegularArgMode::Required
         }
@@ -736,9 +727,6 @@ impl SignatureRegularArg {
             }
             SignatureRegularArgMode::Optional => {
                 syn::parse_quote! { starlark::__derive_refs::sig::NativeSigArg::Optional(#name_str) }
-            }
-            SignatureRegularArgMode::Defaulted(value) => {
-                syn::parse_quote! { starlark::__derive_refs::sig::NativeSigArg::Defaulted(#name_str, #value) }
             }
         }
     }

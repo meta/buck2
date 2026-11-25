@@ -254,9 +254,6 @@ impl StarArg {
     pub fn requires_signature(&self) -> bool {
         // We need to use a signature if something has a name
         // There are *args
-        // There is a default that needs promoting to a Value (since the signature stores that value)
-        (self.pass_style != StarArgPassStyle::PosOnly
-            && self.pass_style != StarArgPassStyle::Kwargs)
-            || (self.is_value() && self.default.is_some())
+        self.pass_style != StarArgPassStyle::PosOnly && self.pass_style != StarArgPassStyle::Kwargs
     }
 }

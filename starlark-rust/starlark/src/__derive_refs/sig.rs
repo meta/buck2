@@ -51,28 +51,26 @@ impl NativeSignature {
     }
 }
 
-pub enum NativeSigArg<'v> {
+pub enum NativeSigArg {
     Required(&'static str),
     Optional(&'static str),
-    Defaulted(&'static str, Value<'v>),
 }
 
-impl<'v> NativeSigArg<'v> {
-    fn param(&self) -> (&str, ParametersSpecParam<Value<'v>>) {
+impl NativeSigArg {
+    fn param<'v>(&self) -> (&str, ParametersSpecParam<Value<'v>>) {
         match self {
             NativeSigArg::Required(name) => (name, ParametersSpecParam::Required),
             NativeSigArg::Optional(name) => (name, ParametersSpecParam::Optional),
-            NativeSigArg::Defaulted(name, value) => (name, ParametersSpecParam::Defaulted(*value)),
         }
     }
 }
 
 pub fn parameter_spec<'v>(
     name: &'static str,
-    pos_only: &[NativeSigArg<'v>],
-    pos_or_named: &[NativeSigArg<'v>],
+    pos_only: &[NativeSigArg],
+    pos_or_named: &[NativeSigArg],
     args: bool,
-    named_only: &[NativeSigArg<'v>],
+    named_only: &[NativeSigArg],
     kwargs: bool,
 ) -> ParametersSpec<Value<'v>> {
     ParametersSpec::new_parts(

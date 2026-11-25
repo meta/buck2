@@ -47,9 +47,9 @@ struct StarlarkValueAttrs {
     typ: Option<syn::Expr>,
     vtable: VtableMode,
     alloc: AllocMode,
-    /// `type_expr = by_hand`: the type writes its own `StarlarkTypeExpr` and `UnionPayload`
-    /// impls. A container does: its Rust type is generic over the item type and is the
-    /// `StarlarkType` at one instantiation only.
+    /// `type_expr = by_hand`: the type writes its own `StarlarkTypeExpr`,
+    /// `StarlarkTypeExprStable` and `UnionPayload` impls. A container does: its Rust type is
+    /// generic over the item type and is the `StarlarkType` at one instantiation only.
     type_expr_by_hand: bool,
 }
 
@@ -387,9 +387,9 @@ impl ImplStarlarkValue {
         }
     }
 
-    /// The type as a type expression: the `StarlarkTypeExpr` impl that `StarlarkType` has as
-    /// its supertrait. Its `Get` and `get` are `get_items`, the block's own or the default;
-    /// its `Ty` is the type's.
+    /// The type as a type expression: the `StarlarkTypeExpr` and `StarlarkTypeExprStable`
+    /// impls that `StarlarkType` has as its supertraits. `Get` and `get` are `get_items`, the
+    /// block's own or the default; the `Ty` is the type's.
     fn type_expr_impl(
         &self,
         get_items: Vec<syn::ImplItem>,
@@ -422,6 +422,11 @@ impl ImplStarlarkValue {
                 fn starlark_type_repr() -> starlark::typing::Ty {
                     <Self as starlark::values::StarlarkType<#lt>>::get_type_starlark_repr()
                 }
+            }
+
+            impl #impl_generics starlark::values::StarlarkTypeExprStable<#lt> for #self_ty
+            #where_clause
+            {
             }
         })
     }

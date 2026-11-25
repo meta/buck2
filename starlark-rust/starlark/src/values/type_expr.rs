@@ -24,16 +24,16 @@ use either::Either;
 use crate::typing::Ty;
 use crate::values::AllocValue;
 use crate::values::Heap;
-use crate::values::StarlarkType;
 use crate::values::Value;
 use crate::values::ValueOf;
 
 /// A Rust type that stands for a Starlark type expression.
 ///
 /// The implementers are the statically nameable part of Starlark's type language, realized in
-/// Rust's: a nominal type is its [`StarlarkType`] impl (a single-representation type is its
-/// own, a type with several representations is its view, `bool` is the Rust `bool`), for
-/// which [`#[starlark_value]`](crate::values::starlark_value) writes this impl,
+/// Rust's: a nominal type is its [`StarlarkType`](crate::values::StarlarkType) impl (a
+/// single-representation type is its own, a type with several representations is its view,
+/// `bool` is the Rust `bool`), for which
+/// [`#[starlark_value]`](crate::values::starlark_value) writes this impl,
 /// `list[T]` is [`StarlarkList<'v, T>`](crate::values::list::StarlarkList) and the other
 /// containers likewise, `A | B` is `Either<A, B>` or a `#[derive(UnpackValue)]` enum, `None | T` is
 /// [`NoneOr<T>`](crate::values::none::NoneOr), `typing.Any` is [`Value`], and so on. Each
@@ -62,8 +62,9 @@ pub trait StarlarkTypeExpr<'v>: Sized {
     /// [`TupleOf`](crate::values::tuple::TupleOf)), `Option<T::Get>` for `NoneOr<T>`,
     /// `Either<A::Get, B::Get>` for a union.
     ///
-    /// For a [`StarlarkType`] it is a handle: it is copied freely and converts back into the
-    /// value it was read from. It is what the type's methods take as their receiver.
+    /// For a [`StarlarkType`](crate::values::StarlarkType) it is a handle: it is copied freely
+    /// and converts back into the value it was read from. It is what the type's methods take
+    /// as their receiver.
     type Get;
 
     /// `value` as this type's [`Get`](Self::Get), if it is of this type: exactly what a Starlark
@@ -86,10 +87,14 @@ pub trait StarlarkTypeExpr<'v>: Sized {
 /// into a mutable container, whose contents Starlark may change later: `list[int]` is a finer
 /// type than the representation `list`, and a check for it is not stable, while a check for
 /// `list` is. A [`ValueOf`] of such a type is read without re-checking.
+///
+/// A nominal type's check is stable, so this is a supertrait of
+/// [`StarlarkType`](crate::values::StarlarkType), and
+/// [`#[starlark_value]`](crate::values::starlark_value) writes the impl.
 pub trait StarlarkTypeExprStable<'v>: StarlarkTypeExpr<'v> {}
 
-/// A [`StarlarkTypeExpr`] whose values all hash: [`write_hash`](StarlarkType::write_hash) of a
-/// value of the type cannot fail.
+/// A [`StarlarkTypeExpr`] whose values all hash:
+/// [`write_hash`](crate::values::StarlarkType::write_hash) of a value of the type cannot fail.
 ///
 /// A type has this by writing its `write_hash` without a result in its
 /// [`#[starlark_value]`](crate::values::starlark_value) block, which implements it; there is
@@ -99,8 +104,6 @@ pub trait StarlarkTypeExprStable<'v>: StarlarkTypeExpr<'v> {}
 /// It is what lets a handle hash its value without a `Result`:
 /// [`ValueOf::write_hash`](crate::values::ValueOf::write_hash).
 pub trait StarlarkTypeExprHashable<'v>: StarlarkTypeExpr<'v> {}
-
-impl<'v, T: StarlarkType<'v>> StarlarkTypeExprStable<'v> for T {}
 
 impl<'v> StarlarkTypeExpr<'v> for Value<'v> {
     type Get = Value<'v>;

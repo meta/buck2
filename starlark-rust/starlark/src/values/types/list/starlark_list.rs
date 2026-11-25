@@ -43,6 +43,7 @@ use crate::values::list::value::ListRepr;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
 use crate::values::tuple::TupleType;
 use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_expr::UnionPayload;
 
 /// A Starlark list. `StarlarkList<'v>` is the type `list`, and `StarlarkList<'v, T>` is
@@ -116,6 +117,9 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for StarlarkList<'v, T> {
         Self::items_are_of_the_type(repr).then_some(StarlarkList::of_repr(repr))
     }
 }
+
+/// Every value is a `typing.Any`, so no change to the list's items can invalidate the check.
+impl<'v> StarlarkTypeExprStable<'v> for StarlarkList<'v> {}
 
 impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for StarlarkList<'v, T> {
     type Type = Self;

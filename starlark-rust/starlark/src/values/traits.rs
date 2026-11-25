@@ -66,6 +66,7 @@ use crate::typing::TypingUnOp;
 use crate::values::FreezeDynamic;
 use crate::values::Heap;
 use crate::values::StarlarkTypeExpr;
+use crate::values::StarlarkTypeExprStable;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
@@ -256,6 +257,7 @@ impl<'v, V> ComplexValue<'v> for V where V: StarlarkValue<'v> + Trace<'v> + Free
 pub trait StarlarkType<'v>:
     'v
     + StarlarkTypeExpr<'v, Get: Copy + Into<Value<'v>>>
+    + StarlarkTypeExprStable<'v>
     + ProvidesStaticType<'v>
     + Debug
     + Display

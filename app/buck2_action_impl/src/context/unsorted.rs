@@ -110,92 +110,12 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         this.create_transitive_set(definition, value, Some(children.to_value()), eval)
     }
 
-    /// Create a unique artifact tag for tracking input dependencies with dependency files.
+    /// Create a unique tag for associating inputs and outputs of an action.
     ///
-    /// An `ArtifactTag` is used to associate inputs and outputs in a build action with a dependency
-    /// file (depfile), enabling more accurate incremental builds by tracking which inputs were
-    /// actually used during action execution.
-    ///
-    /// ### How Dependency Files Work
-    ///
-    /// Traditional build systems face a dilemma: if an action depends on 1000 header files but only
-    /// uses 10, should changing any of the 1000 trigger a rebuild? Being conservative (always rebuild)
-    /// is slow, while being optimistic (never rebuild) risks correctness.
-    ///
-    /// Dependency files solve this by letting the build tool (e.g., GCC, Clang, Swift compiler) report
-    /// which inputs it actually used:
-    ///
-    /// 1. **First build**: The action runs with all potential inputs available
-    /// 2. **Tool generates depfile**: The compiler writes a file listing only the inputs it actually read
-    /// 3. **Subsequent builds**: Buck2 only triggers rebuilds when files listed in the depfile change
-    ///
-    /// ### Usage Pattern
-    ///
-    /// The typical workflow involves three steps:
-    ///
-    /// 1. Create a unique tag with `ctx.actions.artifact_tag()`
-    /// 2. Use the tag's `tag_artifacts()` method to mark:
-    ///    - All potential input dependencies
-    ///    - The depfile output
-    /// 3. Associate the tag with a label in the `dep_files` parameter of `ctx.actions.run()`
-    ///
-    /// ### Example: C++ Compilation
-    ///
-    /// ```python
-    /// def _compile_impl(ctx):
-    ///     # Step 1: Create a unique tag for tracking header dependencies
-    ///     headers_tag = ctx.actions.artifact_tag()
-    ///
-    ///     # Prepare inputs and outputs
-    ///     headers_dir = ctx.actions.copied_dir("headers", {...})
-    ///     dep_file = ctx.actions.declare_output("depfile")
-    ///     output = ctx.actions.declare_output("output.o")
-    ///
-    ///     # Step 2: Tag the inputs and depfile output
-    ///     cmd = cmd_args([
-    ///         "gcc", "-c", "main.cpp",
-    ///         "-I", headers_tag.tag_artifacts(headers_dir),  # Mark potential inputs
-    ///         "-o", output.as_output(),
-    ///         "-MMD",                                        # Tell GCC to generate depfile
-    ///         "-MF", headers_tag.tag_artifacts(dep_file.as_output()),  # Mark depfile output
-    ///     ])
-    ///
-    ///     # Step 3: Associate the tag with the "headers" label
-    ///     ctx.actions.run(
-    ///         cmd,
-    ///         category = "cxx_compile",
-    ///         dep_files = {"headers": headers_tag}
-    ///     )
-    /// ```
-    ///
-    /// In this example:
-    /// - `headers_dir` contains 1000 header files
-    /// - GCC generates `depfile` listing only the 10 headers actually used
-    /// - On subsequent builds, only changes to those 10 headers trigger recompilation
-    ///
-    ///
-    /// ### Depfile Format
-    ///
-    /// Dependency files use Makefile syntax:
-    ///
-    /// ```makefile
-    /// output.o: main.cpp foo.h bar.h internal.h
-    /// ```
-    ///
-    /// This tells Buck2 that `output.o` depends on these specific files. Buck2 reads this file
-    /// after the action completes and uses it to determine which tagged inputs to track for
-    /// future incremental builds.
-    ///
-    /// ### Return Value
-    ///
-    /// Returns a new `ArtifactTag` instance. Each call creates a unique tag that can be compared
-    /// for equality, allowing Buck2 to match tagged inputs with their corresponding depfiles.
-    ///
-    /// ### See Also
-    ///
-    /// - [`ArtifactTag.tag_artifacts()`](../ArtifactTag#artifacttagtag_artifacts): Tag both inputs and outputs
-    /// - [`ArtifactTag.tag_inputs()`](../ArtifactTag#artifacttagtag_inputs): Tag only inputs
-    /// - [`ctx.actions.run()`](../AnalysisActions#analysisactionsrun): The `dep_files` parameter documentation
+    /// Tags are mostly used for dep files: wrap the dep file and the inputs it covers with
+    /// `tag.tag_artifacts()`, then pass the tag to `ctx.actions.run(dep_files = ...)`. See
+    /// [Dep Files](https://buck2.build/docs/rule_authors/dep_files/) for an example and the
+    /// format.
     fn artifact_tag<'v>(
         this: &AnalysisActions<'v>,
         heap: Heap<'v>,

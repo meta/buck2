@@ -23,6 +23,11 @@ Dep files are currently used to skip recompilation steps in C++ when an unused
 header changed. They're also used in Java to skip recompilation when an unused
 class changed.
 
+If you build C or C++ with the prelude's rules, you don't need any of the code
+on this page: the compile actions already use dep files when the toolchain turns
+them on. `system_cxx_toolchain` does, for Clang, GCC and MSVC. A `cxx_toolchain`
+does if you set `use_dep_files = True` (the default on Apple platforms).
+
 ## Using dep files
 
 To use dep files, you need to do the following:
@@ -48,7 +53,8 @@ headers_tag = ctx.actions.artifact_tag()
 # Then, tag inputs and the dep file itself in your command line.
 # You do this using the `tag_artifacts` method on your tag.
 # This method does not mutate the input, it wraps it, so you use the output.
-# Any command-line-arg-like can be tagged.
+# Any command-line-arg-like can be tagged. A plain list isn't one: wrap it in
+# `cmd_args` first.
 
 tagged_headers = headers_tag.tag_artifacts(headers)
 
@@ -58,24 +64,63 @@ tagged_dep_file = headers_tag.tag_artifacts(dep_file)
 # Finally, declare your action.
 # Use the tagged artifacts as you would regular command-line-arg-likes.
 # Pass the tag in `dep_files` and give a name (this is used for logging).
+# `mycc_wrapper` runs the compiler and writes the dep file in Buck2's format.
 
 ctx.actions.run(
-  ["mycc", "-I", tagged_headers, "-MD", "-MF", tagged_dep_file, "-o", ...],
+  ["mycc_wrapper", "--dep-file", tagged_dep_file, "--", "mycc", "-I", tagged_headers, "-o", ...],
+  category = "compile",
   dep_files = { "headers": headers_tag }
 )
 
 ```
 
+`tag_artifacts` tags both the inputs and the outputs in whatever you wrap. If
+you only want to tag the inputs, use `tag_inputs`.
+
+Buck2 checks a few things when you declare the action, and fails analysis if you
+get them wrong:
+
+- Each tag in `dep_files` must be on exactly one output: the dep file.
+- A tag can only appear once in `dep_files`.
+- An input can't carry two tags that are both in `dep_files`.
+
 ## Producing the dep file
 
 Your command must produce dep files in the format Buck2 expects, which is simply
-a list of all the inputs that were used, one per line.
+a list of the tagged inputs that were used, one per line. For example, this is
+what the prelude writes for a `main.cpp` that includes one header from another
+target:
+
+```
+hello/main.cpp
+buck-out/v2/art/root/lib/greet/__greet__/dbc26b0121261a9c/buck-headers/lib/greet/greet.h
+```
 
 The paths must be the paths Buck2 would use for your inputs, which means paths
-relative to the project root.
+relative to the project root. They must be normalized too: Buck2 rejects an
+absolute path, and a path with a `.` or `..` component, a `//` or a trailing
+`/`. Watch out for files in the root package: Buck2 passes them to your command
+as `./foo.h`, and you need to write them without the `./`. Blank lines are
+ignored, and so are paths that aren't tagged inputs, such as `hello/main.cpp`
+above.
+
+Note that this is not what compilers write. With `-MD -MF`, GCC and Clang write
+a Makefile rule, and Buck2 doesn't parse those: it reads each line as a path.
+When a line isn't a valid path, the build fails with
+`Invalid line encountered in dep file`, though only once Buck2 needs the dep
+file (see [Dep files are lazy](#dep-files-are-lazy)). That is what you get for a
+rule that spans several lines, since all but the last end in a backslash. A rule
+that fits on one line is worse, because it normally is a valid path, just not
+one that matches any of your inputs. Buck2 concludes that your command used none
+of them, and stops re-running it when a header changes. You can see this with
+`buck2 audit dep-files` ([below](#testing-dep-files)), which then lists none of
+your tagged inputs.
 
 If this is not the format your tool produces, use a wrapper to take whatever
-output your command produces and rewrite it in the format Buck2 expects.
+output your command produces and rewrite it in the format Buck2 expects. The
+prelude's C++ rules do this with
+[`dep_file_processor.py`](https://github.com/meta/buck2/blob/main/prelude/cxx/tools/dep_file_processor.py),
+which runs the compiler and then converts what it wrote.
 
 ## Testing dep files
 
@@ -104,6 +149,7 @@ need to execute anything.
 ### Dep files don't need to be covering
 
 It's OK for the dep file to only cover a subset of the inputs of your action.
+Inputs you don't tag work as usual: your command re-runs whenever they change.
 However, within that subset, the dep file must declare all the inputs that were
 used.
 
@@ -135,10 +181,13 @@ target as covered by this dep file.
 Since dep files only work if a previous invocation of the command is known to
 your Buck2 daemon, Buck2 also supports "remote dep files". For actions with
 `allow_dep_file_cache_upload = True`, Buck2 will upload dep files to the remote
-cache. The dep file is keyed on the current version control revision, in
-addition to information about the action itself.
+cache. A command that ran locally also needs `allow_cache_upload` for that. The
+dep file is keyed on the mergebase of your checkout, if the file watcher reports
+one, in addition to information about the action itself.
 
 For those same actions, Buck2 will look for a "remote dep file", and if it finds
 one it will download dep file and use it exactly as it would if it found one
 locally (i.e. it compares the inputs to see if only unused inputs have changed
-and it can therefore skip the action execution)
+and it can therefore skip the action execution). It only looks for one if the
+execution platform's `CommandExecutorConfig` sets
+`remote_dep_file_cache_enabled = True`.

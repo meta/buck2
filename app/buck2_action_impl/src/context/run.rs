@@ -159,10 +159,13 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
     ///       `ctx.actions.artifact_tag()`
     ///     * The tag should be used to mark both the potential inputs (via `tag.tag_artifacts()`)
     ///       and the depfile output that will list the actual inputs used
-    ///     * After execution, Buck2 reads the depfile and only tracks changes to inputs listed in it,
-    ///       rather than all tagged inputs
-    ///     * Depfiles must use Makefile syntax: `output: input1 input2 input3`
-    ///     * For complete documentation and examples, see [`ctx.actions.artifact_tag()`](../AnalysisActions#analysisactionsartifact_tag)
+    ///     * Buck2 then only tracks changes to the tagged inputs that the depfile lists, rather
+    ///       than to all tagged inputs
+    ///     * The depfile must list the tagged inputs that the command used, one project-relative
+    ///       path per line. This is not the Makefile syntax that compilers write with `-MD -MF`,
+    ///       which has to be converted first
+    ///     * For complete documentation and examples, see [Dep
+    ///       Files](https://buck2.build/docs/rule_authors/dep_files/)
     /// * `dep_file_fingerprints`: fingerprints returned alongside artifacts by `write` or
     ///   `write_json` with `dep_files_fingerprint_using_canonical_paths = True`. Their canonical contents contribute to
     ///   dep-file matching, and their referenced inputs are visited with their original tags.

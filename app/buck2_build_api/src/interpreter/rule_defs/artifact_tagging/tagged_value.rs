@@ -73,7 +73,7 @@ impl<'v> StarlarkValue<'v> for StarlarkTaggedValue<'v> {}
 /// Opaque type returned by [`ArtifactTag.tag_artifacts()`](../ArtifactTag#artifacttagtag_artifacts)
 /// or [`ArtifactTag.tag_inputs()`](../ArtifactTag#artifacttagtag_inputs) for non-command-line like values.
 ///
-/// For complete documentation, see [`ctx.actions.artifact_tag()`](../AnalysisActions#analysisactionsartifact_tag).
+/// For complete documentation, see [Dep Files](https://buck2.build/docs/rule_authors/dep_files/).
 #[starlark_module]
 fn tagged_value_methods(_: &mut MethodsBuilder) {}
 

@@ -119,7 +119,7 @@ impl<'v> StarlarkValue<'v> for ArtifactTag {
 /// during action execution, enabling more accurate incremental builds.
 ///
 /// For complete documentation including examples and the full workflow, see
-/// [`ctx.actions.artifact_tag()`](../AnalysisActions#analysisactionsartifact_tag).
+/// [Dep Files](https://buck2.build/docs/rule_authors/dep_files/).
 #[starlark_module]
 fn artifact_tag_methods(_: &mut MethodsBuilder) {
     /// Tag both input and output artifacts with this tag.
@@ -130,7 +130,8 @@ fn artifact_tag_methods(_: &mut MethodsBuilder) {
     ///
     /// Args:
     ///     inner: The artifact(s) or command line arguments. Can be a single artifact,
-    ///            a list of artifacts, or cmd_args containing artifacts.
+    ///            a list of artifacts, or cmd_args containing artifacts. A list is not
+    ///            command-line-like: wrap it in `cmd_args` to use the result in a command line.
     ///
     /// Returns:
     ///     The tagged value. If `inner` is command-line-like, returns a tagged command line;
@@ -160,7 +161,8 @@ fn artifact_tag_methods(_: &mut MethodsBuilder) {
     ///
     /// Args:
     ///     inner: The artifact(s) or command line arguments. Can be a single artifact,
-    ///            a list of artifacts, or cmd_args containing artifacts.
+    ///            a list of artifacts, or cmd_args containing artifacts. A list is not
+    ///            command-line-like: wrap it in `cmd_args` to use the result in a command line.
     ///
     /// Returns:
     ///     The tagged value with tags applied only to inputs. If `inner` is command-line-like,

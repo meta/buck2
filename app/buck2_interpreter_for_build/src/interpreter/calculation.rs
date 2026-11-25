@@ -55,6 +55,7 @@ use starlark::environment::Globals;
 
 use crate::interpreter::dice_calculation_delegate::BuildFileEvaluationMode;
 use crate::interpreter::dice_calculation_delegate::HasCalculationDelegate;
+use crate::interpreter::dice_calculation_delegate::PreparedBuildFile;
 use crate::interpreter::dice_calculation_delegate::testing::EvalImportKey;
 use crate::interpreter::global_interpreter_state::HasGlobalInterpreterState;
 use crate::interpreter::package_file_calculation::EvalPackageFile;
@@ -80,6 +81,42 @@ async fn eval_interpreter_results(
         Ok(mut interpreter) => {
             interpreter
                 .eval_build_file_with_mode(package.dupe(), mode, cancellation)
+                .await
+        }
+        Err(e) => (TimeSpan::empty_now(), Err(e)),
+    }
+}
+
+/// Resolves a build file's inputs without caching the result on the DICE graph: the package
+/// listing is read without a dependency edge (the imports and `PACKAGE` files are DICE keys as
+/// ever). The evaluation is `eval_prepared_build_file`; the two halves let a caller that drives
+/// many loads resolve the inputs of the next ones while the current ones evaluate.
+///
+/// Must not be called from inside a `Key::compute`. The computed value would depend on a read
+/// that DICE cannot see, so it would never be invalidated when it changes.
+pub async fn prepare_build_file_uncached(
+    ctx: &mut DiceComputations<'_>,
+    package: PackageLabel,
+) -> buck2_error::Result<PreparedBuildFile> {
+    ctx.get_interpreter_calculator_for_package(package.dupe())
+        .await?
+        .prepare_build_file(package, BuildFileEvaluationMode::Untracked)
+        .await
+}
+
+/// Evaluates a build file prepared by `prepare_build_file_uncached`.
+pub async fn eval_prepared_build_file(
+    ctx: &mut DiceComputations<'_>,
+    prepared: PreparedBuildFile,
+    cancellation: &CancellationContext,
+) -> (TimeSpan, buck2_error::Result<Arc<EvaluationResult>>) {
+    match ctx
+        .get_interpreter_calculator_for_package(prepared.package())
+        .await
+    {
+        Ok(mut interpreter) => {
+            interpreter
+                .eval_prepared_build_file(prepared, cancellation)
                 .await
         }
         Err(e) => (TimeSpan::empty_now(), Err(e)),

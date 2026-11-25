@@ -659,26 +659,66 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         mode: BuildFileEvaluationMode,
         cancellation: &CancellationContext,
     ) -> (TimeSpan, buck2_error::Result<Arc<EvaluationResult>>) {
+        match self.prepare_build_file(package, mode).await {
+            Ok(prepared) => self.eval_prepared_build_file(prepared, cancellation).await,
+            Err(e) => (TimeSpan::empty_now(), Err(e)),
+        }
+    }
+
+    /// Everything a build file's evaluation needs that is not the evaluation itself: the
+    /// package listing, the parsed build file and its imports, and the `PACKAGE` files that
+    /// apply to it. The reads, and the imports and `PACKAGE` files the first package of a
+    /// directory tree finds unevaluated, are waits; parsing the build file is CPU, as much as
+    /// the file is long.
+    pub(crate) async fn prepare_build_file(
+        &mut self,
+        package: PackageLabel,
+        mode: BuildFileEvaluationMode,
+    ) -> buck2_error::Result<PreparedBuildFile> {
+        let ((), listing) = self
+            .ctx
+            .try_compute2(
+                async |ctx| check_starlark_stack_size(ctx).await,
+                async |ctx| Self::resolve_package_listing(ctx, package.dupe(), mode).await,
+            )
+            .await?;
+
+        let build_file_path = BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
+        let (ast, deps) = self
+            .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
+            .await?;
+        let super_package = self
+            .eval_package_file_for_build_file(package.dupe(), &listing)
+            .await?;
+
+        Ok(PreparedBuildFile {
+            package,
+            listing,
+            build_file_path,
+            ast,
+            deps,
+            super_package,
+        })
+    }
+
+    /// Evaluates a prepared build file: the build file's Starlark, and nothing else that is
+    /// not cached by the time the first package of the command has been through here.
+    pub(crate) async fn eval_prepared_build_file(
+        &mut self,
+        prepared: PreparedBuildFile,
+        cancellation: &CancellationContext,
+    ) -> (TimeSpan, buck2_error::Result<Arc<EvaluationResult>>) {
+        let PreparedBuildFile {
+            package,
+            listing,
+            build_file_path,
+            ast,
+            deps,
+            super_package,
+        } = prepared;
         let mut now = None;
         let eval_kind = StarlarkEvalKind::LoadBuildFile(package.dupe());
         let eval_result: buck2_error::Result<_> = try {
-            let ((), listing) = self
-                .ctx
-                .try_compute2(
-                    async |ctx| check_starlark_stack_size(ctx).await,
-                    async |ctx| Self::resolve_package_listing(ctx, package.dupe(), mode).await,
-                )
-                .await?;
-
-            let build_file_path =
-                BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
-            let (ast, deps) = self
-                .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
-                .await?;
-            let super_package = self
-                .eval_package_file_for_build_file(package.dupe(), &listing)
-                .await?;
-
             let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
             let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
             let module_id = build_file_path.to_string();
@@ -760,6 +800,23 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             now.map_or(TimeSpan::empty_now(), |v| v.end_now()),
             eval_result.map(Arc::new),
         )
+    }
+}
+
+/// A build file with its inputs resolved, ready to evaluate; see
+/// `DiceCalculationDelegate::prepare_build_file`.
+pub struct PreparedBuildFile {
+    package: PackageLabel,
+    listing: PackageListing,
+    build_file_path: BuildFilePath,
+    ast: AstModule,
+    deps: ModuleDeps,
+    super_package: SuperPackage,
+}
+
+impl PreparedBuildFile {
+    pub fn package(&self) -> PackageLabel {
+        self.package.dupe()
     }
 }
 

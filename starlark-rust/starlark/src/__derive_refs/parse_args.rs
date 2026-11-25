@@ -15,13 +15,16 @@
  * limitations under the License.
  */
 
+use crate::__derive_refs::param_spec::param_default_at;
 use crate::eval::Arguments;
 use crate::eval::ParametersSpec;
 use crate::values::Heap;
+use crate::values::ParamDefault;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::dict::AllocDict;
+use crate::values::type_expr::Accepts;
 
 /// Collect `N` arguments.
 ///
@@ -94,14 +97,39 @@ pub fn check_optional<'v, T: UnpackValue<'v>>(
     }
 }
 
+/// A default that is of the type of a parameter of type `T`: the type the parameter converts
+/// from [takes](Accepts) the default's. `Path` is that relation's and is inferred.
+///
+/// This is what makes a default of the wrong type a compile error. It is a trait of its own,
+/// in the author's Rust types, so that the error says what the author wrote and is reported
+/// once, at the default.
+#[diagnostic::on_unimplemented(
+    message = "the default `{Self}` is not of the type of its parameter, `{T}`",
+    label = "this default is not of the parameter's type",
+    note = "a default is written as the Starlark value: `NoneType` for a `NoneOr<T>` parameter, `EmptyList` for a list, and for a union a value of one of its alternatives"
+)]
+pub trait DefaultFor<'v, T, Path> {}
+
+#[diagnostic::do_not_recommend]
+impl<'v, T: UnpackValue<'v>, D: ParamDefault, Path> DefaultFor<'v, T, Path> for D where
+    T::Type: Accepts<'v, D::Type<'v>, Path>
+{
+}
+
+/// Converts the argument of a parameter that has a default: an argument that was left out is
+/// the default.
+///
+/// The two arms convert separately, where converting `x.unwrap_or_else(default)` would be
+/// less code: a default is a constant, and its conversion folds only if it is not merged with
+/// that of an argument.
 #[inline(always)]
-pub fn check_defaulted<'v, T: UnpackValue<'v>>(
+pub fn check_defaulted<'v, T: UnpackValue<'v>, D: ParamDefault + DefaultFor<'v, T, Path>, Path>(
     name: &str,
     x: Option<Value<'v>>,
-    default: impl FnOnce() -> T,
+    default: impl FnOnce() -> D,
 ) -> crate::Result<T> {
     match x {
-        None => Ok(default()),
+        None => T::unpack_named_param(param_default_at(default()), name),
         Some(x) => T::unpack_named_param(x, name),
     }
 }

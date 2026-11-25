@@ -269,8 +269,7 @@ impl MethodsBuilder {
 
     /// Set a method. Only used by `starlark_module` macro
     ///
-    /// `sig` builds the signature on the heap of this builder, so that its default values live
-    /// there.
+    /// `sig` builds the signature at the brand of this builder's heap.
     #[doc(hidden)]
     pub fn set_method(
         &mut self,
@@ -286,7 +285,7 @@ impl MethodsBuilder {
                 function: NativeMeth(f, sig(heap)),
                 name: name.to_owned(),
                 speculative_exec_safe: components.speculative_exec_safe,
-                docs: components.into_docs(None, heap),
+                docs: components.into_docs(None),
                 ty,
             });
             let method = FrozenValueTyped::from_typed(method).expect("allocated in a frozen heap");

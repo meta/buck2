@@ -21,7 +21,10 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Expr;
 use syn::ExprLit;
+use syn::ExprUnary;
 use syn::Lit;
+use syn::UnOp;
+use syn::spanned::Spanned;
 
 use crate::module::param_spec::ParamSpec;
 use crate::module::render::render_none;
@@ -401,8 +404,16 @@ fn render_unpack_option_value(option_value: syn::Expr, arg: &StarArg) -> syn::Ex
             starlark::__derive_refs::parse_args::check_required(#name_str, #option_value)?
         }
     } else if let Some(default) = &arg.default {
-        syn::parse_quote! {
-            starlark::__derive_refs::parse_args::check_defaulted(#name_str, #option_value, || #default)?
+        // Spanned as the default, so that one that is not of the parameter's type is reported
+        // there.
+        let span = default.span();
+        let default = render_default(default);
+        syn::parse_quote_spanned! { span =>
+            starlark::__derive_refs::parse_args::check_defaulted(
+                #name_str,
+                #option_value,
+                || #default,
+            )?
         }
     } else {
         syn::parse_quote! {
@@ -438,8 +449,7 @@ fn render_binding_arg(arg: &StarArg) -> syn::Result<BindingArg> {
     })
 }
 
-// Given the arguments, create an expression building the `ParametersSpec` on the builder's
-// heap, which is in scope as `__heap`.
+// Given the arguments, create an expression building the `ParametersSpec`.
 fn render_signature(x: &StarFun) -> syn::Result<syn::Expr> {
     let name_str = ident_string(&x.name);
 
@@ -513,21 +523,11 @@ fn render_regular_native_callable_param(arg: &StarArg) -> syn::Result<syn::Expr>
         ),
         (None, false) => render_none(),
         (Some(default), _) => {
-            // For things that are type Value, we put them on the frozen heap.
-            // For things that aren't type value, use optional and then next_opt/unwrap
-            // to avoid the to/from value conversion.
-            let default = if arg.is_value() {
-                Some(syn::parse_quote! { |__heap| __heap.alloc(#default).to_value() })
-            } else {
-                render_default_as_value(default)
-            };
-            render_some(match default {
-                None => {
-                    syn::parse_quote! { starlark::__derive_refs::param_spec::NativeCallableParamDefaultValue::Optional }
-                }
-                Some(_) => {
-                    syn::parse_quote! { starlark::__derive_refs::param_spec::NativeCallableParamDefaultValue::Value(#default) }
-                }
+            let default = render_default(default);
+            render_some(syn::parse_quote! {
+                starlark::__derive_refs::param_spec::NativeCallableParamDefaultValue::Value(
+                    starlark::values::ParamDefault::param_default(#default),
+                )
             })
         }
     };
@@ -642,12 +642,14 @@ impl SignatureRegularArgMode {
         if arg.is_option() {
             SignatureRegularArgMode::Optional
         } else if let Some(default) = &arg.default {
-            // For things that are type Value, we put them on the frozen heap.
-            // For things that aren't type value, use optional and then next_opt/unwrap
-            // to avoid the to/from value conversion.
+            // A `Value` parameter gets its default from the signature, since it has nothing
+            // to convert. Any other is optional in the signature, and the function binds an
+            // argument that was left out from the default, where the conversion of a
+            // constant folds.
             if arg.is_value() {
+                let default = render_default(default);
                 SignatureRegularArgMode::Defaulted(syn::parse_quote! {
-                    __heap.alloc(#default).to_value()
+                    starlark::__derive_refs::param_spec::param_default_at(#default)
                 })
             } else {
                 SignatureRegularArgMode::Optional
@@ -733,31 +735,91 @@ fn parameter_spec_args(star_args: &[StarArg]) -> syn::Result<ParametersSpecArgs>
     })
 }
 
-/// We have an argument that the user wants to use as a default.
-/// That _might_ have a valid Starlark value representation, if so, it would be great to use for
-/// documentation. Try and synthesise it if we can, as a function of the builder's heap.
-fn render_default_as_value(default: &Expr) -> Option<syn::Expr> {
-    let x = quote!(#default).to_string();
-    if let Ok(x) = x.trim_end_matches("i32").parse::<i32>() {
-        Some(syn::parse_quote! { |__heap| __heap.alloc(#x).to_value() })
-    } else if let Ok(x) = x.parse::<bool>() {
-        Some(syn::parse_quote! { |_| starlark::values::Value::new_bool(#x) })
-    } else if x == "NoneOr :: None" {
-        Some(syn::parse_quote! { |_| starlark::values::Value::new_none() })
-    } else if matches!(
-        default,
+/// Whether `default` is an integer literal, with or without a sign.
+fn is_int_literal(default: &Expr) -> bool {
+    let unsigned = match default {
+        Expr::Unary(ExprUnary {
+            op: UnOp::Neg(_),
+            expr,
+            ..
+        }) => expr,
+        _ => default,
+    };
+    matches!(
+        unsigned,
         Expr::Lit(ExprLit {
-            lit: Lit::Str(_),
+            lit: Lit::Int(_),
             ..
         })
-    ) {
-        // Make sure we don't splice in `x` again, or we double quote the string
-        Some(syn::parse_quote! { |__heap| __heap.alloc(#default).to_value() })
-    } else if x == "ValueOf :: empty_list()" || x == "StarlarkList :: empty()" {
-        Some(syn::parse_quote! { |_| starlark::values::Value::new_empty_list() })
-    } else if x == "ValueOf :: empty_dict()" {
-        Some(syn::parse_quote! { |_| starlark::values::Value::new_empty_dict() })
-    } else {
-        None
+    )
+}
+
+/// The default a parameter was given, as an expression of a type that is a
+/// `starlark::values::ParamDefault`. That is what the author wrote, except for two literals
+/// that only a macro can do something for:
+///
+/// - A string literal: a `&str` is not a Starlark value, and the macro makes the static string.
+/// - An integer literal: not every `i32` is an `int` that exists without a heap on every
+///   target, and in a constant one that is not fails to compile.
+fn render_default(default: &Expr) -> syn::Expr {
+    let respelled = render_default_spelled_as_rust_value(default);
+    let default = respelled.as_ref().unwrap_or(default);
+    match default {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(_), ..
+        }) => syn::parse_quote! { starlark::const_frozen_string!(#default) },
+        // A `const` item and not a `const` block: an item is evaluated wherever the function
+        // is type checked, a block only where the function is compiled to code.
+        _ if is_int_literal(default) => syn::parse_quote_spanned! {default.span()=>
+            {
+                const DEFAULT: starlark::__derive_refs::param_spec::IntLiteralDefault =
+                    starlark::__derive_refs::param_spec::IntLiteralDefault::new(#default);
+                DEFAULT
+            }
+        },
+        _ => default.clone(),
+    }
+}
+
+/// TRANSITIONAL: a default used to be a Rust value of the parameter's type. Until the callers
+/// are respelled, the spellings in use are read as the Starlark value they stand for.
+fn render_default_spelled_as_rust_value(default: &Expr) -> Option<syn::Expr> {
+    let spelling: String = quote!(#default)
+        .to_string()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    match spelling.as_str() {
+        "NoneOr::None" => Some(syn::parse_quote! { starlark::values::none::NoneType }),
+        "NoneOr::Other(true)" => Some(syn::parse_quote! { true }),
+        "ValueOf::empty_list()"
+        | "Either::Left(ValueOf::empty_list())"
+        | "Either::Right(ValueOf::empty_list())"
+        | "SubtargetNameArg::List(ValueOf::empty_list())"
+        | "StarlarkCommandLineValueUnpack::List(ValueOf::empty_list())"
+        | "StarlarkList::empty()"
+        | "NoneOr::Other(StarlarkList::empty())" => {
+            Some(syn::parse_quote! { starlark::values::EmptyList })
+        }
+        "ValueOf::empty_dict()" => Some(syn::parse_quote! { starlark::values::EmptyDict }),
+        // These name something that only the default uses. They keep naming it, so that
+        // nothing is left unused before the caller is respelled.
+        "ValueOf::new_unchecked(Value::new_empty_list())" => Some(syn::parse_quote! {
+            { let _ = Value::new_empty_list; starlark::values::EmptyList }
+        }),
+        "ValueOf::new_unchecked(Value::new_empty_dict())" => Some(syn::parse_quote! {
+            { let _ = Value::new_empty_dict; starlark::values::EmptyDict }
+        }),
+        "AllocList::EMPTY" | "default_empty_value_of_list()" => Some(syn::parse_quote! {
+            { let _ = #default; starlark::values::EmptyList }
+        }),
+        "default_empty_dict()" => Some(syn::parse_quote! {
+            { let _ = #default; starlark::values::EmptyDict }
+        }),
+        "ValueAsStarlarkTargetLabel::NONE" => Some(syn::parse_quote! {
+            { let _ = #default; starlark::values::none::NoneType }
+        }),
+        "0u32" => Some(syn::parse_quote! { 0 }),
+        _ => None,
     }
 }

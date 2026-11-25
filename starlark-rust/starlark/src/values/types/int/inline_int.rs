@@ -87,6 +87,28 @@ impl InlineInt {
         Self::BITS < 32
     }
 
+    /// Whether `i` is an inline int where an inline int has `bits` bits.
+    const fn fits_in_bits(i: i32, bits: usize) -> bool {
+        let (min, max) = Self::min_max_for_bits(bits);
+        i >= min && i <= max
+    }
+
+    /// `i` if it is an inline int on this target. This is `TryFrom<i32>` for a constant.
+    pub(crate) const fn try_from_i32_const(i: i32) -> Option<InlineInt> {
+        if Self::fits_in_bits(i, Self::BITS) {
+            Some(InlineInt(i))
+        } else {
+            None
+        }
+    }
+
+    /// Every `i32` is an inline int where an inline int has 32 bits.
+    #[cfg(target_pointer_width = "64")]
+    #[inline]
+    pub(crate) const fn from_i32(i: i32) -> InlineInt {
+        InlineInt(i)
+    }
+
     #[inline]
     pub(crate) fn new_unchecked(i: i32) -> InlineInt {
         InlineInt(i)
@@ -394,5 +416,28 @@ mod tests {
         assert_eq!((-2, 1), InlineInt::min_max_for_bits(2));
         assert_eq!((-4, 3), InlineInt::min_max_for_bits(3));
         assert_eq!((i32::MIN, i32::MAX), InlineInt::min_max_for_bits(32));
+    }
+
+    /// What is an inline int where a pointer has 32 bits, which the tests are not run on.
+    #[test]
+    fn test_fits_in_bits() {
+        assert!(InlineInt::fits_in_bits(86400, 29));
+        assert!(InlineInt::fits_in_bits((1 << 28) - 1, 29));
+        assert!(!InlineInt::fits_in_bits(1 << 28, 29));
+        assert!(InlineInt::fits_in_bits(-(1 << 28), 29));
+        assert!(!InlineInt::fits_in_bits(-(1 << 28) - 1, 29));
+        assert!(!InlineInt::fits_in_bits(i32::MAX, 29));
+        assert!(InlineInt::fits_in_bits(i32::MAX, 32));
+        assert!(InlineInt::fits_in_bits(i32::MIN, 32));
+    }
+
+    #[test]
+    fn test_try_from_i32_const() {
+        const MINUS_ONE: Option<InlineInt> = InlineInt::try_from_i32_const(-1);
+        assert_eq!(Some(InlineInt::MINUS_ONE), MINUS_ONE);
+        assert_eq!(
+            InlineInt::try_from(i32::MAX).ok(),
+            InlineInt::try_from_i32_const(i32::MAX)
+        );
     }
 }

@@ -29,7 +29,6 @@ use crate::docs::DocStringKind;
 use crate::docs::DocType;
 use crate::eval::runtime::params::display::PARAM_FMT_OPTIONAL;
 use crate::typing::Ty;
-use crate::values::FrozenHeap;
 
 /// A wrapper for the parameters to `GlobalsBuilder::set_function` and `MethodBuilder::set_method`
 pub struct NativeCallableComponents {
@@ -40,8 +39,7 @@ pub struct NativeCallableComponents {
 }
 
 impl NativeCallableComponents {
-    /// `heap` is the builder's, for the default values to render.
-    fn doc_params(&self, heap: FrozenHeap<'_>) -> DocParams {
+    fn doc_params(&self) -> DocParams {
         let doc_param = |p: &NativeCallableParam| {
             let NativeCallableParam {
                 name,
@@ -59,7 +57,7 @@ impl NativeCallableComponents {
                         Some(PARAM_FMT_OPTIONAL.to_owned())
                     }
                     Some(NativeCallableParamDefaultValue::Value(default)) => {
-                        Some(default(heap).to_repr())
+                        Some(default.to_repr())
                     }
                 },
             }
@@ -99,11 +97,10 @@ impl NativeCallableComponents {
         }
     }
 
-    /// `heap` is the builder's, for the default values to render.
-    pub(crate) fn into_docs(self, as_type: Option<(Ty, DocType)>, heap: FrozenHeap<'_>) -> DocItem {
+    pub(crate) fn into_docs(self, as_type: Option<(Ty, DocType)>) -> DocItem {
         let func_docs = DocFunction::from_docstring(
             DocStringKind::Rust,
-            self.doc_params(heap),
+            self.doc_params(),
             self.return_type.clone(),
             self.rust_docstring,
         );

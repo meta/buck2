@@ -24,13 +24,45 @@ use crate::typing::callable_param::ParamIsRequired;
 use crate::typing::macro_support::unpack_args_item_ty;
 use crate::typing::macro_support::unpack_kwargs_value_ty;
 use crate::util::arc_str::ArcStr;
-use crate::values::FrozenHeap;
+use crate::values::HeapEdge;
+use crate::values::ParamDefault;
 use crate::values::Value;
+use crate::values::int::IntView;
+use crate::values::int::inline_int::InlineInt;
+
+/// The default of a parameter, at the brand of the heap in use.
+#[inline(always)]
+pub fn param_default_at<'v, D: ParamDefault>(default: D) -> Value<'v> {
+    HeapEdge::immortal().rebrand(default.param_default())
+}
+
+/// What the macro makes of a default that is written as an integer literal, as in
+/// `#[starlark(default = 3)]`. It makes it in a constant, so a literal that is not an inline
+/// int on the target does not compile there.
+#[derive(Clone, Copy, Dupe)]
+pub struct IntLiteralDefault(InlineInt);
+
+impl IntLiteralDefault {
+    pub const fn new(literal: i32) -> IntLiteralDefault {
+        match InlineInt::try_from_i32_const(literal) {
+            Some(x) => IntLiteralDefault(x),
+            None => panic!("this default is not an `int` that is stored inline on this target"),
+        }
+    }
+}
+
+impl ParamDefault for IntLiteralDefault {
+    type Type<'v> = IntView<'v>;
+
+    #[inline(always)]
+    fn param_default(self) -> Value<'static> {
+        Value::new_int(self.0)
+    }
+}
 
 pub enum NativeCallableParamDefaultValue {
-    /// Allocates the default on the builder's heap. Used for documentation only, not when the
-    /// function is called.
-    Value(for<'fh> fn(FrozenHeap<'fh>) -> Value<'fh>),
+    /// The default, for the documentation. The function binds its own copy when it is called.
+    Value(Value<'static>),
     Optional,
 }
 

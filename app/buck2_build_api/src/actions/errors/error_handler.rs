@@ -17,7 +17,6 @@ use buck2_data::CommandExecution;
 use console::strip_ansi_codes;
 use derive_more::Display;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::typing::Ty;
@@ -90,14 +89,8 @@ impl<'v> StarlarkActionErrorContext<'v> {
     }
 }
 
-starlark::methods_static!(ACTION_ERROR_CONTEXT_METHODS = action_error_context_methods);
-
-#[starlark_value(type = "ActionErrorCtx", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkActionErrorContext<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ACTION_ERROR_CONTEXT_METHODS.methods())
-    }
-}
+#[starlark_value(type = "ActionErrorCtx", no_freeze, methods = action_error_context_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkActionErrorContext<'v> {}
 
 /// Context object passed to action error handlers containing information about the failed action.
 ///
@@ -409,14 +402,8 @@ impl StarlarkActionSubError {
     }
 }
 
-starlark::methods_static!(ACTION_SUB_ERROR_METHODS = action_sub_error_methods);
-
-#[starlark_value(type = "ActionSubError", no_freeze)]
+#[starlark_value(type = "ActionSubError", no_freeze, methods = action_sub_error_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkActionSubError {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ACTION_SUB_ERROR_METHODS.methods())
-    }
-
     fn set_attr(this: &Self, attribute: &str, new_value: Value<'v>) -> starlark::Result<()> {
         match attribute {
             "category" => {

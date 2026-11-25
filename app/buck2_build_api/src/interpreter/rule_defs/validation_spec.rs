@@ -14,7 +14,6 @@ use std::fmt::Formatter;
 use allocative::Allocative;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
@@ -141,14 +140,8 @@ fn validate_validation_spec<'v>(spec: &StarlarkValidationSpec<'v>) -> buck2_erro
     Ok(())
 }
 
-starlark::methods_static!(VALIDATION_SPEC_METHODS = validation_spec_methods);
-
-#[starlark_value(type = "ValidationSpec")]
-impl<'v> StarlarkValue<'v> for StarlarkValidationSpec<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(VALIDATION_SPEC_METHODS.methods())
-    }
-}
+#[starlark_value(type = "ValidationSpec", methods = validation_spec_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkValidationSpec<'v> {}
 
 #[starlark_module]
 fn validation_spec_methods(builder: &mut MethodsBuilder) {

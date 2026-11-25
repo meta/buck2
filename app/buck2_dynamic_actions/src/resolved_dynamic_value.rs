@@ -12,7 +12,6 @@ use allocative::Allocative;
 use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_complex_value;
 use starlark::starlark_module;
@@ -42,14 +41,8 @@ pub struct StarlarkResolvedDynamicValue<'v> {
 
 starlark_complex_value!(pub StarlarkResolvedDynamicValue);
 
-starlark::methods_static!(RESOLVED_DYNAMIC_VALUE_METHODS = resolved_dynamic_value_methods);
-
-#[starlark_value(type = "ResolvedDynamicValue")]
-impl<'v> StarlarkValue<'v> for StarlarkResolvedDynamicValue<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(RESOLVED_DYNAMIC_VALUE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "ResolvedDynamicValue", methods = resolved_dynamic_value_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkResolvedDynamicValue<'v> {}
 
 /// The resolved form of a `DynamicValue` containing the actual providers produced by a dynamic action.
 ///

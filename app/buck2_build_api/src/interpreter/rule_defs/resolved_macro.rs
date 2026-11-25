@@ -24,7 +24,6 @@ use either::Either;
 use mini_vec::MiniBoxSlice;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_complex_value;
 use starlark::values::Freeze;
@@ -315,16 +314,8 @@ impl<'v> CommandLineArgLike<'v> for ResolvedStringWithMacros<'v> {
     }
 }
 
-starlark::methods_static!(
-    RESOLVED_STRING_WITH_MACROS_METHODS = resolved_string_with_macros_methods
-);
-
-#[starlark_value(type = "ResolvedStringWithMacros")]
+#[starlark_value(type = "ResolvedStringWithMacros", methods = resolved_string_with_macros_methods)]
 impl<'v> StarlarkValue<'v> for ResolvedStringWithMacros<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(RESOLVED_STRING_WITH_MACROS_METHODS.methods())
-    }
-
     fn equals(this: &Self, other: Either<&Self, &str>) -> bool {
         match other {
             Either::Left(other) => *this == *other,

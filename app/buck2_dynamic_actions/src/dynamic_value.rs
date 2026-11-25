@@ -14,7 +14,6 @@ use allocative::Allocative;
 use buck2_build_api::dynamic_value::DynamicValue;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::values::NoSerialize;
@@ -37,9 +36,7 @@ pub struct StarlarkDynamicValue {
     pub dynamic_value: DynamicValue,
 }
 
-starlark::methods_static!(DYNAMIC_VALUE_METHODS = dynamic_value_methods);
-
-#[starlark_value(type = "DynamicValue")]
+#[starlark_value(type = "DynamicValue", methods = dynamic_value_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkDynamicValue {
     fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
         this.dynamic_value.hash(hasher);
@@ -50,9 +47,6 @@ impl<'v> StarlarkValue<'v> for StarlarkDynamicValue {
     }
 
     // used for docs of `DynamicValue`
-    fn get_methods() -> Option<&'static Methods> {
-        Some(DYNAMIC_VALUE_METHODS.methods())
-    }
 }
 
 #[starlark_module]

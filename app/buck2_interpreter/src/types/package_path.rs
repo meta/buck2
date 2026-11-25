@@ -19,7 +19,6 @@ use serde::Serialize;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -59,14 +58,8 @@ impl StarlarkPackagePath {
     }
 }
 
-starlark::methods_static!(PACKAGE_PATH_METHODS = package_path_methods);
-
-#[starlark_value(type = "PackagePath")]
+#[starlark_value(type = "PackagePath", methods = package_path_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkPackagePath {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(PACKAGE_PATH_METHODS.methods())
-    }
-
     fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
         this.hash(hasher);
     }

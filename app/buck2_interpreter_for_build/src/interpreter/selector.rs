@@ -20,7 +20,6 @@ use serde::Serializer;
 use serde::ser::SerializeMap;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_complex_value;
@@ -249,7 +248,7 @@ impl<'v> StarlarkSelector<'v> {
     }
 }
 
-#[starlark_value(type = "Select")]
+#[starlark_value(type = "Select", methods = selector_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkSelector<'v> {
     fn to_bool(_this: &Self) -> bool {
         true
@@ -272,12 +271,7 @@ impl<'v> StarlarkValue<'v> for StarlarkSelector<'v> {
     }
 
     // used to provide the type documentation here
-    fn get_methods() -> Option<&'static Methods> {
-        Some(SELECTOR_METHODS.methods())
-    }
 }
-
-starlark::methods_static!(SELECTOR_METHODS = selector_methods);
 
 #[starlark_module]
 #[starlark_types(StarlarkSelector<'_> as Select)]

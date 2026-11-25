@@ -22,7 +22,6 @@ use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_complex_value;
 use starlark::typing::Ty;
@@ -109,16 +108,10 @@ impl<'v> Dependency<'v> {
     }
 }
 
-starlark::methods_static!(DEPENDENCY_METHODS = dependency_methods);
-
-#[starlark_value(type = "Dependency")]
+#[starlark_value(type = "Dependency", methods = dependency_methods)]
 impl<'v> StarlarkValue<'v> for Dependency<'v> {
     fn get_type_starlark_repr() -> Ty {
         Ty::starlark_value::<Dependency>()
-    }
-
-    fn get_methods() -> Option<&'static Methods> {
-        Some(DEPENDENCY_METHODS.methods())
     }
 
     fn at(this: &Self, index: &'v dyn ProviderCallableLike) -> starlark::Result<Value<'v>> {

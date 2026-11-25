@@ -33,7 +33,6 @@ use starlark::__derive_refs::serde::Serializer;
 use starlark::any::ProvidesStaticType;
 use starlark::const_frozen_string;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -156,14 +155,8 @@ impl StarlarkSelectDict {
 
 starlark_simple_value!(StarlarkSelectDict);
 
-starlark::methods_static!(SELECT_DICT_METHODS = select_dict_methods);
-
-#[starlark_value(type = "bxl.SelectDict")]
-impl<'v> StarlarkValue<'v> for StarlarkSelectDict {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(SELECT_DICT_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.SelectDict", methods = select_dict_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkSelectDict {}
 
 #[inline(always)]
 fn target_key<'v>(label: &ProvidersLabel, heap: Heap<'v>) -> SelectDictKey<'v> {
@@ -331,14 +324,8 @@ impl Display for StarlarkSelectConcat {
 
 starlark_simple_value!(StarlarkSelectConcat);
 
-starlark::methods_static!(SELECT_CONCAT_METHODS = select_concat_methods);
-
-#[starlark_value(type = "bxl.SelectConcat")]
+#[starlark_value(type = "bxl.SelectConcat", methods = select_concat_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkSelectConcat {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(SELECT_CONCAT_METHODS.methods())
-    }
-
     fn length(this: &Self) -> starlark::Result<i32> {
         Ok(this.items()?.len() as i32)
     }

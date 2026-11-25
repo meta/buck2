@@ -29,7 +29,6 @@ use serde::Serialize;
 use serde::Serializer;
 use serde::ser::SerializeMap;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_complex_value;
 use starlark::starlark_module;
@@ -89,14 +88,8 @@ impl StarlarkError {
 
 starlark_simple_value!(StarlarkError);
 
-starlark::methods_static!(BXL_ERROR_METHODS = error_methods);
-
-#[starlark_value(type = "bxl.Error")]
-impl<'v> StarlarkValue<'v> for StarlarkError {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(BXL_ERROR_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.Error", methods = error_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkError {}
 
 /// The error type for bxl
 #[starlark_module]
@@ -217,14 +210,8 @@ impl Serialize for StarlarkActionError {
 
 starlark_simple_value!(StarlarkActionError);
 
-starlark::methods_static!(BXL_ACTION_ERROR_METHODS = action_error_methods);
-
-#[starlark_value(type = "bxl.ActionError")]
-impl<'v> StarlarkValue<'v> for StarlarkActionError {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(BXL_ACTION_ERROR_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.ActionError", methods = action_error_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkActionError {}
 
 #[starlark_module]
 fn action_error_methods(builder: &mut MethodsBuilder) {
@@ -310,17 +297,8 @@ impl<'v> Display for StarlarkResult<'v> {
     }
 }
 
-#[starlark_value(type = "bxl.Result")]
-impl<'v> StarlarkValue<'v> for StarlarkResult<'v> {
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        Some(BXL_RESULT_METHODS.methods())
-    }
-}
-
-starlark::methods_static!(BXL_RESULT_METHODS = result_methods);
+#[starlark_value(type = "bxl.Result", methods = result_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkResult<'v> {}
 
 #[starlark_module]
 fn result_methods(builder: &mut MethodsBuilder) {

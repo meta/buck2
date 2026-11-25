@@ -10,7 +10,6 @@
 
 use allocative::Allocative;
 use buck2_node::visibility::VisibilityIntersectionLayer;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -65,13 +64,5 @@ fn visibility_intersection_layer_methods(builder: &mut MethodsBuilder) {
 
 starlark_simple_value!(StarlarkVisibilityIntersectionLayer);
 
-starlark::methods_static!(
-    VISIBILITY_INTERSECTION_LAYER_METHODS = visibility_intersection_layer_methods
-);
-
-#[starlark_value(type = "bxl.VisibilityIntersectionLayer")]
-impl<'v> StarlarkValue<'v> for StarlarkVisibilityIntersectionLayer {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(VISIBILITY_INTERSECTION_LAYER_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.VisibilityIntersectionLayer", methods = visibility_intersection_layer_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkVisibilityIntersectionLayer {}

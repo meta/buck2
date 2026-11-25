@@ -19,7 +19,6 @@ use buck2_error::BuckErrorContext;
 use buck2_hash::BuckMutInsertionMap;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Arguments;
 use starlark::eval::Evaluator;
@@ -135,8 +134,6 @@ pub struct FrozenStarlarkDynamicActionsCallable<'v> {
     signature: ParametersSpec<Value<'v>>,
 }
 
-starlark::methods_static!(DYNAMIC_ACTION_CALLABLE_METHODS = dynamic_action_callable_methods);
-
 /// A dynamic actions callable in either of its representations.
 #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
 pub enum DynamicActionsCallableView<'v> {
@@ -144,7 +141,7 @@ pub enum DynamicActionsCallableView<'v> {
     Unfrozen(ValueTyped<'v, DynamicActionsCallable<'v>>),
 }
 
-#[starlark_value(type = "DynamicActionCallable")]
+#[starlark_value(type = "DynamicActionCallable", methods = dynamic_action_callable_methods)]
 impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
     fn export_as(
         this: Self,
@@ -202,9 +199,6 @@ impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
     }
 
     // used for docs of `DynamicActionCallable`
-    fn get_methods() -> Option<&'static Methods> {
-        Some(DYNAMIC_ACTION_CALLABLE_METHODS.methods())
-    }
 }
 
 #[starlark_value]

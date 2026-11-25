@@ -12,7 +12,6 @@ use std::cell::RefCell;
 
 use allocative::Allocative;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::values::FrozenValueTyped;
@@ -43,15 +42,10 @@ pub struct StarlarkDynamicActions<'v> {
     pub data: RefCell<Option<StarlarkDynamicActionsData<'v>>>,
 }
 
-starlark::methods_static!(DYNAMIC_ACTIONS_METHODS = dynamic_actions_methods);
-
 // TODO(nero): the type name is not aligan with the registered type `DynamicActions`, fix it.
-#[starlark_value(type = "DynamicAction", no_freeze)]
+#[starlark_value(type = "DynamicAction", no_freeze, methods = dynamic_actions_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkDynamicActions<'v> {
     // Used to add type documentation to the generated documentation
-    fn get_methods() -> Option<&'static Methods> {
-        Some(DYNAMIC_ACTIONS_METHODS.methods())
-    }
 }
 
 /// A dynamic action ready to be passed to `ctx.actions.dynamic_output_new()`.

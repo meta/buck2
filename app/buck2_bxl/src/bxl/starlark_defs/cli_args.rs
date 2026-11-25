@@ -53,7 +53,6 @@ use pagable::Pagable;
 use serde::Serialize;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -107,14 +106,9 @@ starlark_simple_value!(CliArgs);
 #[starlark_module]
 fn starlark_attribute_methods(builder: &mut MethodsBuilder) {}
 
-starlark::methods_static!(BXL_CLI_ARGS_METHODS = starlark_attribute_methods);
-
-#[starlark_value(type = "bxl.CliArgs")]
+#[starlark_value(type = "bxl.CliArgs", methods = starlark_attribute_methods)]
 impl<'v> StarlarkValue<'v> for CliArgs {
     // Used to add type documentation to the generated documentation
-    fn get_methods() -> Option<&'static Methods> {
-        Some(BXL_CLI_ARGS_METHODS.methods())
-    }
 }
 
 impl CliArgs {

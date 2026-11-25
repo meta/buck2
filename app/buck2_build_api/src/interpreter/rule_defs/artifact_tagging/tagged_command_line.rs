@@ -12,7 +12,6 @@ use allocative::Allocative;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_complex_value;
 use starlark::starlark_module;
@@ -57,14 +56,8 @@ impl<'v> StarlarkTaggedCommandLine<'v> {
 
 starlark_complex_value!(pub StarlarkTaggedCommandLine);
 
-starlark::methods_static!(TAGGED_COMMAND_LINE_METHODS = tagged_command_line_methods);
-
-#[starlark_value(type = "TaggedCommandLine")]
+#[starlark_value(type = "TaggedCommandLine", methods = tagged_command_line_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkTaggedCommandLine<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(TAGGED_COMMAND_LINE_METHODS.methods())
-    }
-
     #[starlark(implements = StarlarkCmdArgsLike)]
     fn cmd_args_like(this: &Self) -> &'v dyn CommandLineArgLike<'v> {
         this

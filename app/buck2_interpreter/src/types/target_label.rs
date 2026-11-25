@@ -26,7 +26,6 @@ use serde::Serialize;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -83,14 +82,8 @@ impl StarlarkTargetLabel {
     }
 }
 
-starlark::methods_static!(TARGET_LABEL_METHODS = label_methods);
-
-#[starlark_value(type = "TargetLabel")]
+#[starlark_value(type = "TargetLabel", methods = label_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkTargetLabel {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(TARGET_LABEL_METHODS.methods())
-    }
-
     fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
         this.hash(hasher);
     }
@@ -209,14 +202,8 @@ impl StarlarkConfiguredTargetLabel {
     }
 }
 
-starlark::methods_static!(CONFIGURED_TARGET_LABEL_METHODS = configured_label_methods);
-
-#[starlark_value(type = "ConfiguredTargetLabel")]
+#[starlark_value(type = "ConfiguredTargetLabel", methods = configured_label_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkConfiguredTargetLabel {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(CONFIGURED_TARGET_LABEL_METHODS.methods())
-    }
-
     fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
         this.hash(hasher);
     }

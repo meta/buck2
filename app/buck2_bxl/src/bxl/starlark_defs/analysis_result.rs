@@ -17,7 +17,6 @@ use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -58,14 +57,8 @@ impl StarlarkAnalysisResult {
 
 starlark_simple_value!(StarlarkAnalysisResult);
 
-starlark::methods_static!(STARLARK_ANALYSIS_RESULT_METHODS = starlark_analysis_result_methods);
-
-#[starlark_value(type = "bxl.AnalysisResult")]
-impl<'v> StarlarkValue<'v> for StarlarkAnalysisResult {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(STARLARK_ANALYSIS_RESULT_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.AnalysisResult", methods = starlark_analysis_result_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkAnalysisResult {}
 
 /// The result of running an analysis in bxl.
 #[starlark_module]

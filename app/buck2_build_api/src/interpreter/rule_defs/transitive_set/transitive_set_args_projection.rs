@@ -20,7 +20,6 @@ use display_container::fmt_container;
 use display_container::iter_display_chain;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Freeze;
 use starlark::values::Heap;
@@ -195,19 +194,11 @@ impl<'v> TransitiveSetArgsProjection<'v> {
 
 starlark_complex_value!(pub TransitiveSetArgsProjection);
 
-starlark::methods_static!(
-    TRANSITIVE_SET_ARGS_PROJECTION_METHODS = transitive_set_args_projection_methods
-);
-
-#[starlark_value(type = "TransitiveSetArgsProjection")]
+#[starlark_value(type = "TransitiveSetArgsProjection", methods = transitive_set_args_projection_methods)]
 impl<'v> StarlarkValue<'v> for TransitiveSetArgsProjection<'v>
 where
     Self: ProvidesStaticType<'v>,
 {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(TRANSITIVE_SET_ARGS_PROJECTION_METHODS.methods())
-    }
-
     #[starlark(implements = StarlarkCmdArgsLike)]
     fn cmd_args_like(this: &Self) -> &'v dyn CommandLineArgLike<'v> {
         this

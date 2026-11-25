@@ -20,7 +20,6 @@ use serde::Serializer;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -52,14 +51,8 @@ impl Serialize for StarlarkCellPath {
     }
 }
 
-starlark::methods_static!(CELL_PATH_METHODS = cell_path_methods);
-
-#[starlark_value(type = "CellPath")]
+#[starlark_value(type = "CellPath", methods = cell_path_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkCellPath {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(CELL_PATH_METHODS.methods())
-    }
-
     fn equals(this: &Self, other: &Self) -> bool {
         other.0 == this.0
     }

@@ -18,7 +18,6 @@ use dupe::Dupe;
 use lazy_cquery_ctx::StarlarkLazyCqueryCtx;
 use operation::StarlarkLazy;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::values::EmptyList;
@@ -91,14 +90,8 @@ impl<'v> StarlarkLazyCtx<'v> {
     }
 }
 
-starlark::methods_static!(LAZY_CTX_METHODS = lazy_ctx_methods);
-
-#[starlark_value(type = "bxl.LazyContext", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkLazyCtx<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(LAZY_CTX_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.LazyContext", no_freeze, methods = lazy_ctx_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkLazyCtx<'v> {}
 
 /// Context for lazy/batch/error handling operations.
 ///

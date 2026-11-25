@@ -14,7 +14,6 @@ use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -61,14 +60,8 @@ impl StarlarkLazyCqueryCtx {
 
 starlark_simple_value!(StarlarkLazyCqueryCtx);
 
-starlark::methods_static!(LAZY_CQUERY_METHODS = lazy_cquery_methods);
-
-#[starlark_value(type = "bxl.LazyCqueryContext")]
-impl<'v> StarlarkValue<'v> for StarlarkLazyCqueryCtx {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(LAZY_CQUERY_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.LazyCqueryContext", methods = lazy_cquery_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkLazyCqueryCtx {}
 
 /// The context for performing lazy `cquery` operations in bxl. The functions offered on this ctx are
 /// the same behaviour as the query functions available within cquery command.

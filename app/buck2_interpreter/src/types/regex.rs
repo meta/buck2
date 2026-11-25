@@ -16,7 +16,6 @@ use std::fmt::Formatter;
 use allocative::Allocative;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -94,14 +93,8 @@ impl StarlarkBuckRegex {
     }
 }
 
-starlark::methods_static!(REGEX_METHODS = regex_methods);
-
-#[starlark_value(type = "BuckRegex")] // "regex" is used for "experimental_regex" in starlark-rust.
-impl<'v> StarlarkValue<'v> for StarlarkBuckRegex {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(REGEX_METHODS.methods())
-    }
-}
+#[starlark_value(type = "BuckRegex", methods = regex_methods)] // "regex" is used for "experimental_regex" in starlark-rust.
+impl<'v> StarlarkValue<'v> for StarlarkBuckRegex {}
 
 impl Display for StarlarkBuckRegex {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

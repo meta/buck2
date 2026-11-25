@@ -26,7 +26,6 @@ use derive_more::Display;
 use dupe::Dupe;
 use serde::Serialize;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -59,14 +58,8 @@ pub(crate) struct StarlarkAction(pub(crate) Arc<RegisteredAction>);
 
 starlark_simple_value!(StarlarkAction);
 
-starlark::methods_static!(BXL_ACTION_METHODS = action_methods);
-
-#[starlark_value(type = "bxl.Action")]
-impl<'v> StarlarkValue<'v> for StarlarkAction {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(BXL_ACTION_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.Action", methods = action_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkAction {}
 
 impl<'v> UnpackValue<'v> for StarlarkAction {
     type Type = Self;
@@ -134,14 +127,8 @@ pub(crate) struct StarlarkActionQueryNode(pub(crate) ActionQueryNode);
 
 starlark_simple_value!(StarlarkActionQueryNode);
 
-starlark::methods_static!(ACTION_QUERY_NODE_VALUE_METHODS = action_query_node_value_methods);
-
-#[starlark_value(type = "bxl.ActionQueryNode")]
-impl<'v> StarlarkValue<'v> for StarlarkActionQueryNode {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ACTION_QUERY_NODE_VALUE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.ActionQueryNode", methods = action_query_node_value_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkActionQueryNode {}
 
 impl<'v> UnpackValue<'v> for StarlarkActionQueryNode {
     type Type = Self;
@@ -218,15 +205,9 @@ pub(crate) struct StarlarkActionAttr(pub(crate) OwnedActionAttr);
 
 starlark_simple_value!(StarlarkActionAttr);
 
-starlark::methods_static!(ACTION_ATTR_METHODS = action_attr_methods);
-
 /// Action attr from an action query node.
-#[starlark_value(type = "bxl.ActionAttr")]
-impl<'v> StarlarkValue<'v> for StarlarkActionAttr {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ACTION_ATTR_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.ActionAttr", methods = action_attr_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkActionAttr {}
 
 /// Methods on action query node's attributes.
 #[starlark_module]

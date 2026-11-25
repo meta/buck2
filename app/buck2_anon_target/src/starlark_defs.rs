@@ -29,7 +29,6 @@ use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -109,14 +108,8 @@ impl Display for StarlarkAnonTarget<'_> {
     }
 }
 
-starlark::methods_static!(ANON_TARGET_METHODS = anon_target_methods);
-
-#[starlark_value(type = "AnonTarget", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkAnonTarget<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ANON_TARGET_METHODS.methods())
-    }
-}
+#[starlark_value(type = "AnonTarget", no_freeze, methods = anon_target_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkAnonTarget<'v> {}
 
 /// Accessors to the promise of the anon rule and the promised artifacts associated with the rule.
 #[starlark_module]
@@ -207,14 +200,8 @@ impl Display for StarlarkAnonTargets<'_> {
     }
 }
 
-starlark::methods_static!(ANON_TARGETS_METHODS = anon_targets_methods);
-
-#[starlark_value(type = "AnonTargets", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkAnonTargets<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ANON_TARGETS_METHODS.methods())
-    }
-}
+#[starlark_value(type = "AnonTargets", no_freeze, methods = anon_targets_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkAnonTargets<'v> {}
 
 /// Accessors to the all the anon targets created, as well as the joined promise of these targets.
 #[starlark_module]

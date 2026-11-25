@@ -11,7 +11,6 @@
 use std::time::Instant;
 
 use allocative::Allocative;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -77,11 +76,5 @@ fn starlark_instant_methods(builder: &mut MethodsBuilder) {
 
 starlark_simple_value!(StarlarkInstant);
 
-starlark::methods_static!(STARLARK_INSTANT_METHODS = starlark_instant_methods);
-
-#[starlark_value(type = "bxl.Instant")]
-impl<'v> StarlarkValue<'v> for StarlarkInstant {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(STARLARK_INSTANT_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.Instant", methods = starlark_instant_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkInstant {}

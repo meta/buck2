@@ -38,7 +38,6 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::values::Heap;
@@ -267,14 +266,8 @@ async fn alloc_deps<'v>(
     Ok(heap.alloc(AllocDict(deps)))
 }
 
-starlark::methods_static!(BXL_ACTIONS_METHODS = bxl_actions_methods);
-
-#[starlark_value(type = "bxl.Actions", no_freeze)]
-impl<'v> StarlarkValue<'v> for BxlActions<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(BXL_ACTIONS_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.Actions", no_freeze, methods = bxl_actions_methods)]
+impl<'v> StarlarkValue<'v> for BxlActions<'v> {}
 
 /// The bxl action context is the context for creating actions. This context is obtained after
 /// performing execution platform resolution based on a set of given dependencies and toolchains.

@@ -23,7 +23,6 @@ use buck2_fs::fs_util;
 use buck2_hash::BuckMutInsertionMap;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
@@ -60,14 +59,8 @@ impl StarlarkArtifactValue {
     }
 }
 
-starlark::methods_static!(ARTIFACT_VALUE_METHODS = artifact_value_methods);
-
-#[starlark_value(type = "ArtifactValue")]
-impl<'v> StarlarkValue<'v> for StarlarkArtifactValue {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ARTIFACT_VALUE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "ArtifactValue", methods = artifact_value_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkArtifactValue {}
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]

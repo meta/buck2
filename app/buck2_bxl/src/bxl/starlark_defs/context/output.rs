@@ -46,7 +46,6 @@ use serde::Serialize;
 use serde::Serializer;
 use serde::ser::SerializeSeq;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -573,14 +572,8 @@ impl StarlarkOutputStream {
     }
 }
 
-starlark::methods_static!(OUTPUT_STREAM_METHODS = output_stream_methods);
-
-#[starlark_value(type = "bxl.OutputStream", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkOutputStream {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(OUTPUT_STREAM_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.OutputStream", no_freeze, methods = output_stream_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkOutputStream {}
 
 #[derive(UnpackValue)]
 enum EnsureMultipleArtifactsArg<'v> {

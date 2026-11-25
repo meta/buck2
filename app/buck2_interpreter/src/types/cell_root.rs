@@ -14,7 +14,6 @@ use buck2_core::cells::name::CellName;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -46,14 +45,8 @@ impl CellRoot {
 
 starlark_simple_value!(CellRoot);
 
-starlark::methods_static!(CELL_ROOT_METHODS = cell_root_methods);
-
-#[starlark_value(type = "CellRoot")]
-impl<'v> StarlarkValue<'v> for CellRoot {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(CELL_ROOT_METHODS.methods())
-    }
-}
+#[starlark_value(type = "CellRoot", methods = cell_root_methods)]
+impl<'v> StarlarkValue<'v> for CellRoot {}
 
 /// A `CellRoot` represents the root directory of a cell in Buck2.
 ///

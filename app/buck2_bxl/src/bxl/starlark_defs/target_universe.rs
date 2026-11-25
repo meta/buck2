@@ -18,7 +18,6 @@ use derive_more::Display;
 use dupe::Dupe;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -57,14 +56,8 @@ pub(crate) struct StarlarkTargetUniverse<'v> {
     ctx: ValueTyped<'v, BxlContext<'v>>,
 }
 
-starlark::methods_static!(TARGET_UNIVERSE_METHODS = target_universe_methods);
-
-#[starlark_value(type = "bxl.TargetUniverse", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkTargetUniverse<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(TARGET_UNIVERSE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.TargetUniverse", no_freeze, methods = target_universe_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkTargetUniverse<'v> {}
 
 impl<'v> StarlarkTargetUniverse<'v> {
     pub(crate) async fn new(

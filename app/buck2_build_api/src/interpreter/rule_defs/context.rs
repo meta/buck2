@@ -276,14 +276,8 @@ impl<'v> AnalysisContext<'v> {
     }
 }
 
-starlark::methods_static!(ANALYSIS_CONTEXT_METHODS = analysis_context_methods);
-
-#[starlark_value(type = "AnalysisContext", no_freeze)]
-impl<'v> StarlarkValue<'v> for AnalysisContext<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ANALYSIS_CONTEXT_METHODS.methods())
-    }
-}
+#[starlark_value(type = "AnalysisContext", no_freeze, methods = analysis_context_methods)]
+impl<'v> StarlarkValue<'v> for AnalysisContext<'v> {}
 
 /// The type used for defining rules, usually bound as `ctx`.
 /// Usually the sole argument to the `impl` argument of the `rule` function.

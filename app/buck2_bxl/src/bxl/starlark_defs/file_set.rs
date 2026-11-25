@@ -23,7 +23,6 @@ use buck2_util::arc_str::PackedStringSlice;
 use derive_more::Display;
 use display_container::fmt_container;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -122,7 +121,7 @@ pub(crate) struct StarlarkFileSet(
 
 starlark_simple_value!(StarlarkFileSet);
 
-#[starlark_value(type = "bxl.FileSet")]
+#[starlark_value(type = "bxl.FileSet", methods = register_file_set)]
 impl<'v> StarlarkValue<'v> for StarlarkFileSet {
     fn iterate_collect(this: &Self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
         Ok(this
@@ -155,13 +154,7 @@ impl<'v> StarlarkValue<'v> for StarlarkFileSet {
         let intersect = this.0.intersect(&other.0)?;
         Ok(Self(intersect))
     }
-
-    fn get_methods() -> Option<&'static Methods> {
-        Some(FILE_SET_METHODS.methods())
-    }
 }
-
-starlark::methods_static!(FILE_SET_METHODS = register_file_set);
 
 /// A set of `file_node`s. Supports union (`|`), intersection (`&`), difference (`-`), length,
 /// iteration and equality.
@@ -188,14 +181,8 @@ pub(crate) struct StarlarkFileNode(#[starlark_pagable(pagable)] pub(crate) CellP
 
 starlark_simple_value!(StarlarkFileNode);
 
-starlark::methods_static!(FILE_NODE_METHODS = file_node_methods);
-
-#[starlark_value(type = "bxl.FileNode")]
-impl<'v> StarlarkValue<'v> for StarlarkFileNode {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(FILE_NODE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.FileNode", methods = file_node_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkFileNode {}
 
 /// Wrapper around the cell relative path to the file or directory.
 #[starlark_module]

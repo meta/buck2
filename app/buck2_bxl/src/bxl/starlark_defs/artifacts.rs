@@ -32,7 +32,6 @@ use serde::Serialize;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::StarlarkHasher;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::values::Heap;
@@ -146,17 +145,11 @@ impl<'v> EnsuredArtifactGroup<'v> {
     }
 }
 
-starlark::methods_static!(ARTIFACT_GROUP_METHODS = artifact_group_methods);
-
-#[starlark_value(type = "bxl.EnsuredArtifactGroup", no_freeze)]
+#[starlark_value(type = "bxl.EnsuredArtifactGroup", no_freeze, methods = artifact_group_methods)]
 impl<'v> StarlarkValue<'v> for EnsuredArtifactGroup<'v>
 where
     Self: ProvidesStaticType<'v>,
 {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ARTIFACT_GROUP_METHODS.methods())
-    }
-
     fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
         let _hash = this.inner.write_hash(hasher);
         this.abs.hash(hasher);
@@ -270,17 +263,11 @@ impl Serialize for EnsuredArtifactGroupInner {
     }
 }
 
-starlark::methods_static!(ENSURED_ARTIFACT_METHODS = ensured_artifact_methods);
-
-#[starlark_value(type = "bxl.EnsuredArtifact", no_freeze)]
+#[starlark_value(type = "bxl.EnsuredArtifact", no_freeze, methods = ensured_artifact_methods)]
 impl<'v> StarlarkValue<'v> for EnsuredArtifact
 where
     Self: ProvidesStaticType<'v>,
 {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ENSURED_ARTIFACT_METHODS.methods())
-    }
-
     fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
         this.as_artifact().write_hash(hasher);
         this.abs().hash(hasher);

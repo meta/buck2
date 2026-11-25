@@ -42,7 +42,6 @@ use dupe::Dupe;
 use either::Either;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -390,14 +389,8 @@ impl StarlarkLazy {
     }
 }
 
-starlark::methods_static!(LAZY_OPERATION_METHODS = lazy_operation_methods);
-
-#[starlark_value(type = "bxl.Lazy")]
-impl<'v> StarlarkValue<'v> for StarlarkLazy {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(LAZY_OPERATION_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.Lazy", methods = lazy_operation_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkLazy {}
 
 async fn analysis(
     dice: &mut DiceComputations<'_>,

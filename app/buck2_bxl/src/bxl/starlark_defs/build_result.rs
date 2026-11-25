@@ -10,7 +10,6 @@
 
 use allocative::Allocative;
 use buck2_build_api::bxl::build_result::BxlBuildResult;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -88,11 +87,5 @@ fn starlark_build_result_methods(builder: &mut MethodsBuilder) {
 
 starlark_simple_value!(StarlarkBxlBuildResult);
 
-starlark::methods_static!(STARLARK_BUILD_RESULT_METHODS = starlark_build_result_methods);
-
-#[starlark_value(type = "bxl.BuildResult")]
-impl<'v> StarlarkValue<'v> for StarlarkBxlBuildResult {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(STARLARK_BUILD_RESULT_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.BuildResult", methods = starlark_build_result_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkBxlBuildResult {}

@@ -22,7 +22,6 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -67,14 +66,8 @@ pub(crate) struct StarlarkCQueryCtx<'v> {
     global_cfg_options_override: GlobalCfgOptions,
 }
 
-starlark::methods_static!(CQUERY_METHODS = cquery_methods);
-
-#[starlark_value(type = "bxl.CqueryContext", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkCQueryCtx<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(CQUERY_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.CqueryContext", no_freeze, methods = cquery_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkCQueryCtx<'v> {}
 
 pub(crate) async fn get_cquery_env(
     ctx: &BxlContext<'_>,

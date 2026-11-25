@@ -14,7 +14,6 @@ use derive_more::Display;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Freeze;
 use starlark::values::NoSerialize;
@@ -45,14 +44,8 @@ pub struct StarlarkDigestConfig {
     pub digest_config: DigestConfig,
 }
 
-starlark::methods_static!(DIGEST_CONFIG_METHODS = digest_config_methods);
-
-#[starlark_value(type = "DigestConfig")]
-impl<'v> StarlarkValue<'v> for StarlarkDigestConfig {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(DIGEST_CONFIG_METHODS.methods())
-    }
-}
+#[starlark_value(type = "DigestConfig", methods = digest_config_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkDigestConfig {}
 
 #[starlark_module]
 fn digest_config_methods(builder: &mut MethodsBuilder) {

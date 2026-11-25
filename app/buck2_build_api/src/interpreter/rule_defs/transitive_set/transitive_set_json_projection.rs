@@ -18,7 +18,6 @@ use display_container::fmt_container;
 use display_container::iter_display_chain;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Freeze;
 use starlark::values::Heap;
@@ -114,16 +113,8 @@ impl<'v> TransitiveSetJsonProjection<'v> {
 
 starlark_complex_value!(pub TransitiveSetJsonProjection);
 
-starlark::methods_static!(
-    TRANSITIVE_SET_JSON_PROJECTION_METHODS = transitive_set_json_projection_methods
-);
-
-#[starlark_value(type = "TransitiveSetJsonProjection")]
-impl<'v> StarlarkValue<'v> for TransitiveSetJsonProjection<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(TRANSITIVE_SET_JSON_PROJECTION_METHODS.methods())
-    }
-}
+#[starlark_value(type = "TransitiveSetJsonProjection", methods = transitive_set_json_projection_methods)]
+impl<'v> StarlarkValue<'v> for TransitiveSetJsonProjection<'v> {}
 
 #[starlark_module]
 fn transitive_set_json_projection_methods(builder: &mut MethodsBuilder) {

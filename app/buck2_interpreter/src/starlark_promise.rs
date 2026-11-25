@@ -18,7 +18,6 @@ use derivative::Derivative;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -277,14 +276,8 @@ impl<'v> StarlarkPromise<'v> {
     }
 }
 
-starlark::methods_static!(PROMISE_METHODS = promise_methods);
-
-#[starlark_value(type = "Promise", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkPromise<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(PROMISE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "Promise", no_freeze, methods = promise_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkPromise<'v> {}
 
 #[starlark_module]
 fn promise_methods(builder: &mut MethodsBuilder) {

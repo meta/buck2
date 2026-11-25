@@ -23,7 +23,6 @@ use pagable::Pagable;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Freeze;
 use starlark::values::Heap;
@@ -104,14 +103,8 @@ impl fmt::Display for ArtifactTag {
 
 starlark_simple_value!(ArtifactTag);
 
-starlark::methods_static!(ARTIFACT_TAG_METHODS = artifact_tag_methods);
-
-#[starlark_value(type = "ArtifactTag")]
+#[starlark_value(type = "ArtifactTag", methods = artifact_tag_methods)]
 impl<'v> StarlarkValue<'v> for ArtifactTag {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ARTIFACT_TAG_METHODS.methods())
-    }
-
     fn equals(this: &Self, other: &Self) -> bool {
         this == other
     }

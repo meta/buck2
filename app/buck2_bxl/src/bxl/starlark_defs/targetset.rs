@@ -26,7 +26,6 @@ use pagable::PagableSerialize;
 use starlark::any::IsStaticType;
 use starlark::any::ProvidesStaticType;
 use starlark::docs::DocItem;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::pagable::StarlarkDeserialize;
 use starlark::pagable::StarlarkDeserializeContext;
@@ -191,17 +190,13 @@ where
 
 starlark::methods_static!(STARLARK_TARGET_SET_METHODS = starlark_target_set_methods);
 
-#[starlark_value(type = "target_set")]
+#[starlark_value(type = "target_set", methods = starlark_target_set_methods)]
 impl<'v, Node: NodeLike> StarlarkValue<'v> for StarlarkTargetSet<Node>
 where
     Self: HasTyVTable,
 {
     fn get_type_starlark_repr() -> Ty {
         Node::target_set_ty()
-    }
-
-    fn get_methods() -> Option<&'static Methods> {
-        Some(STARLARK_TARGET_SET_METHODS.methods())
     }
 
     fn iterate_collect(this: &Self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {

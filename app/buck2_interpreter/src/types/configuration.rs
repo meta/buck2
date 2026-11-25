@@ -12,7 +12,6 @@ use allocative::Allocative;
 use buck2_core::configuration::data::ConfigurationData;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -34,14 +33,8 @@ pub struct StarlarkConfiguration(#[starlark_pagable(pagable)] pub ConfigurationD
 
 starlark_simple_value!(StarlarkConfiguration);
 
-starlark::methods_static!(CONFIGURATION_METHODS = configuration_methods);
-
-#[starlark_value(type = "Configuration")]
-impl<'v> StarlarkValue<'v> for StarlarkConfiguration {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(CONFIGURATION_METHODS.methods())
-    }
-}
+#[starlark_value(type = "Configuration", methods = configuration_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkConfiguration {}
 
 #[starlark_module]
 fn configuration_methods(builder: &mut MethodsBuilder) {

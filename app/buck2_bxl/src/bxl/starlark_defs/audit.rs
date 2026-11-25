@@ -20,7 +20,6 @@ use derive_more::Display;
 use dupe::Dupe;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -61,14 +60,8 @@ pub(crate) struct StarlarkAuditCtx<'v> {
     working_dir: ProjectRelativePathBuf,
 }
 
-starlark::methods_static!(AUDIT_METHODS = audit_methods);
-
-#[starlark_value(type = "bxl.AuditContext", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkAuditCtx<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(AUDIT_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.AuditContext", no_freeze, methods = audit_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkAuditCtx<'v> {}
 
 impl<'v> StarlarkAuditCtx<'v> {
     pub(crate) fn new(

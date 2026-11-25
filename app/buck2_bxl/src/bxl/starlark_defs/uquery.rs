@@ -23,7 +23,6 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -66,14 +65,8 @@ pub(crate) struct StarlarkUQueryCtx<'v> {
     allow_partial_graph: bool,
 }
 
-starlark::methods_static!(UQUERY_METHODS = uquery_methods);
-
-#[starlark_value(type = "bxl.UqueryContext", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkUQueryCtx<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(UQUERY_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.UqueryContext", no_freeze, methods = uquery_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkUQueryCtx<'v> {}
 
 pub(crate) async fn get_uquery_env(
     ctx: &BxlContextCoreData,

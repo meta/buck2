@@ -12,7 +12,6 @@ use allocative::Allocative;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_complex_value;
 use starlark::starlark_module;
@@ -68,14 +67,8 @@ impl<'v> StarlarkTaggedValue<'v> {
 
 starlark_complex_value!(pub StarlarkTaggedValue);
 
-starlark::methods_static!(TAGGED_VALUE_METHODS = tagged_value_methods);
-
-#[starlark_value(type = "TaggedValue")]
-impl<'v> StarlarkValue<'v> for StarlarkTaggedValue<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(TAGGED_VALUE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "TaggedValue", methods = tagged_value_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkTaggedValue<'v> {}
 
 /// Opaque type returned by [`ArtifactTag.tag_artifacts()`](../ArtifactTag#artifacttagtag_artifacts)
 /// or [`ArtifactTag.tag_inputs()`](../ArtifactTag#artifacttagtag_inputs) for non-command-line like values.

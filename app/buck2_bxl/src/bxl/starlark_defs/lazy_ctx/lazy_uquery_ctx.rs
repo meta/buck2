@@ -12,7 +12,6 @@ use allocative::Allocative;
 use derivative::Derivative;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -58,14 +57,8 @@ impl StarlarkLazyUqueryCtx {
 
 starlark_simple_value!(StarlarkLazyUqueryCtx);
 
-starlark::methods_static!(LAZY_UQUERY_METHODS = lazy_uquery_methods);
-
-#[starlark_value(type = "bxl.LazyUqueryContext")]
-impl<'v> StarlarkValue<'v> for StarlarkLazyUqueryCtx {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(LAZY_UQUERY_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.LazyUqueryContext", methods = lazy_uquery_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkLazyUqueryCtx {}
 
 /// The context for performing lazy `uquery` operations in bxl. The functions offered on this ctx are
 /// the same behaviour as the query functions available within uquery command.

@@ -32,7 +32,6 @@ use derive_more::Display;
 use dice::DiceComputations;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -86,14 +85,8 @@ impl<'v> BxlFilesystem<'v> {
     }
 }
 
-starlark::methods_static!(BXL_FILESYSTEM_METHODS = fs_operations);
-
-#[starlark_value(type = "bxl.Filesystem", no_freeze)]
-impl<'v> StarlarkValue<'v> for BxlFilesystem<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(BXL_FILESYSTEM_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.Filesystem", no_freeze, methods = fs_operations)]
+impl<'v> StarlarkValue<'v> for BxlFilesystem<'v> {}
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]

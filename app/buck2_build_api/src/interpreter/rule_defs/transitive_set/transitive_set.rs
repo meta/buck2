@@ -37,7 +37,6 @@ use serde::Serialize;
 use serde::Serializer;
 use serde::ser::SerializeMap;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::type_matcher;
@@ -506,14 +505,8 @@ fn hash_projections<'fv>(
 
 starlark_complex_value!(pub TransitiveSet);
 
-starlark::methods_static!(TRANSITIVE_SET_METHODS = transitive_set_methods);
-
-#[starlark_value(type = "TransitiveSet")]
-impl<'v> StarlarkValue<'v> for TransitiveSet<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(TRANSITIVE_SET_METHODS.methods())
-    }
-}
+#[starlark_value(type = "TransitiveSet", methods = transitive_set_methods)]
+impl<'v> StarlarkValue<'v> for TransitiveSet<'v> {}
 
 impl<'v> TransitiveSet<'v> {
     pub fn new(

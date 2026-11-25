@@ -34,7 +34,6 @@ use serde::Serialize;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Arguments;
 use starlark::static_starlark_value;
@@ -704,14 +703,8 @@ impl<'v> StarlarkCmdArgsView<'v> {
     }
 }
 
-starlark::methods_static!(CMD_ARGS_METHODS = cmd_args_methods);
-
-#[starlark_value(type = "cmd_args")]
+#[starlark_value(type = "cmd_args", methods = cmd_args_methods)]
 impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(CMD_ARGS_METHODS.methods())
-    }
-
     #[starlark(implements = StarlarkCmdArgsLike)]
     fn cmd_args_like(this: Self) -> &'v dyn CommandLineArgLike<'v> {
         this.as_command_line_arg_like()
@@ -1411,14 +1404,8 @@ impl Display for StarlarkCommandLineInputs {
     }
 }
 
-starlark::methods_static!(COMMAND_LINE_INPUTS_METHODS = command_line_inputs_methods);
-
-#[starlark_value(type = "CommandLineInputs")]
+#[starlark_value(type = "CommandLineInputs", methods = command_line_inputs_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkCommandLineInputs {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(COMMAND_LINE_INPUTS_METHODS.methods())
-    }
-
     fn length(this: &Self) -> starlark::Result<i32> {
         this.inputs
             .len()

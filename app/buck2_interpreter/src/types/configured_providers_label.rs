@@ -23,7 +23,6 @@ use serde::Serializer;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -92,17 +91,11 @@ impl StarlarkConfiguredProvidersLabel {
     }
 }
 
-starlark::methods_static!(CONFIGURED_PROVIDERS_LABEL_METHODS = configured_label_methods);
-
-#[starlark_value(type = "Label")]
+#[starlark_value(type = "Label", methods = configured_label_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkConfiguredProvidersLabel
 where
     Self: ProvidesStaticType<'v>,
 {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(CONFIGURED_PROVIDERS_LABEL_METHODS.methods())
-    }
-
     fn equals(this: &Self, other: &Self) -> bool {
         this.label == other.label
     }
@@ -258,17 +251,11 @@ impl StarlarkProvidersLabel {
     }
 }
 
-starlark::methods_static!(PROVIDERS_LABEL_METHODS = label_methods);
-
-#[starlark_value(type = "ProvidersLabel")]
+#[starlark_value(type = "ProvidersLabel", methods = label_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkProvidersLabel
 where
     Self: ProvidesStaticType<'v>,
 {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(PROVIDERS_LABEL_METHODS.methods())
-    }
-
     fn equals(this: &Self, other: &Self) -> bool {
         this.label == other.label
     }

@@ -15,7 +15,6 @@ use buck2_node::attrs::attr_type::AttrType;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -96,14 +95,9 @@ starlark_simple_value!(StarlarkAttribute);
 #[starlark_module]
 fn starlark_attribute_methods(builder: &mut MethodsBuilder) {}
 
-starlark::methods_static!(STARLARK_ATTRIBUTE_METHODS = starlark_attribute_methods);
-
-#[starlark_value(type = "Attr")]
+#[starlark_value(type = "Attr", methods = starlark_attribute_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkAttribute {
     // Used to add type documentation to the generated documentation
-    fn get_methods() -> Option<&'static Methods> {
-        Some(STARLARK_ATTRIBUTE_METHODS.methods())
-    }
 }
 
 impl StarlarkAttribute {

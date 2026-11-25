@@ -26,7 +26,6 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -74,14 +73,8 @@ pub(crate) struct StarlarkAQueryCtx<'v> {
     global_cfg_options_override: GlobalCfgOptions,
 }
 
-starlark::methods_static!(AQUERY_METHODS = aquery_methods);
-
-#[starlark_value(type = "bxl.AqueryContext", no_freeze)]
-impl<'v> StarlarkValue<'v> for StarlarkAQueryCtx<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(AQUERY_METHODS.methods())
-    }
-}
+#[starlark_value(type = "bxl.AqueryContext", no_freeze, methods = aquery_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkAQueryCtx<'v> {}
 
 impl<'v> StarlarkAQueryCtx<'v> {
     pub(crate) fn new(

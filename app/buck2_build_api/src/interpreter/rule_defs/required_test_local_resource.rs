@@ -12,7 +12,6 @@ use allocative::Allocative;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
@@ -47,16 +46,8 @@ pub struct StarlarkRequiredTestLocalResource {
 
 starlark_simple_value!(StarlarkRequiredTestLocalResource);
 
-starlark::methods_static!(
-    REQUIRED_TEST_LOCAL_RESOURCE_METHODS = required_test_local_resource_methods
-);
-
-#[starlark_value(type = "RequiredTestLocalResource")]
-impl<'v> StarlarkValue<'v> for StarlarkRequiredTestLocalResource {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(REQUIRED_TEST_LOCAL_RESOURCE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "RequiredTestLocalResource", methods = required_test_local_resource_methods)]
+impl<'v> StarlarkValue<'v> for StarlarkRequiredTestLocalResource {}
 
 #[starlark_module]
 pub fn register_required_test_local_resource(builder: &mut GlobalsBuilder) {

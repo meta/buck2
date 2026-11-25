@@ -29,7 +29,6 @@ use serde::Serialize;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::pagable::SmallMapKeyDeserialize;
 use starlark::pagable::StarlarkDeserialize;
@@ -407,7 +406,7 @@ fn provider_collection_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_value(type = "ProviderCollection", frozen_vtable, alloc = by_hand)]
+#[starlark_value(type = "ProviderCollection", frozen_vtable, alloc = by_hand, methods = provider_collection_methods)]
 impl<'v> StarlarkValue<'v> for ProviderCollection<'v> {
     fn at(this: &Self, index: &'v dyn ProviderCallableLike) -> starlark::Result<Value<'v>> {
         Ok(this.require(index)?)
@@ -416,16 +415,7 @@ impl<'v> StarlarkValue<'v> for ProviderCollection<'v> {
     fn is_in(this: &Self, other: &'v dyn ProviderCallableLike) -> starlark::Result<bool> {
         Ok(this.has(other)?)
     }
-
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        Some(PROVIDER_COLLECTION_METHODS.methods())
-    }
 }
-
-starlark::methods_static!(PROVIDER_COLLECTION_METHODS = provider_collection_methods);
 
 unsafe impl<'v> Trace<'v> for ProviderCollection<'v> {
     fn trace(&mut self, tracer: &Tracer<'v>) {

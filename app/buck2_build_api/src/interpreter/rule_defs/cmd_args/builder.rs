@@ -736,8 +736,7 @@ impl<'v> CommandLineBuilderRegular<'v, '_> {
                 cur = format.replace("{}", &cur);
             }
             if let Some(QuoteStyle::Shell) = options.quote {
-                let quoted = shlex_quote(&cur);
-                cur = quoted.into_owned();
+                cur = shlex_quote(cur);
             }
             // `prepend` has pretty different semantics between the cases where there's a delimiter
             // in the same options and when there isn't

@@ -92,24 +92,38 @@ unsafe impl StaticValueRegistered for Array<'static> {}
 
 /// `Array` is not `Sync`, so wrap it into this struct to store it in static variable.
 /// Empty `Array` is logically `Sync`.
-pub(crate) struct ValueEmptyArray(AllocStaticSimple<Array<'static>>);
+///
+/// Padded so that `len` and `capacity`, which every empty mutable list reads, are on a different
+/// cache line from the slot a first element would take: an append to an empty list can ask for
+/// that slot's line before its capacity check resolves, which takes the line from every reader.
+/// `_first_slot` is that slot, so that its line is part of this static whatever the pointer
+/// size.
+#[repr(C, align(128))]
+pub(crate) struct ValueEmptyArray {
+    _before: [u8; 112],
+    array: AllocStaticSimple<Array<'static>>,
+    _first_slot: [u8; 8],
+}
 unsafe impl Sync for ValueEmptyArray {}
 
-pub(crate) static VALUE_EMPTY_ARRAY: ValueEmptyArray =
-    ValueEmptyArray(AllocStaticSimple::alloc(unsafe { Array::new(0, 0) }));
+pub(crate) static VALUE_EMPTY_ARRAY: ValueEmptyArray = ValueEmptyArray {
+    _before: [0; 112],
+    array: AllocStaticSimple::alloc(unsafe { Array::new(0, 0) }),
+    _first_slot: [0; 8],
+};
 
 // Manual registration for pagable serialization (can't use macro due to wrapper struct)
 inventory::submit! {
     crate::__derive_refs::StaticValueEntry::new(
         file!(),
         line!(),
-        || VALUE_EMPTY_ARRAY.0.unpack().to_value()
+        || VALUE_EMPTY_ARRAY.array.unpack().to_value()
     )
 }
 
 impl ValueEmptyArray {
     pub(crate) fn unpack<'v>(&'static self) -> ValueTyped<'v, Array<'v>> {
-        self.0.at()
+        self.array.at()
     }
 }
 
@@ -353,8 +367,30 @@ impl<'v> Serialize for Array<'v> {
 
 #[cfg(test)]
 mod tests {
+    use std::mem;
+
     use crate::values::Heap;
     use crate::values::Value;
+    use crate::values::types::array::VALUE_EMPTY_ARRAY;
+    use crate::values::types::array::ValueEmptyArray;
+
+    #[test]
+    fn empty_array_cache_lines() {
+        const LINE: usize = 128;
+        let array = VALUE_EMPTY_ARRAY.array.as_payload();
+        let block = &VALUE_EMPTY_ARRAY as *const ValueEmptyArray as usize;
+        let len = array.len.get() as usize;
+        let capacity = &array.capacity as *const u32 as usize;
+        let first_element = array.content.as_ptr() as usize;
+
+        assert_eq!(block % LINE, 0);
+        assert_eq!(len / LINE, block / LINE);
+        assert_eq!(capacity / LINE, block / LINE);
+        assert_eq!(first_element / LINE, block / LINE + 1);
+        assert!(
+            first_element + mem::size_of::<Value>() <= block + mem::size_of::<ValueEmptyArray>()
+        );
+    }
 
     #[test]
     fn debug() {

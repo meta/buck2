@@ -498,7 +498,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkCQueryCtx<'v>,
         universe: ConfiguredTargetListExprArg<'v>,
         from: ConfiguredTargetListExprArg<'v>,
-        depth: Option<i32>,
+        #[starlark(default = NoneType)] depth: NoneOr<i32>,
         #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
@@ -519,7 +519,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
                                 dice,
                                 &universe,
                                 &targets,
-                                depth.into(),
+                                depth.into_option().into(),
                                 filter.as_ref().map(|expr| CapturedExpr { expr }).as_ref(),
                             )
                             .await

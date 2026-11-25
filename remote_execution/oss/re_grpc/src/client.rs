@@ -808,6 +808,96 @@ fn is_transient_execution_status(code: TCode) -> bool {
     )
 }
 
+/// How long a finished action's stream is read for after its done Operation, before it is
+/// reset anyway. BuildBuddy sends the trailers right after the done Operation, and a stream held
+/// open longer keeps one of the server's concurrent streams.
+const DRAIN_AFTER_DONE: Duration = Duration::from_secs(2);
+
+/// An Execute stream that ends at the action's done Operation.
+///
+/// Whoever reads the stream drops it once the done Operation is in, and h2 resets a dropped stream
+/// with CANCEL while the server's trailers are still on the way. h2 keeps only a bounded set of
+/// recently reset streams; a frame for one it has forgotten is answered with a reset that counts
+/// against the connection for its whole life, and the 1025th becomes GOAWAY ENHANCE_YOUR_CALM
+/// "too_many_internal_resets", failing every stream on the connection (h2 0.4 proto/streams). So
+/// the stream ends here at the done Operation, which `retrying_stream` then never reads past, and
+/// when it is dropped a task reads what is left to the server's END_STREAM, for at most
+/// `DRAIN_AFTER_DONE`. A stream dropped before its done Operation is still reset, which is what
+/// tells the server to stop.
+struct EndAtDone<S>
+where
+    S: Stream<Item = Result<Operation, tonic::Status>> + Unpin + Send + 'static,
+{
+    inner: Option<S>,
+    done: bool,
+}
+
+impl<S> EndAtDone<S>
+where
+    S: Stream<Item = Result<Operation, tonic::Status>> + Unpin + Send + 'static,
+{
+    fn new(inner: S) -> Self {
+        Self {
+            inner: Some(inner),
+            done: false,
+        }
+    }
+}
+
+impl<S> Stream for EndAtDone<S>
+where
+    S: Stream<Item = Result<Operation, tonic::Status>> + Unpin + Send + 'static,
+{
+    type Item = Result<Operation, tonic::Status>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        if self.done {
+            return std::task::Poll::Ready(None);
+        }
+        let Some(inner) = self.inner.as_mut() else {
+            return std::task::Poll::Ready(None);
+        };
+        match std::pin::Pin::new(inner).poll_next(cx) {
+            std::task::Poll::Ready(Some(Ok(operation))) => {
+                if operation.done {
+                    self.done = true;
+                }
+                std::task::Poll::Ready(Some(Ok(operation)))
+            }
+            std::task::Poll::Ready(None) => {
+                self.inner = None;
+                std::task::Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+}
+
+impl<S> Drop for EndAtDone<S>
+where
+    S: Stream<Item = Result<Operation, tonic::Status>> + Unpin + Send + 'static,
+{
+    fn drop(&mut self) {
+        if !self.done {
+            return;
+        }
+        let (Some(mut inner), Ok(handle)) =
+            (self.inner.take(), tokio::runtime::Handle::try_current())
+        else {
+            return;
+        };
+        handle.spawn(async move {
+            let _ = tokio::time::timeout(DRAIN_AFTER_DONE, async {
+                while inner.next().await.is_some() {}
+            })
+            .await;
+        });
+    }
+}
+
 struct ExecutionStreamState<F> {
     /// Opens the message stream for the operation it is given.
     open: F,
@@ -1170,7 +1260,7 @@ impl REClient {
                         .into_inner(),
                 };
 
-                anyhow::Ok(stream)
+                anyhow::Ok(EndAtDone::new(stream))
             }
         };
 
@@ -2363,6 +2453,68 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    fn operation(name: &str, done: bool) -> Operation {
+        Operation {
+            name: name.to_owned(),
+            done,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_stream_ends_at_its_done_operation() {
+        let inner = futures::stream::iter(vec![
+            Ok(operation("op", false)),
+            Ok(operation("op", true)),
+            Err(tonic::Status::cancelled("reset after done")),
+        ]);
+        let items: Vec<_> = EndAtDone::new(inner).collect().await;
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|item| item.is_ok()));
+    }
+
+    /// `inner` followed by an end that records, in `drained`, that it was read to.
+    fn recording_end(
+        items: Vec<Result<Operation, tonic::Status>>,
+        drained: Arc<std::sync::atomic::AtomicBool>,
+    ) -> impl Stream<Item = Result<Operation, tonic::Status>> + Unpin + Send + 'static {
+        futures::stream::iter(items).chain(futures::stream::poll_fn(move |_| {
+            drained.store(true, std::sync::atomic::Ordering::SeqCst);
+            std::task::Poll::Ready(None)
+        }))
+    }
+
+    #[tokio::test]
+    async fn test_finished_execute_stream_is_read_to_its_end_when_dropped() {
+        let drained = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut stream = EndAtDone::new(recording_end(
+            vec![Ok(operation("op", true)), Ok(operation("trailer", false))],
+            drained.dupe(),
+        ));
+        assert!(stream.next().await.unwrap().unwrap().done);
+        drop(stream);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !drained.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the finished stream should be read to its end");
+    }
+
+    #[tokio::test]
+    async fn test_unfinished_execute_stream_is_not_read_when_dropped() {
+        let drained = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut stream = EndAtDone::new(recording_end(
+            vec![Ok(operation("op", false)), Ok(operation("op", true))],
+            drained.dupe(),
+        ));
+        assert!(!stream.next().await.unwrap().unwrap().done);
+        drop(stream);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!drained.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     fn done_op() -> Operation {

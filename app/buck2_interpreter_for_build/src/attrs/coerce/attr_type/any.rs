@@ -20,7 +20,7 @@ use starlark::values::dict::DictRef;
 use starlark::values::int::IntView;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
-use starlark::values::tuple::TupleRef;
+use starlark::values::tuple::StarlarkTuple;
 
 use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
@@ -39,7 +39,7 @@ enum Literal<'v> {
     Bool(bool),
     Int(IntView<'v>),
     Dict(DictRef<'v>),
-    Tuple(&'v TupleRef<'v>),
+    Tuple(StarlarkTuple<'v>),
     List(StarlarkList<'v>),
     Str(&'v str),
 }
@@ -61,7 +61,7 @@ fn to_literal<'v>(
         }
         Some(Literal::Tuple(x)) => {
             let items = x
-                .iter()
+                .values()
                 .map(|v| to_literal(v, ctx))
                 .collect::<buck2_error::Result<Vec<_>>>()?;
             ctx.attr_arena().encode_tuple(&items)

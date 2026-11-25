@@ -20,7 +20,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::starlark_value;
-use starlark::values::tuple::TupleType;
+use starlark::values::tuple::StarlarkTuple;
 use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeType;
 
@@ -141,7 +141,7 @@ fn struct_dynattrs(globals: &mut GlobalsBuilder) {
 
     /// Takes a tuple and gives it to the impl function.
     fn tuple<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkDynamicAttrType<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v, StarlarkDynamicAttrType<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkDynamicAttrType<'v>>> {
         let items = args

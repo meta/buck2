@@ -36,7 +36,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictRef;
 use starlark::values::list::StarlarkList;
-use starlark::values::tuple::TupleRef;
+use starlark::values::tuple::StarlarkTuple;
 use starlark::values::typing::TypeCompiled;
 
 use crate::dynamic_value::StarlarkDynamicValue;
@@ -357,7 +357,7 @@ impl<'v> DynamicAttrType<'v> {
                 Ok(DynamicAttrValue::Dict(res))
             }
             DynamicAttrType::Tuple(elem_tys) => {
-                let tuple = <&TupleRef>::unpack_value_err(value)?;
+                let tuple = <StarlarkTuple>::unpack_value_err(value)?;
                 if tuple.len() != elem_tys.len() {
                     return Err(buck2_error!(
                         buck2_error::ErrorTag::Input,
@@ -367,7 +367,7 @@ impl<'v> DynamicAttrType<'v> {
                     ));
                 }
                 let mut res = Vec::with_capacity(elem_tys.len());
-                for (elem, ty) in tuple.iter().zip(elem_tys.iter()) {
+                for (elem, ty) in tuple.values().zip(elem_tys.iter()) {
                     res.push(ty.coerce(elem)?);
                 }
                 Ok(DynamicAttrValue::Tuple(res.into()))

@@ -51,7 +51,7 @@ use starlark::values::int::IntView;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
 use starlark::values::string::STRING_TYPE;
-use starlark::values::tuple::TupleRef;
+use starlark::values::tuple::StarlarkTuple;
 
 use crate::anon_target_attr::AnonTargetAttr;
 use crate::anon_targets::AnonAttrCtx;
@@ -322,7 +322,7 @@ enum AnyLiteral<'v> {
     Bool(bool),
     Int(IntView<'v>),
     Dict(DictRef<'v>),
-    Tuple(&'v TupleRef<'v>),
+    Tuple(StarlarkTuple<'v>),
     List(StarlarkList<'v>),
     Str(&'v str),
 }
@@ -339,7 +339,7 @@ fn to_anon_target_any(value: Value, ctx: &AnonAttrCtx) -> buck2_error::Result<An
         )),
         // TODO(wendyy) intern attr
         Some(AnyLiteral::Tuple(x)) => Ok(AnonTargetAttr::Tuple(TupleLiteral(
-            x.iter()
+            x.values()
                 .map(|v| to_anon_target_any(v, ctx))
                 .collect::<buck2_error::Result<Vec<_>>>()?
                 .into(),
@@ -425,7 +425,7 @@ fn to_anon_target_tuple(
     ctx: &AnonAttrCtx,
     value: Value,
 ) -> buck2_error::Result<AnonTargetAttr> {
-    let Some(tuple_or_list) = <Either<&TupleRef, StarlarkList>>::unpack_value_opt(value) else {
+    let Some(tuple_or_list) = <Either<StarlarkTuple, StarlarkList>>::unpack_value_opt(value) else {
         return Err(AnonTargetCoercionError::type_error("tuple", value).into());
     };
     let items = match &tuple_or_list {
@@ -460,7 +460,7 @@ fn to_anon_target_list(
     ctx: &AnonAttrCtx,
     value: Value,
 ) -> buck2_error::Result<AnonTargetAttr> {
-    let Some(list_or_tuple) = <Either<StarlarkList, &TupleRef>>::unpack_value_opt(value) else {
+    let Some(list_or_tuple) = <Either<StarlarkList, StarlarkTuple>>::unpack_value_opt(value) else {
         return Err(AnonTargetCoercionError::type_error("list", value).into());
     };
     let items = match &list_or_tuple {

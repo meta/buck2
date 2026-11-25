@@ -66,7 +66,7 @@ use starlark::values::record::Record;
 use starlark::values::set::SetType;
 use starlark::values::starlark_value;
 use starlark::values::structs::Struct;
-use starlark::values::tuple::TupleType;
+use starlark::values::tuple::StarlarkTuple;
 
 use crate::bxl::starlark_defs::artifacts::EnsuredArtifact;
 use crate::bxl::starlark_defs::artifacts::EnsuredArtifactGroup;
@@ -470,7 +470,7 @@ impl StarlarkOutputStream {
             EnsuredArtifact(ValueOf<'v, EnsuredArtifact>),
             EnsuredArtifactGroup(ValueOf<'v, EnsuredArtifactGroup<'v>>),
             List(ValueOf<'v, StarlarkList<'v>>),
-            Tuple(ValueOf<'v, TupleType<Value<'v>>>),
+            Tuple(ValueOf<'v, StarlarkTuple<'v>>),
             Set(ValueOf<'v, SetType<Value<'v>>>),
             Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
             Struct(ValueOf<'v, Struct<'v>>),
@@ -528,7 +528,7 @@ impl StarlarkOutputStream {
                         serializer.collect_seq(x.values().map(|v| self.with_value(v)))
                     }
                     Some(SerializedHere::Tuple(x)) => {
-                        serializer.collect_seq(x.tuple().iter().map(|v| self.with_value(v)))
+                        serializer.collect_seq(x.values().map(|v| self.with_value(v)))
                     }
                     Some(SerializedHere::Set(x)) => {
                         serializer.collect_seq(x.set().iter().map(|v| self.with_value(v)))
@@ -616,7 +616,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn print<'v>(
         this: &'v StarlarkOutputStream,
-        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
         #[starlark(default = " ")] sep: &'v str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
@@ -689,7 +689,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn stream<'v>(
         this: &'v StarlarkOutputStream,
-        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
         #[starlark(default = " ")] sep: &'v str,
         #[starlark(require = named, default = ValueOf::empty_list())] wait_on: ValueOf<
             'v,

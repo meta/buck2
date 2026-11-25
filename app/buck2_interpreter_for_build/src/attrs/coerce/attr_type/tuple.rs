@@ -18,7 +18,7 @@ use dupe::IterDupedExt;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::list::StarlarkList;
-use starlark::values::tuple::TupleRef;
+use starlark::values::tuple::StarlarkTuple;
 
 use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::AttrTypeExt;
@@ -58,7 +58,7 @@ impl AttrTypeCoerce for TupleAttrType {
         if let Some(list) = StarlarkList::from_value(value) {
             coerce(list.content())
         } else {
-            coerce(<&TupleRef>::unpack_value_err(value)?.content())
+            coerce(<StarlarkTuple>::unpack_value_err(value)?.content())
         }
     }
 

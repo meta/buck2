@@ -16,7 +16,7 @@ use either::Either;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::list::StarlarkList;
-use starlark::values::tuple::TupleRef;
+use starlark::values::tuple::StarlarkTuple;
 
 use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::AttrTypeExt;
@@ -44,7 +44,7 @@ impl AttrTypeCoerce for ListAttrType {
 }
 
 /// The list or tuple that a list attribute is coerced from.
-pub(crate) struct ListOrTuple<'v>(Either<StarlarkList<'v>, &'v TupleRef<'v>>);
+pub(crate) struct ListOrTuple<'v>(Either<StarlarkList<'v>, StarlarkTuple<'v>>);
 
 impl<'v> ListOrTuple<'v> {
     /// The items. Coercion runs no Starlark code, so a list does not change under the slice.
@@ -57,7 +57,7 @@ impl<'v> ListOrTuple<'v> {
 }
 
 pub(crate) fn coerce_list<'v>(value: Value<'v>) -> buck2_error::Result<ListOrTuple<'v>> {
-    if let Some(tuple) = TupleRef::from_value(value) {
+    if let Some(tuple) = StarlarkTuple::from_value(value) {
         Ok(ListOrTuple(Either::Right(tuple)))
     } else {
         Ok(ListOrTuple(Either::Left(<StarlarkList>::unpack_value_err(

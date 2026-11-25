@@ -39,7 +39,7 @@ use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
-use starlark::values::tuple::TupleType;
+use starlark::values::tuple::StarlarkTuple;
 
 use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
@@ -700,7 +700,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Given a list of alternative attributes, selects the first that matches and gives that to the rule.
     fn one_of<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkAttribute>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v, StarlarkAttribute>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -722,7 +722,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Takes a tuple of values and gives a tuple to the rule.
     fn tuple<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkAttribute>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v, StarlarkAttribute>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,

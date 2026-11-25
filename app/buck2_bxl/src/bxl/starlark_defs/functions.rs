@@ -37,7 +37,7 @@ use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
-use starlark::values::tuple::TupleType;
+use starlark::values::tuple::StarlarkTuple;
 
 use super::artifacts::visit_artifact_path_without_associated_deduped;
 use super::context::output::get_artifact_path_display;
@@ -282,7 +282,7 @@ impl std::error::Error for BxlErrorWithoutStacktrace {}
 #[starlark_module]
 pub(crate) fn register_error_handling_function(builder: &mut GlobalsBuilder) {
     fn fail_no_stacktrace<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
     ) -> anyhow::Result<NoneType> {
         let mut s = String::new();
         for x in args.items() {

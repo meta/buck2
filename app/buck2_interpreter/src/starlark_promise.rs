@@ -31,7 +31,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
-use starlark::values::tuple::TupleType;
+use starlark::values::tuple::StarlarkTuple;
 use starlark::values::typing::StarlarkCallable;
 
 /// A type that corresponds to a Rust promise.
@@ -304,7 +304,7 @@ fn promise_methods(builder: &mut MethodsBuilder) {
     /// those from `p1`, `p2` and `p3` respectively.
     fn join<'v>(
         this: ValueTyped<'v, StarlarkPromise<'v>>,
-        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkPromise<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v, StarlarkPromise<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
         let mut promises = vec![this];
@@ -327,7 +327,7 @@ mod tests {
     use starlark::environment::Module;
     use starlark::syntax::AstModule;
     use starlark::values::none::NoneType;
-    use starlark::values::tuple::TupleRef;
+    use starlark::values::tuple::StarlarkTuple;
 
     use super::*;
     use crate::file_type::StarlarkFileType;
@@ -446,7 +446,7 @@ f = e.map(lambda x: x.upper())
             let wants = &["test", "TEST", "TEST!", "Test", "more", "MORE"];
             for (want, got) in wants
                 .iter()
-                .zip(TupleRef::from_value(res).unwrap().content())
+                .zip(StarlarkTuple::from_value(res).unwrap().content())
             {
                 assert_eq!(
                     StarlarkPromise::from_value(*got)

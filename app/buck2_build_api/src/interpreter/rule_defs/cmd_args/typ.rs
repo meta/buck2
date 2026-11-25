@@ -63,9 +63,7 @@ use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 use starlark::values::string::StarlarkStr;
-use starlark::values::tuple::TupleOf;
-use starlark::values::tuple::TupleRef;
-use starlark::values::tuple::TupleType;
+use starlark::values::tuple::StarlarkTuple;
 use starlark::values::type_expr::UnionPayload;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -960,16 +958,16 @@ impl<'v> UnionPayload<'v> for StarlarkCommandLineValueUnpack<'v> {
 
 /// The positional arguments of `cmd_args()`. They are bound through this conversion, and not
 /// as the `ValueOf` it holds, for its error.
-struct CmdArgsPositional<'v>(ValueOf<'v, TupleType<StarlarkCmdArgsInput>>);
+struct CmdArgsPositional<'v>(ValueOf<'v, StarlarkTuple<'v, StarlarkCmdArgsInput>>);
 
 impl<'v> UnpackValue<'v> for CmdArgsPositional<'v> {
-    type Type = TupleType<StarlarkCmdArgsInput>;
+    type Type = StarlarkTuple<'v, StarlarkCmdArgsInput>;
     type Error = Infallible;
 
     #[inline]
     fn unpack(
-        value: ValueOf<'v, TupleType<StarlarkCmdArgsInput>>,
-        _get: TupleOf<'v, StarlarkCmdArgsInput>,
+        value: ValueOf<'v, StarlarkTuple<'v, StarlarkCmdArgsInput>>,
+        _get: StarlarkTuple<'v, StarlarkCmdArgsInput>,
     ) -> Result<Self, Infallible> {
         Ok(CmdArgsPositional(value))
     }
@@ -978,10 +976,10 @@ impl<'v> UnpackValue<'v> for CmdArgsPositional<'v> {
     #[inline]
     fn unpack_named_param(value: Value<'v>, param_name: &str) -> starlark::Result<Self> {
         Self::unpack_value(value)?.ok_or_else(|| {
-            wrong_param_error::<TupleType<StarlarkCmdArgsInput>>(
+            wrong_param_error::<StarlarkTuple<'v, StarlarkCmdArgsInput>>(
                 value,
                 param_name,
-                TupleRef::from_value(value).map(|tuple| tuple.content()),
+                StarlarkTuple::from_value(value).map(|tuple| tuple.content()),
             )
         })
     }

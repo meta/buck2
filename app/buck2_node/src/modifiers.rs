@@ -37,7 +37,7 @@ use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictRef;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
-use starlark::values::tuple::TupleRef;
+use starlark::values::tuple::StarlarkTuple;
 use static_interner::Intern;
 use static_interner::interner;
 use strong_hash::StrongHash;
@@ -428,7 +428,7 @@ impl<'v> ModifierSource<'v> for Value<'v> {
 
     fn list(self) -> Option<Vec<Self>> {
         Some(
-            match <Either<StarlarkList, &TupleRef>>::unpack_value_opt(self)? {
+            match <Either<StarlarkList, StarlarkTuple>>::unpack_value_opt(self)? {
                 Either::Left(list) => list.content().to_vec(),
                 Either::Right(tuple) => tuple.content().to_vec(),
             },

@@ -80,6 +80,8 @@ buck_prebuilt_artifact(
     name = "api-stubber-main_jar.jar",
     # @oss-disable[end= ]: cas_digest = "8cb9b4a02e8c00405483ec8a215fbd0dc88b9bb2197b1737362d87ba6c78fc15:26831395",
     oss_sha1 = "59b1fcca9ec544a86df64fb544fce3bfcee7eaa8",
+    oss_sha256 = "986394f907cadf76b6992471df91cbd1c34018cd87a5fd1d031320133a9f8850",
+    oss_size_bytes = 28974683,
     oss_url = "https://github.com/facebook/buck2/releases/download/androidToolchain%2F2025-04-03/api-stubber-main_jar.jar",
 )
 

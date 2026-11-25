@@ -56,5 +56,7 @@ buck_prebuilt_artifact(
     name = "cp_snapshot_generator.jar",
     # @oss-disable[end= ]: cas_digest = snapshot_generator_digest(),
     oss_sha1 = "1bbf0a79f5c88a4bb316ebd98dfca7b615aae52a",
+    oss_sha256 = "a431403048a909e02d9d3f4cfba32a607a3e3feff288c70f5829ada2b4580c64",
+    oss_size_bytes = 60666465,
     oss_url = "https://github.com/facebook/buck2/releases/download/androidToolchain%2F2025-04-03/cp_snapshot_generator.jar",
 )

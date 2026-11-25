@@ -27,6 +27,8 @@ third_party_jar(
     name = "apksig",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/android/tools/build/apksig:apksig",
     sha1 = "d51ecbc4a5b7a2c7832586a4dde18f61d92810a4",
+    sha256 = "c4f6fdf2148490296f422a7eb37647ea11d1c3b02f1f2349c33ce257f3c29b1f",
+    size_bytes = 496313,
     url = "mvn:https://maven.google.com:com.android.tools.build:apksig:jar:8.4.0",
     visibility = [
         "prelude//toolchains/android/src/com/facebook/buck/android/apk:apk",

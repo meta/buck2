@@ -552,10 +552,20 @@ impl<'v> StarlarkType<'v> for StarlarkDict<'v> {
         !this.repr().content().is_empty()
     }
 
-    fn equals(this: Self, other: Self) -> crate::Result<bool> {
-        equals_small_map(&this.repr().content(), &other.repr().content(), |x, y| {
-            x.equals(*y)
-        })
+    // The operand is a plain value read with `from_value`, not a typed `Self`: read as a
+    // `dict[typing.Any, typing.Any]` it is borrowed once more, to look at entries that there
+    // is nothing to check about. Inlined into each representation's entry, as the macro does
+    // by itself for a typed method.
+    #[inline(always)]
+    fn equals(this: Self, other: Value<'v>) -> crate::Result<bool> {
+        match StarlarkDict::from_value(other) {
+            Some(other) => {
+                equals_small_map(&this.repr().content(), &other.repr().content(), |x, y| {
+                    x.equals(*y)
+                })
+            }
+            None => Ok(false),
+        }
     }
 
     // `at` and `is_in` take a `Value`, so they are not typed methods, which the macro inlines

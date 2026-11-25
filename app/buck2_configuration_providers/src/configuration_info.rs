@@ -113,9 +113,9 @@ impl<'v> ConfigurationInfo<'v> {
             (constraint_setting_label, constraint_value)
         });
         ConfigurationInfo {
-            constraints: heap.alloc(AllocDict(constraints)).into(),
-            values: heap.alloc(AllocDict::empty()).into(),
-            root_values: heap.alloc(AllocDict::empty()).into(),
+            constraints: heap.alloc(AllocDict(constraints)),
+            values: heap.alloc(AllocDict::empty()),
+            root_values: heap.alloc(AllocDict::empty()),
         }
     }
 }
@@ -165,18 +165,16 @@ fn copy_constraints<'v>(
         }
         entries.push((setting, value));
     }
-    Ok(heap.alloc(AllocDict(entries)).into())
+    Ok(heap.alloc(AllocDict(entries)))
 }
 
 fn copy_dict<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>>(
     dict: ValueOf<'v, StarlarkDict<'v, K, V>>,
     heap: Heap<'v>,
 ) -> starlark::Result<ValueOf<'v, StarlarkDict<'v, K, V>>> {
-    Ok(heap
-        .alloc(AllocDict(
-            dict.iter().collect::<starlark::Result<Vec<_>>>()?,
-        ))
-        .into())
+    Ok(heap.alloc(AllocDict(
+        dict.iter().collect::<starlark::Result<Vec<_>>>()?,
+    )))
 }
 
 #[starlark_module]
@@ -404,11 +402,10 @@ mod tests {
     fn to_configuration_data_rejects_root_buckconfigs_with_clear_error() {
         Heap::temp(|heap| {
             let info = ConfigurationInfo {
-                constraints: heap.alloc(AllocDict::empty()).into(),
-                values: heap.alloc(AllocDict::empty()).into(),
+                constraints: heap.alloc(AllocDict::empty()),
+                values: heap.alloc(AllocDict::empty()),
                 root_values: heap
-                    .alloc(AllocDict([(heap.alloc("apple.key"), heap.alloc("value"))]))
-                    .into(),
+                    .alloc(AllocDict([(heap.alloc("apple.key"), heap.alloc("value"))])),
             };
 
             let Err(err) = info.to_configuration_data() else {

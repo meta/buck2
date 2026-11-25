@@ -174,9 +174,7 @@ impl<'v> StarlarkSelector<'v> {
                     }
                     Ok(eval
                         .heap()
-                        .alloc(StarlarkSelector::new(
-                            eval.heap().alloc(AllocDict(mapped)).into(),
-                        ))
+                        .alloc(StarlarkSelector::new(eval.heap().alloc(AllocDict(mapped))))
                         .to_value())
                 }
                 StarlarkSelector::Sum(left, right) => {

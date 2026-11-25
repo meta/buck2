@@ -581,11 +581,11 @@ fn artifact_values<'v>(
             StarlarkArtifactValue::new(artifact.dupe(), path.to_owned(), artifact_fs.fs().dupe());
         artifact_values_dict.push((k, v));
     }
-    Ok(heap
-        .alloc(AllocDict(artifact_values_dict.into_iter().map(|(k, v)| {
-            (ValueOf::alloc(heap, k), ValueOf::alloc(heap, v))
-        })))
-        .into())
+    Ok(heap.alloc(AllocDict(
+        artifact_values_dict
+            .into_iter()
+            .map(|(k, v)| (ValueOf::alloc(heap, k), ValueOf::alloc(heap, v))),
+    )))
 }
 
 /// Prepare dict of output artifacts for dynamic actions.
@@ -604,7 +604,7 @@ fn outputs<'v>(
         ));
     }
 
-    Ok(heap.alloc(AllocDict(outputs_dict)).into())
+    Ok(heap.alloc(AllocDict(outputs_dict)))
 }
 
 fn new_attr_value<'v>(

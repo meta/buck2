@@ -160,7 +160,7 @@ fn validate_default_info<'v>(info: &DefaultInfo<'v>) -> buck2_error::Result<()> 
 impl<'v> DefaultInfo<'v> {
     pub fn empty(heap: Heap<'v>) -> Self {
         DefaultInfo {
-            sub_targets: heap.alloc(AllocDict::empty()).into(),
+            sub_targets: heap.alloc(AllocDict::empty()),
             default_outputs: heap.alloc(AllocList::empty()),
             other_outputs: heap.alloc(AllocList::empty()),
         }
@@ -350,7 +350,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         Ok(heap.alloc(DefaultInfo {
             default_outputs,
             other_outputs,
-            sub_targets: heap.alloc(AllocDict(sub_targets)).into(),
+            sub_targets: heap.alloc(AllocDict(sub_targets)),
         }))
     }
 }

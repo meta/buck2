@@ -264,7 +264,7 @@ async fn alloc_deps<'v>(
         })
         .collect::<Result<_, _>>()?;
 
-    Ok(heap.alloc(AllocDict(deps)).into())
+    Ok(heap.alloc(AllocDict(deps)))
 }
 
 starlark::methods_static!(BXL_ACTIONS_METHODS = bxl_actions_methods);

@@ -807,18 +807,14 @@ mod tests {
     {
         Heap::temp(|heap| {
             let params = heap.alloc(AllocDict([("cancel_on_client_disconnect", true)]));
-            let params = parse_meta_internal_extra_params(
-                starlark::values::dict::StarlarkDict::from_value(params.to_value()),
-            )?;
+            let params = parse_meta_internal_extra_params(Some(params.dict().untyped()))?;
             assert!(params.cancel_on_client_disconnect);
 
             let params = heap.alloc(AllocDict([(
                 "allow_unsandboxed_action_cache_uploads",
                 true,
             )]));
-            let params = parse_meta_internal_extra_params(
-                starlark::values::dict::StarlarkDict::from_value(params.to_value()),
-            )?;
+            let params = parse_meta_internal_extra_params(Some(params.dict().untyped()))?;
             assert!(!params.cancel_on_client_disconnect, "defaults to false");
             Ok(())
         })
@@ -834,9 +830,7 @@ mod tests {
                 "remote_execution_caf_fbpkgs",
                 heap.alloc(AllocList([fbpkg])),
             )]));
-            let params = parse_meta_internal_extra_params(
-                starlark::values::dict::StarlarkDict::from_value(params.to_value()),
-            )?;
+            let params = parse_meta_internal_extra_params(Some(params.dict().untyped()))?;
             Ok(params
                 .remote_execution_caf_fbpkgs
                 .iter()

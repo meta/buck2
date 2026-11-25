@@ -1832,12 +1832,11 @@ impl Action for RunAction {
             artifact_value_dict.push((artifact, artifact_value));
         }
 
-        Ok(Some(
-            heap.alloc(AllocDict(artifact_value_dict.into_iter().map(
-                |(artifact, value)| (ValueOf::alloc(heap, artifact), ValueOf::alloc(heap, value)),
-            )))
-            .into(),
-        ))
+        Ok(Some(heap.alloc(AllocDict(
+            artifact_value_dict.into_iter().map(|(artifact, value)| {
+                (ValueOf::alloc(heap, artifact), ValueOf::alloc(heap, value))
+            }),
+        ))))
     }
 
     async fn execute(

@@ -95,7 +95,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
             entries.push((category, rollout));
         }
         Ok(eval.heap().alloc(DepOnlyIncompatibleInfo {
-            custom_soft_errors: eval.heap().alloc(AllocDict(entries)).into(),
+            custom_soft_errors: eval.heap().alloc(AllocDict(entries)),
         }))
     }
 }

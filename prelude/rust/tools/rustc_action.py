@@ -378,9 +378,14 @@ async def handle_output(  # noqa: C901
             sys.stderr.buffer.write(line)
             continue
 
+        # Diagnostics are JSON objects. Anything else on stderr (for example a
+        # proc macro printing `{:?}` of a Vec, a number, or bytes that are not
+        # UTF-8) is passed through.
         try:
             diag = json.loads(line)
-        except json.JSONDecodeError:
+        except ValueError:  # JSONDecodeError or UnicodeDecodeError
+            diag = None
+        if not isinstance(diag, dict):
             sys.stderr.buffer.write(line + b"\n")  # Passthrough
             continue
 

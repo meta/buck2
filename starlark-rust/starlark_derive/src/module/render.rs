@@ -17,10 +17,7 @@
 
 mod fun;
 
-use std::collections::HashSet;
-
 use proc_macro2::TokenStream;
-use quote::ToTokens;
 use quote::format_ident;
 use quote::quote;
 
@@ -33,62 +30,10 @@ use crate::module::typ::StarConst;
 use crate::module::typ::StarGenerics;
 use crate::module::typ::StarModule;
 use crate::module::typ::StarStmt;
-use crate::module::typ::StarTypeEntry;
 use crate::module::util::ident_string;
 
-/// Generate the static variable name for a StarlarkValueAsType constant.
-/// Uses uppercase to avoid `non_upper_case_globals` warnings.
-fn starlark_type_static_name(name: &str) -> syn::Ident {
-    format_ident!("__STARLARK_TYPE_{}", name.to_ascii_uppercase())
-}
-
 pub(crate) fn render(x: StarModule) -> syn::Result<TokenStream> {
-    // Generate declare_starlark_value_as_type! calls for each #[starlark_types] entry.
-    // Deduplicate by rust_type: only the first occurrence of each Rust type
-    // gets the full declaration (which includes the AsTypeStaticRegistered trait impl).
-    // Subsequent occurrences with the same Rust type use `skip_type_registration`
-    // to avoid conflicting trait implementations.
-    let mut seen_rust_types = HashSet::new();
-    let type_declarations: Vec<TokenStream> = x
-        .starlark_types
-        .iter()
-        .map(|entry| {
-            let is_first = seen_rust_types.insert(entry.rust_type.to_token_stream().to_string());
-            render_starlark_type_declaration(entry, is_first)
-        })
-        .collect();
-
-    let body = render_impl(x)?;
-
-    Ok(quote! {
-        #( #type_declarations )*
-        #body
-    })
-}
-
-/// Generate a `declare_starlark_value_as_type!` call for a `#[starlark_types]` entry.
-///
-/// When `register_type` is true, the full macro is used (including the
-/// `AsTypeStaticRegistered` trait impl). When false, the `skip_type_registration`
-/// variant is used to avoid duplicate trait implementations for the same Rust type.
-fn render_starlark_type_declaration(entry: &StarTypeEntry, register_type: bool) -> TokenStream {
-    let starlark_name_str = ident_string(&entry.starlark_name);
-    let static_name = starlark_type_static_name(&starlark_name_str);
-    let rust_type = &entry.rust_type;
-    match (register_type, entry.no_docs) {
-        (true, false) => quote! {
-            starlark::declare_starlark_value_as_type!(#static_name, #rust_type);
-        },
-        (true, true) => quote! {
-            starlark::declare_starlark_value_as_type!(#static_name, #rust_type, no_docs);
-        },
-        (false, false) => quote! {
-            starlark::declare_starlark_value_as_type!(#static_name, #rust_type, skip_type_registration);
-        },
-        (false, true) => quote! {
-            starlark::declare_starlark_value_as_type!(#static_name, #rust_type, skip_type_registration_no_docs);
-        },
-    }
+    render_impl(x)
 }
 
 fn render_impl(x: StarModule) -> syn::Result<TokenStream> {
@@ -98,7 +43,6 @@ fn render_impl(x: StarModule) -> syn::Result<TokenStream> {
         stmts,
         module_kind,
         generics,
-        starlark_types,
     } = x;
     let module_name = input.sig.ident.to_string();
     if module_kind == ModuleKind::Methods {
@@ -109,12 +53,6 @@ fn render_impl(x: StarModule) -> syn::Result<TokenStream> {
         .map(|s| render_stmt(s, &generics, &module_name))
         .collect::<syn::Result<_>>()?;
     let set_docstring = docstring.map(|ds| quote!(globals_builder.set_docstring(#ds);));
-
-    // Generate globals_builder.set() calls for #[starlark_types] entries
-    let type_set_stmts: Vec<syn::Stmt> = starlark_types
-        .iter()
-        .map(render_starlark_type_set)
-        .collect();
 
     let inner_fn = syn::ItemFn {
         attrs: Default::default(),
@@ -127,7 +65,6 @@ fn render_impl(x: StarModule) -> syn::Result<TokenStream> {
         block: syn::parse_quote! {
             {
                 #set_docstring
-                #( #type_set_stmts )*
                 #( #stmts; )*
                 // Mute warning if stmts is empty.
                 let _ = globals_builder;
@@ -227,19 +164,6 @@ fn render_const(x: StarConst) -> syn::Expr {
     let name_str = ident_string(&name);
     syn::parse_quote! {
         globals_builder.set::<#ty>(#name_str, #value)
-    }
-}
-
-/// Generate a `globals_builder.set()` call for a `#[starlark_types]` entry.
-fn render_starlark_type_set(entry: &StarTypeEntry) -> syn::Stmt {
-    let starlark_name_str = ident_string(&entry.starlark_name);
-    let static_name = starlark_type_static_name(&starlark_name_str);
-    let rust_type = &entry.rust_type;
-    syn::parse_quote! {
-        globals_builder.set::<starlark::__derive_refs::StarlarkValueAsType<#rust_type>>(
-            #starlark_name_str,
-            #static_name,
-        );
     }
 }
 

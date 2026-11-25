@@ -167,12 +167,12 @@ impl Display for StarlarkValueAsTypeStarlarkValue {
 /// #[starlark_value(type = "temperature")]
 /// impl<'v> StarlarkValue<'v> for StarlarkTemperature {}
 ///
-/// // Use with #[starlark_module]:
-/// // #[starlark_module]
-/// // #[starlark_types(StarlarkTemperature as Temperature)]
-/// // fn my_type_globals(globals: &mut GlobalsBuilder) {}
+/// // As the global that names the type:
+/// // fn my_type_globals(globals: &mut GlobalsBuilder) {
+/// //     globals.type_symbol_as::<StarlarkTemperature>("Temperature");
+/// // }
 ///
-/// // Or standalone:
+/// // Or as a static of its own:
 /// // starlark::declare_starlark_value_as_type!(TEMPERATURE, StarlarkTemperature);
 /// ```
 pub struct StarlarkValueAsType<T>(
@@ -352,14 +352,13 @@ impl<'fv, T> AllocFrozenValue<'fv> for StarlarkValueAsType<T> {
 ///
 /// # Usage
 ///
-/// Standalone (outside `#[starlark_module]`):
 /// ```ignore
 /// declare_starlark_value_as_type!(pub MY_TEMPERATURE, StarlarkTemperature);
 /// declare_starlark_value_as_type!(pub MY_PROVIDER, AbstractProvider, no_docs);
 /// ```
 ///
-/// The `#[starlark_module]` proc macro can also generate calls to this macro
-/// via the `#[starlark_types]` attribute.
+/// The global that names a type does not need this: see
+/// [`GlobalsBuilder::type_symbol`](crate::environment::GlobalsBuilder::type_symbol).
 #[macro_export]
 macro_rules! declare_starlark_value_as_type {
     ($vis:vis $name:ident, $T:ty) => {

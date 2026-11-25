@@ -32,16 +32,13 @@ use syn::Stmt;
 use syn::Type;
 use syn::TypeReference;
 use syn::Visibility;
-use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::token::Comma;
 
 use crate::module::parse::fun::parse_fun;
 use crate::module::typ::StarConst;
 use crate::module::typ::StarGenerics;
 use crate::module::typ::StarModule;
 use crate::module::typ::StarStmt;
-use crate::module::typ::StarTypeEntry;
 use crate::module::util::is_type_name;
 
 #[derive(Debug, Copy, Clone, Dupe, PartialEq, Eq)]
@@ -50,49 +47,7 @@ pub(crate) enum ModuleKind {
     Methods,
 }
 
-/// Parse a single entry in `#[starlark_types(RustType as StarlarkName)]`
-/// or `#[starlark_types(RustType as StarlarkName no_docs)]`.
-impl syn::parse::Parse for StarTypeEntry {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let rust_type: syn::Path = input.parse()?;
-        input.parse::<syn::Token![as]>()?;
-        let starlark_name: syn::Ident = input.parse()?;
-        let no_docs = if input.peek(syn::Ident) {
-            let kw: syn::Ident = input.parse()?;
-            if kw != "no_docs" {
-                return Err(syn::Error::new(kw.span(), "expected `no_docs`"));
-            }
-            true
-        } else {
-            false
-        };
-        Ok(StarTypeEntry {
-            rust_type,
-            starlark_name,
-            no_docs,
-        })
-    }
-}
-
-/// Extract and remove `#[starlark_types(...)]` attributes from the function.
-fn parse_starlark_types(input: &mut ItemFn) -> syn::Result<Vec<StarTypeEntry>> {
-    let mut result = Vec::new();
-    let mut remaining_attrs = Vec::new();
-    for attr in input.attrs.drain(..) {
-        if attr.path().is_ident("starlark_types") {
-            let entries: Punctuated<StarTypeEntry, Comma> =
-                attr.parse_args_with(Punctuated::parse_terminated)?;
-            result.extend(entries);
-        } else {
-            remaining_attrs.push(attr);
-        }
-    }
-    input.attrs = remaining_attrs;
-    Ok(result)
-}
-
 pub(crate) fn parse(mut input: ItemFn) -> syn::Result<StarModule> {
-    let starlark_types = parse_starlark_types(&mut input)?;
     let module_docstring = parse_module_docstring(&input)?;
 
     if input.sig.inputs.len() != 1 {
@@ -151,7 +106,6 @@ pub(crate) fn parse(mut input: ItemFn) -> syn::Result<StarModule> {
         input,
         docstring: module_docstring,
         stmts,
-        starlark_types,
     })
 }
 

@@ -29,17 +29,6 @@ use crate::module::simple_param::SimpleParam;
 use crate::module::util::is_type_name;
 use crate::module::util::unpack_option;
 
-/// A type entry from `#[starlark_types(RustType as StarlarkName, ...)]`.
-#[derive(Debug)]
-pub(crate) struct StarTypeEntry {
-    /// The Rust type (e.g., `StarlarkInt`).
-    pub(crate) rust_type: syn::Path,
-    /// The name to expose in Starlark (e.g., `Int`).
-    pub(crate) starlark_name: syn::Ident,
-    /// Whether to use `new_no_docs()` instead of `new()`.
-    pub(crate) no_docs: bool,
-}
-
 #[derive(Debug)]
 pub(crate) struct StarModule {
     pub(crate) module_kind: ModuleKind,
@@ -49,8 +38,6 @@ pub(crate) struct StarModule {
     pub(crate) docstring: Option<String>,
     pub(crate) stmts: Vec<StarStmt>,
     pub(crate) generics: StarGenerics,
-    /// Types declared via `#[starlark_types(RustType as StarlarkName, ...)]`.
-    pub(crate) starlark_types: Vec<StarTypeEntry>,
 }
 
 /// The generics the user provided on the starlark module

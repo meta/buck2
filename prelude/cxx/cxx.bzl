@@ -1411,6 +1411,10 @@ cxx_precompiled_header = prelude_rule(
          PCH rule are propagated back to the dependent rule, and the PCH's header search paths
          (e.g. `-I` or `-isystem` options) are prefixed onto the list of
          include paths for the dependent rule.
+
+         With the default `compile_pch_file = False`, the header is not precompiled: the rules
+         that use it include it as text, and only `src` and `deps` are used. The other attributes
+         that this rule shares with `cxx_library` are ignored.
     """,
     examples = """
         The best way to see how the `cxx_precompiled_header()` rule works is with an
@@ -1601,24 +1605,90 @@ cxx_test = prelude_rule(
             "cxx_runtime_type": attrs.option(attrs.enum(CxxRuntimeType), default = None),
             "default_platform": attrs.option(attrs.string(), default = None),
             "defaults": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
-            "deps": attrs.list(attrs.dep(), default = []),
+            "deps": attrs.list(
+                attrs.dep(),
+                default = [],
+                doc = """
+                Targets that this test depends on, usually `cxx_library` targets. The headers and preprocessor
+                flags that they export are available when compiling the sources of this test, and they are
+                linked into it as `link_style` says.
+            """,
+            ),
             "devirt_enabled": attrs.bool(default = False),
             "executable_name": attrs.option(attrs.string(), default = None),
             "fat_lto": attrs.bool(default = False),
             "focused_list_target": attrs.option(attrs.dep(), default = None),
-            "frameworks": attrs.list(attrs.string(), default = []),
-            "header_namespace": attrs.option(attrs.string(), default = None),
+            "frameworks": attrs.list(
+                attrs.string(),
+                default = [],
+                doc = """
+                Frameworks that this test links against, for Apple platforms. Each entry is the path of a
+                `.framework` directory, for example `$SDKROOT/System/Library/Frameworks/Foundation.framework`. It
+                is linked with `-framework`, and the directory that contains a framework from outside the SDK is
+                added to the framework search path with `-F`. Has an effect only with a toolchain whose linker
+                type is `darwin`.
+            """,
+            ),
+            "header_namespace": attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The path prefix under which the `headers` of this test are included, as in
+                `#include "<header_namespace>/<header name>"`. Defaults to the path of the package that contains
+                the target. Can contain forward slashes (`/`), but cannot start with one.
+            """,
+            ),
             "headers_as_raw_headers_mode": attrs.option(attrs.enum(HeadersAsRawHeadersMode), default = None),
-            "lang_compiler_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
-            "lang_preprocessor_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
-            "libraries": attrs.list(attrs.string(), default = []),
+            "lang_compiler_flags": attrs.dict(
+                key = attrs.enum(CxxSourceType),
+                value = attrs.list(attrs.arg()),
+                sorted = False,
+                default = {},
+                doc = """
+                Compiler flags for the source files of one language. This is a dictionary from a language to a
+                list of flags, which are added before `compiler_flags` when compiling the sources of that
+                language. The main languages are named after the preprocessed form of the source: `c_cpp_output`
+                (`.c`), `cxx_cpp_output` (`.cpp`, `.cc`, `.cxx`, `.c++`), `objc_cpp_output` (`.m`),
+                `objcxx_cpp_output` (`.mm`), `assembler` (`.s`, `.S`, `.sx`) and `asm` (`.asm`, `.asmpp`).
+            """,
+            ),
+            "lang_preprocessor_flags": attrs.dict(
+                key = attrs.enum(CxxSourceType),
+                value = attrs.list(attrs.arg()),
+                sorted = False,
+                default = {},
+                doc = """
+                Preprocessor flags for the source files of one language. This is a dictionary from a language to
+                a list of flags, which are added after `preprocessor_flags` when compiling the sources of that
+                language. The main languages are `c` (`.c`), `cxx` (`.cpp`, `.cc`, `.cxx`, `.c++`), `objc` (`.m`),
+                `objcxx` (`.mm`), `assembler_with_cpp` (`.s`, `.S`, `.sx`) and `asm_with_cpp` (`.asm`, `.asmpp`).
+            """,
+            ),
+            "libraries": attrs.list(
+                attrs.string(),
+                default = [],
+                doc = """
+                System libraries that this test links against, for Apple platforms. Each entry is the file name or
+                path of a library, for example `$SDKROOT/usr/lib/libz.dylib`: the `lib` prefix and the extension
+                are removed, and the library is linked with `-l`, here `-lz`. Has an effect only with a toolchain
+                whose linker type is `darwin`.
+            """,
+            ),
             "link_deps_query_whole": attrs.bool(default = False),
             "link_group": attrs.option(attrs.string(), default = None),
             "link_group_map": LINK_GROUP_MAP_ATTR,
             "linker_extra_outputs": attrs.list(attrs.string(), default = []),
             "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
             "prefer_stripped_objects": attrs.bool(default = False),
-            "prefix_header": attrs.option(attrs.source(), default = None),
+            "prefix_header": attrs.option(
+                attrs.source(),
+                default = None,
+                doc = """
+                A header file that is included before every source file of this test, as if each source started
+                with an `#include` of it. The compiler is passed `-include` with the path of the file, as GCC
+                and Clang take it.
+            """,
+            ),
             "supports_test_execution_caching": attrs.bool(default = True),
             "thin_lto": attrs.bool(default = False),
             "use_default_test_main": attrs.option(attrs.bool(), default = None),
@@ -1727,9 +1797,27 @@ prebuilt_cxx_library = prelude_rule(
         | cxx_common.supported_platforms_regex_arg()
         | cxx_common.exported_headers_arg()
         | cxx_common.header_namespace_arg()
-        | cxx_common.exported_preprocessor_flags_arg(exported_preprocessor_flags_type = attrs.list(attrs.arg(), default = []))
+        | cxx_common.exported_preprocessor_flags_arg(
+            exported_preprocessor_flags_type = attrs.list(
+                attrs.arg(),
+                default = [],
+                doc = """
+                Flags to use when preprocessing the sources of the targets that depend on this library. A
+                library that depends on this one passes them on to its own dependents if it lists this one
+                in `exported_deps`.
+            """,
+            ),
+        )
         | cxx_common.exported_linker_flags_arg()
-        | cxx_common.force_static(force_static_type = attrs.bool(default = False))
+        | cxx_common.force_static(
+            force_static_type = attrs.bool(
+                default = False,
+                doc = """
+                If `True`, this library is always linked statically, even into targets that link their
+                dependencies as shared libraries. Takes precedence over `preferred_linkage`.
+            """,
+            ),
+        )
         | cxx_common.exported_deps_arg()
         | cxx_common.default_deps_arg("exported_deps")
         | cxx_common.supports_merged_linking()
@@ -1746,20 +1834,86 @@ prebuilt_cxx_library = prelude_rule(
                  The default is to not use a defile.
             """,
             ),
-            "deps": attrs.list(attrs.dep(), default = []),
+            "deps": attrs.list(
+                attrs.dep(),
+                default = [],
+                doc = """
+                Libraries that this library needs when it is linked statically into another target: they are
+                added to that link. They are not used when a shared library is linked from `static_pic_lib` or
+                `static_lib`, and shared libraries among them are not packaged with the executables, so a
+                dependency that is needed there belongs in `exported_deps`. Their headers and preprocessor
+                flags are not made available to the targets that depend on this library.
+            """,
+            ),
             "exported_lang_preprocessor_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
-            "exported_post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
-            "extract_soname": attrs.bool(default = False),
+            "exported_post_linker_flags": attrs.list(
+                attrs.arg(anon_target_compatible = True),
+                default = [],
+                doc = """
+                Flags to add to the linker command line in the links that take this library as an input. With
+                GNU and Windows linkers they are placed right after the library. They are not used when a shared
+                library is linked from `static_pic_lib` or `static_lib`.
+            """,
+            ),
+            "extract_soname": attrs.bool(
+                default = False,
+                doc = """
+                If `True` and `soname` is not set, the soname is read from `shared_lib` with `objdump` instead
+                of being derived from the name of the target.
+            """,
+            ),
             "frameworks": attrs.list(attrs.string(), default = []),
-            "import_lib": attrs.option(attrs.source(), default = None),
+            "import_lib": attrs.option(
+                attrs.source(),
+                default = None,
+                doc = """
+                The import library (`.lib`) that dependents pass to the linker on Windows, in place of the
+                DLL. It has an effect only when this library has a shared library: `shared_lib`, or one that
+                is linked from `static_pic_lib` or `static_lib`.
+            """,
+            ),
             "include_in_android_merge_map_output": attrs.bool(default = True),
             "libraries": attrs.list(attrs.string(), default = []),
-            "link_whole": attrs.bool(default = False),
-            "link_without_soname": attrs.bool(default = False),
+            "link_whole": attrs.bool(
+                default = False,
+                doc = """
+                If `True`, every object file of the static library is linked into the executables and shared
+                libraries that link it, including the object files that nothing refers to (for example with
+                `--whole-archive`). By default the linker only takes the object files that it needs.
+            """,
+            ),
+            "link_without_soname": attrs.bool(
+                default = False,
+                doc = """
+                If `True`, dependents link against `shared_lib` with `-L<directory of the library>` and
+                `-l<name>` instead of passing the path of the library to the linker, where `<name>` is the file
+                name without its `lib` prefix and without everything from its first dot. This is for a shared
+                library that has no soname, so that the path it has during the build is not recorded in the
+                binaries that link it.
+            """,
+            ),
             "platform_import_lib": attrs.option(attrs.list(attrs.tuple(attrs.regex(), attrs.source())), default = None),
             "prestripped": attrs.bool(default = False, doc = "When set, skips running `strip` commands when building this library."),
-            "provided": attrs.bool(default = False),
-            "soname": attrs.option(attrs.string(), default = None),
+            "provided": attrs.bool(
+                default = False,
+                doc = """
+                If `True`, the library is taken to be present already on the system where the built code runs.
+                Dependents link against `shared_lib`, unless `force_static` or `preferred_linkage` says
+                otherwise, and the shared library is not packaged with the executables that use it.
+            """,
+            ),
+            "soname": attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The file name under which the shared library is made available to the executables that load it.
+                It is also the name and soname of the shared library that is linked from the static library when
+                `shared_lib` is not set. Defaults to the platform's form of `lib<name>.so`, where `<name>` is
+                the name of the target. A `.$(ext)` at the end expands to the platform's shared library
+                extension, and takes an optional version: `libfoo.$(ext 2.3)` is `libfoo.so.2.3` on Linux and
+                `libfoo.2.3.dylib` on macOS.
+            """,
+            ),
             "supports_shared_library_interface": attrs.bool(default = True),
             "versioned_exported_lang_preprocessor_flags": attrs.versioned(
                 attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False)
@@ -1785,7 +1939,16 @@ prebuilt_cxx_library = prelude_rule(
                  to the include path using `-isystem`.
             """,
             ),
-            "linker_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
+            "linker_flags": attrs.list(
+                attrs.arg(anon_target_compatible = True),
+                default = [],
+                doc = """
+                Flags to add to the linker command line when a shared library is linked from `static_pic_lib`
+                or `static_lib`, which happens when this library is linked as a shared library and `shared_lib`
+                is not set. They are not used in the links that take this library as an input:
+                `exported_linker_flags` is for those.
+            """,
+            ),
             "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
             "preferred_linkage": attrs.enum(
                 Linkage.values(),
@@ -1795,9 +1958,37 @@ prebuilt_cxx_library = prelude_rule(
         control how the dependencies of this library are linked, use `link_style` instead.
         """,
             ),
-            "public_include_directories": attrs.set(attrs.string(), sorted = True, default = []),
-            "public_system_include_directories": attrs.set(attrs.string(), sorted = True, default = []),
-            "raw_headers": attrs.set(attrs.source(), sorted = True, default = []),
+            "public_include_directories": attrs.set(
+                attrs.string(),
+                sorted = True,
+                default = [],
+                doc = """
+                Directories to add, with `-I`, to the include path of every target that depends on this library.
+                A directory is relative to the package of this target. List the headers it contains in
+                `raw_headers`.
+            """,
+            ),
+            "public_system_include_directories": attrs.set(
+                attrs.string(),
+                sorted = True,
+                default = [],
+                doc = """
+                Directories to add as system include directories (`-isystem`, or `/external:I` with MSVC and
+                clang-cl) to every target that depends on this library. A directory is relative to the package
+                of this target. List the headers it contains in `raw_headers`.
+            """,
+            ),
+            "raw_headers": attrs.set(
+                attrs.source(),
+                sorted = True,
+                default = [],
+                doc = """
+                Header files of this library that dependents include by their path under
+                `public_include_directories` or `public_system_include_directories`, rather than under a
+                `header_namespace` as with `exported_headers`. Listing a header makes it an input of the
+                compilations that depend on this library. It adds nothing to the include path.
+            """,
+            ),
             "stub": attrs.bool(default = False),
             "supports_lto": attrs.bool(default = False),
             "supports_python_dlopen": attrs.bool(default = True),

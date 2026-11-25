@@ -589,7 +589,15 @@ def cxx_binary_and_test_attrs():
             # Linker flags that only apply to the executable link, used for link
             # strategies (e.g. link groups) which may link shared libraries from
             # top-level binary context.
-            "binary_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup), default = []),
+            "binary_linker_flags": attrs.list(
+                attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup),
+                default = [],
+                doc = """
+                Flags to add to the linker command line when the executable itself is linked. `linker_flags`
+                come before the object files; with GNU and Windows linkers, these come after the object files
+                and the libraries that the executable links.
+            """,
+            ),
             "bolt_flags": attrs.list(attrs.arg(), default = []),
             "bolt_profile": attrs.option(attrs.source(), default = None),
             # These flags will only be used to instrument a target
@@ -610,7 +618,20 @@ def cxx_binary_and_test_attrs():
             "link_preference": attrs.enum(LinkPreference.values(), default = "default"),
             "link_whole": attrs.default_only(attrs.bool(default = False)),
             "precompiled_header": attrs.option(attrs.dep(providers = [CPrecompiledHeaderInfo]), default = None),
-            "resources": attrs.named_set(attrs.one_of(attrs.dep(), attrs.source(allow_directory = True)), sorted = True, default = []),
+            "resources": attrs.named_set(
+                attrs.one_of(attrs.dep(), attrs.source(allow_directory = True)),
+                sorted = True,
+                default = [],
+                doc = """
+                Files and directories that the executable needs at runtime. Each entry is a file, a directory, or
+                a target whose output is used. They are listed, together with the `resources` of the libraries
+                that the executable depends on, in the JSON file `<executable>.resources.json` that is written
+                next to the executable and maps the name of each resource to its path relative to the executable.
+                A resource is named by the `header_namespace` of this rule, which defaults to the package path,
+                followed by its path relative to the package, or for a target by the path of its output. Use a
+                dictionary to give the part after the `header_namespace` yourself.
+            """,
+            ),
             "separate_debug_info": attrs.bool(default = False),
             "_build_info": BUILD_INFO_ATTR,
             "_cxx_hacks": attrs.dep(default = "prelude//cxx/tools:cxx_hacks"),
@@ -633,7 +654,17 @@ _library_attrs = (
     | cxx_common.header_namespace_arg()
     | cxx_common.preprocessor_flags_arg()
     | cxx_common.lang_preprocessor_flags_arg()
-    | cxx_common.exported_preprocessor_flags_arg(exported_preprocessor_flags_type = attrs.list(attrs.arg(), default = []))
+    | cxx_common.exported_preprocessor_flags_arg(
+        exported_preprocessor_flags_type = attrs.list(
+            attrs.arg(),
+            default = [],
+            doc = """
+            Flags to use when preprocessing the sources of this rule and the sources of the targets that
+            depend on it. A library that depends on this rule passes them on to its own dependents if it
+            lists this rule in `exported_deps`.
+        """,
+        ),
+    )
     | cxx_common.exported_lang_preprocessor_flags_arg()
     | cxx_common.compiler_flags_arg()
     | cxx_common.lang_compiler_flags_arg()
@@ -643,7 +674,17 @@ _library_attrs = (
     | cxx_common.exported_linker_flags_arg()
     | cxx_common.exported_post_linker_flags_arg()
     | native_common.link_style()
-    | native_common.link_whole(link_whole_type = attrs.option(attrs.bool(), default = None))
+    | native_common.link_whole(
+        link_whole_type = attrs.option(
+            attrs.bool(),
+            default = None,
+            doc = """
+            If `True`, every object file of this library is linked into the executables and shared libraries
+            that link it statically, including the object files that nothing refers to (for example with
+            `--whole-archive`). By default the linker only takes the object files that it needs.
+        """,
+        ),
+    )
     | native_common.soname()
     | cxx_common.raw_headers_arg()
     | cxx_common.supports_stripping()
@@ -675,7 +716,17 @@ _library_attrs = (
         ),
     }
     | cxx_common.supported_platforms_regex_arg()
-    | cxx_common.force_static(force_static_type = attrs.option(attrs.bool(), default = None))
+    | cxx_common.force_static(
+        force_static_type = attrs.option(
+            attrs.bool(),
+            default = None,
+            doc = """
+            If `True`, this library is always linked statically, even into targets that link their
+            dependencies as shared libraries. This is the same as `preferred_linkage = "static"`, and takes
+            precedence over `preferred_linkage`.
+        """,
+        ),
+    )
     | native_common.preferred_linkage(preferred_linkage_type = attrs.option(attrs.enum(Linkage.values()), default = None))
     | cxx_common.reexport_all_header_dependencies_arg()
     | cxx_common.exported_deps_arg()
@@ -738,15 +789,51 @@ _library_attrs = (
         "extra_dwp_flags": attrs.list(attrs.string(), default = []),
         "fat_lto": attrs.bool(default = False),
         "focused_list_target": attrs.option(attrs.dep(), default = None),
-        "frameworks": attrs.list(attrs.string(), default = []),
+        "frameworks": attrs.list(
+            attrs.string(),
+            default = [],
+            doc = """
+            Frameworks that this library links against, for Apple platforms. Each entry is the path of a
+            `.framework` directory, for example `$SDKROOT/System/Library/Frameworks/Foundation.framework`. It
+            is linked with `-framework`, and the directory that contains a framework from outside the SDK is
+            added to the framework search path with `-F`. Has an effect only with a toolchain whose linker
+            type is `darwin`.
+        """,
+        ),
         "headers_as_raw_headers_mode": attrs.option(attrs.enum(HeadersAsRawHeadersMode), default = None),
         "include_in_android_merge_map_output": attrs.bool(default = True),
-        "libraries": attrs.list(attrs.string(), default = []),
+        "libraries": attrs.list(
+            attrs.string(),
+            default = [],
+            doc = """
+            System libraries that this library links against, for Apple platforms. Each entry is the file name or
+            path of a library, for example `$SDKROOT/usr/lib/libz.dylib`: the `lib` prefix and the extension
+            are removed, and the library is linked with `-l`, here `-lz`. Has an effect only with a toolchain
+            whose linker type is `darwin`.
+        """,
+        ),
         "link_group": attrs.option(attrs.string(), default = None),
         "link_group_map": LINK_GROUP_MAP_ATTR,
         "module_name": attrs.option(attrs.string(), default = None),
-        "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup), default = []),
-        "prefix_header": attrs.option(attrs.source(), default = None),
+        "post_linker_flags": attrs.list(
+            attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup),
+            default = [],
+            doc = """
+            Flags to add to the linker command line when this library is linked as a shared library. With
+            GNU and Windows linkers they are placed after the object files of the library. They are not used
+            when the library is linked statically into another target: `exported_post_linker_flags` is for
+            flags that dependents need.
+        """,
+        ),
+        "prefix_header": attrs.option(
+            attrs.source(),
+            default = None,
+            doc = """
+            A header file that is included before every source file of this rule, as if each source started
+            with an `#include` of it. The compiler is passed `-include` with the path of the file, as GCC
+            and Clang take it.
+        """,
+        ),
         "resources": attrs.named_set(attrs.source(), sorted = True, default = []),
         "sdk_modules": attrs.list(attrs.string(), default = []),
         "static_library_basename": attrs.option(attrs.string(), default = None),
@@ -855,22 +942,88 @@ def cxx_binary_base_attrs() -> dict[str, Attr]:
             "cxx_runtime_type": attrs.option(attrs.enum(CxxRuntimeType), default = None),
             "default_platform": attrs.option(attrs.string(), default = None),
             "defaults": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
-            "deps": attrs.list(attrs.dep(), default = []),
+            "deps": attrs.list(
+                attrs.dep(),
+                default = [],
+                doc = """
+                Targets that this binary depends on, usually `cxx_library` targets. The headers and preprocessor
+                flags that they export are available when compiling the sources of this binary, and they are
+                linked into it as `link_style` says.
+            """,
+            ),
             "devirt_enabled": attrs.bool(default = False),
-            "executable_name": attrs.option(attrs.string(), default = None),
+            "executable_name": attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The file name of the executable that this rule produces. Defaults to the name of the target. The
+                executable extension of the toolchain (`.exe` on Windows) is added unless the name already ends
+                with it.
+            """,
+            ),
             "fat_lto": attrs.bool(default = False),
             "focused_list_target": attrs.option(attrs.dep(), default = None),
-            "frameworks": attrs.list(attrs.string(), default = []),
+            "frameworks": attrs.list(
+                attrs.string(),
+                default = [],
+                doc = """
+                Frameworks that this binary links against, for Apple platforms. Each entry is the path of a
+                `.framework` directory, for example `$SDKROOT/System/Library/Frameworks/Foundation.framework`. It
+                is linked with `-framework`, and the directory that contains a framework from outside the SDK is
+                added to the framework search path with `-F`. Has an effect only with a toolchain whose linker
+                type is `darwin`.
+            """,
+            ),
             "headers_as_raw_headers_mode": attrs.option(attrs.enum(HeadersAsRawHeadersMode), default = None),
-            "lang_compiler_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
-            "lang_preprocessor_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
-            "libraries": attrs.list(attrs.string(), default = []),
+            "lang_compiler_flags": attrs.dict(
+                key = attrs.enum(CxxSourceType),
+                value = attrs.list(attrs.arg()),
+                sorted = False,
+                default = {},
+                doc = """
+                Compiler flags for the source files of one language. This is a dictionary from a language to a
+                list of flags, which are added before `compiler_flags` when compiling the sources of that
+                language. The main languages are named after the preprocessed form of the source: `c_cpp_output`
+                (`.c`), `cxx_cpp_output` (`.cpp`, `.cc`, `.cxx`, `.c++`), `objc_cpp_output` (`.m`),
+                `objcxx_cpp_output` (`.mm`), `assembler` (`.s`, `.S`, `.sx`) and `asm` (`.asm`, `.asmpp`).
+            """,
+            ),
+            "lang_preprocessor_flags": attrs.dict(
+                key = attrs.enum(CxxSourceType),
+                value = attrs.list(attrs.arg()),
+                sorted = False,
+                default = {},
+                doc = """
+                Preprocessor flags for the source files of one language. This is a dictionary from a language to
+                a list of flags, which are added after `preprocessor_flags` when compiling the sources of that
+                language. The main languages are `c` (`.c`), `cxx` (`.cpp`, `.cc`, `.cxx`, `.c++`), `objc` (`.m`),
+                `objcxx` (`.mm`), `assembler_with_cpp` (`.s`, `.S`, `.sx`) and `asm_with_cpp` (`.asm`, `.asmpp`).
+            """,
+            ),
+            "libraries": attrs.list(
+                attrs.string(),
+                default = [],
+                doc = """
+                System libraries that this binary links against, for Apple platforms. Each entry is the file name or
+                path of a library, for example `$SDKROOT/usr/lib/libz.dylib`: the `lib` prefix and the extension
+                are removed, and the library is linked with `-l`, here `-lz`. Has an effect only with a toolchain
+                whose linker type is `darwin`.
+            """,
+            ),
             "link_deps_query_whole": attrs.bool(default = False),
             "link_group": attrs.option(attrs.string(), default = None),
             "link_group_map": LINK_GROUP_MAP_ATTR,
             "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup), default = []),
             "prefer_stripped_objects": attrs.bool(default = False),
-            "prefix_header": attrs.option(attrs.source(), default = None),
+            "prefix_header": attrs.option(
+                attrs.source(),
+                default = None,
+                doc = """
+                A header file that is included before every source file of this binary, as if each source started
+                with an `#include` of it. The compiler is passed `-include` with the path of the file, as GCC
+                and Clang take it.
+            """,
+            ),
             "resources": attrs.named_set(attrs.source(), sorted = True, default = []),
             "thin_lto": attrs.bool(default = False),
             "use_header_units": attrs.one_of(attrs.bool(), attrs.enum(["stub"]), default = False),

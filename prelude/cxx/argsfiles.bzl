@@ -35,8 +35,8 @@ CompileArgsfile = record(
     # set's `args`, the target's own exported preprocessor first, then its dependencies', and its
     # `modular_args` when the set uses modules), `target` (`_target_compile_flags`, the include
     # directories and the `-include` of a prefix header or an uncompiled precompiled header). The
-    # file-prefix arguments (`-ffile-prefix-map`, `-fcoverage-prefix-map`, the symlink-tree header
-    # modes' last argsfile) are in no layer on purpose: they map the paths of this compile's own
+    # file-prefix arguments (`-ffile-prefix-map`, the symlink-tree header modes' last argsfile)
+    # are in no layer on purpose: they map the paths of this compile's own
     # symlink trees, which a compile run from elsewhere never sees. Kept for Xcode argsfiles
     # alone, for the `xcode-compiler-flags` sub-target; None otherwise.
     layers = field(dict[str, cmd_args] | None, None),

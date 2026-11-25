@@ -78,10 +78,10 @@ Headers = record(
     header_map = field(Artifact | None, None),
     # NOTE(agallagher): Used for module hack replacement.
     symlink_tree = field(Artifact | None, None),
-    # -fdebug-prefix-map args that map symlinked headers to source path
+    # -ffile-prefix-map args that map symlinked headers to source path. The compiler drivers
+    # derive the prefix maps for debug info, macros and coverage data from them, so none of
+    # those needs flags of its own.
     file_prefix_args = field([cmd_args, None], None),
-    # -fcoverage-prefix-map args (clang-only, separated so non-clang compilers can skip them)
-    coverage_prefix_args = field([cmd_args, None], None),
 )
 
 CHeader = record(
@@ -302,16 +302,13 @@ def prepare_headers(
         hmap = _mk_hmap(actions, cxx_toolchain_info, output_name, headers, allow_cache_upload, uses_content_based_paths)
         replacement = _get_prefix_map_replacement(cxx_toolchain_info, symlink_dir, srcs, header_namespace)
         file_prefix_args = None
-        coverage_prefix_args = None
         if replacement != None:
             file_prefix_args = cmd_args(cmd_args(symlink_dir, format = prefix_map_flag + "={}="), replacement, delimiter = "")
-            coverage_prefix_args = cmd_args(cmd_args(symlink_dir, format = "-fcoverage-prefix-map={}="), replacement, delimiter = "")
         return Headers(
             include_path = cmd_args(hmap, hidden = symlink_dir),
             header_map = hmap,
             symlink_tree = symlink_dir,
             file_prefix_args = file_prefix_args,
-            coverage_prefix_args = coverage_prefix_args,
         )
     fail("Unsupported header mode: {}".format(header_mode))
 

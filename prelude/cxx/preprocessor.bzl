@@ -46,12 +46,9 @@ SystemIncludeDirs = record(
 CPreprocessorArgs = record(
     # The arguments, [arglike things]
     args = field(list[typing.Any], []),
-    # -fdebug-prefix-map args that map symlinks to source file location. Compiles don't take
+    # -ffile-prefix-map args that map symlinks to source file location. Compiles don't take
     # inputs from these, so they may only name artifacts that `args` carries.
     file_prefix_args = field(list[typing.Any], []),
-    # -fcoverage-prefix-map args (clang-only, separated so non-clang compilers can skip them).
-    # As for `file_prefix_args`, they may only name artifacts that `args` carries.
-    coverage_prefix_args = field(list[typing.Any], []),
     # Arguments used for module precompilation, replacing args
     precompile_args = field(list[typing.Any], []),
     # Header maps named by `args`, without the header trees behind them. Tools
@@ -170,16 +167,10 @@ def _cpreprocessor_file_prefix_args(pres: list[CPreprocessor]):
         args.add(pre.args.file_prefix_args)
     return args
 
-def _cpreprocessor_coverage_prefix_args(pres: list[CPreprocessor]):
-    args = cmd_args()
-    for pre in pres:
-        args.add(pre.args.coverage_prefix_args)
-    return args
-
 def _cpreprocessor_has_file_prefix_args(children: list[bool], pres: [list[CPreprocessor], None]):
     if pres:
         for pre in pres:
-            if pre.args.file_prefix_args or pre.args.coverage_prefix_args:
+            if pre.args.file_prefix_args:
                 return True
     return any(children)
 
@@ -215,7 +206,6 @@ def _cpreprocessor_uses_modules(children: list[bool], pres: [list[CPreprocessor]
 CPreprocessorTSet = transitive_set(
     args_projections = {
         "args": _cpreprocessor_args,
-        "coverage_prefix_args": _cpreprocessor_coverage_prefix_args,
         "file_prefix_args": _cpreprocessor_file_prefix_args,
         "header_maps": _cpreprocessor_header_maps,
         "header_unit_stubs_args": _cpreprocessor_header_unit_stubs_args,
@@ -407,7 +397,6 @@ def get_exported_preprocessor_args(
 
     # Propagate the exported header tree.
     file_prefix_args = []
-    coverage_prefix_args = []
     header_maps = []
     if header_root != None:
         args.extend(_header_style_args(style, header_root.include_path, compiler_type))
@@ -416,8 +405,6 @@ def get_exported_preprocessor_args(
             header_maps.append(header_root.header_map)
         if header_root.file_prefix_args != None:
             file_prefix_args.append(header_root.file_prefix_args)
-        if header_root.coverage_prefix_args != None:
-            coverage_prefix_args.append(header_root.coverage_prefix_args)
 
     # Embed raw headers as hidden artifacts in our args.  This means downstream
     # cases which use these args don't also need to know to add raw headers.
@@ -434,11 +421,9 @@ def get_exported_preprocessor_args(
         precompile_args.extend(pre.args.precompile_args)
         header_maps.extend(pre.args.header_maps)
 
-    if not args and not file_prefix_args and not coverage_prefix_args and not precompile_args:
+    if not args and not file_prefix_args and not precompile_args:
         return _EMPTY_CPREPROCESSOR_ARGS
-    return CPreprocessorArgs(
-        args = args, file_prefix_args = file_prefix_args, coverage_prefix_args = coverage_prefix_args, precompile_args = precompile_args, header_maps = header_maps
-    )
+    return CPreprocessorArgs(args = args, file_prefix_args = file_prefix_args, precompile_args = precompile_args, header_maps = header_maps)
 
 def cxx_private_preprocessor_info(
     ctx: AnalysisContext,
@@ -538,7 +523,6 @@ def _get_private_preprocessor_args(
     args = get_target_sdk_version_flags(ctx)
     cxx_toolchain_info = get_cxx_toolchain_info(ctx)
     file_prefix_args = []
-    coverage_prefix_args = []
     header_maps = []
     header_mode = map_val(HeaderMode, getattr(ctx.attrs, "header_mode", None))
     allow_cache_upload = cxx_attrs_get_allow_cache_upload(ctx.attrs)
@@ -558,8 +542,6 @@ def _get_private_preprocessor_args(
             header_maps.append(header_root.header_map)
         if header_root.file_prefix_args != None:
             file_prefix_args.append(header_root.file_prefix_args)
-        if header_root.coverage_prefix_args != None:
-            coverage_prefix_args.append(header_root.coverage_prefix_args)
 
     # Embed raw headers as hidden artifacts in our args.  This means downstream
     # cases which use these args don't also need to know to add raw headers.
@@ -568,9 +550,9 @@ def _get_private_preprocessor_args(
         # appears to do the job (and not e.g. expand to `""`).
         args.append(cmd_args(hidden = all_raw_headers))
 
-    if not args and not file_prefix_args and not coverage_prefix_args:
+    if not args and not file_prefix_args:
         return _EMPTY_CPREPROCESSOR_ARGS
-    return CPreprocessorArgs(args = args, file_prefix_args = file_prefix_args, coverage_prefix_args = coverage_prefix_args, header_maps = header_maps)
+    return CPreprocessorArgs(args = args, file_prefix_args = file_prefix_args, header_maps = header_maps)
 
 def _by_language_cxx(x: dict[typing.Any, typing.Any]) -> list[typing.Any]:
     return cxx_by_language_ext(x, ".cpp")

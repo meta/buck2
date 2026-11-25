@@ -338,13 +338,11 @@ fn label_methods(builder: &mut MethodsBuilder) {
 }
 
 // TODO(nga): remove the `Label` alias. (T264813434)
-#[starlark_module]
-#[starlark_types(
-    StarlarkConfiguredProvidersLabel as Label,
-    StarlarkProvidersLabel as ProvidersLabel,
-    StarlarkConfiguredProvidersLabel as ConfiguredProvidersLabel
-)]
-pub fn register_providers_label(globals: &mut GlobalsBuilder) {}
+pub fn register_providers_label(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkConfiguredProvidersLabel>();
+    globals.type_symbol::<StarlarkProvidersLabel>();
+    globals.type_symbol_as::<StarlarkConfiguredProvidersLabel>("ConfiguredProvidersLabel");
+}
 
 #[cfg(test)]
 mod tests {

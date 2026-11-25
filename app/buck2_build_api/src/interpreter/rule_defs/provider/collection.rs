@@ -753,8 +753,6 @@ pub mod tester {
     }
 }
 
-#[starlark_module]
-#[starlark_types(
-    ProviderCollection<'static> as ProviderCollection
-)]
-pub(crate) fn register_provider_collection(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_provider_collection(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<ProviderCollection>();
+}

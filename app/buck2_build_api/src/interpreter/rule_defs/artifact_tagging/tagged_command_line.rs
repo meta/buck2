@@ -101,8 +101,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkTaggedCommandLine<'v> {
     }
 }
 
-#[starlark_module]
-#[starlark_types(
-    StarlarkTaggedCommandLine<'_> as TaggedCommandLine
-)]
-pub(crate) fn register_tagged_command_line(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_tagged_command_line(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkTaggedCommandLine>();
+}

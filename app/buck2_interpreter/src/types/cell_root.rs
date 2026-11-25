@@ -57,6 +57,6 @@ impl<'v> StarlarkValue<'v> for CellRoot {}
 #[starlark_module]
 fn cell_root_methods(_builder: &mut MethodsBuilder) {}
 
-#[starlark_module]
-#[starlark_types(CellRoot as CellRoot)]
-pub fn register_cell_root(globals: &mut GlobalsBuilder) {}
+pub fn register_cell_root(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<CellRoot>();
+}

@@ -47,9 +47,6 @@ impl<'v> StarlarkValue<'v> for StarlarkDynamicAttrType<'v> {}
 
 /// Attributes declared for [`dynamic_actions()`](../#dynamic_actions) functions.
 #[starlark_module]
-#[starlark_types(
-    StarlarkDynamicAttrType<'_> as DynamicAttrType
-)]
 fn struct_dynattrs(globals: &mut GlobalsBuilder) {
     /// Unbound output to be bound by this dynamic action.
     /// Accepts an [`OutputArtifact`](../OutputArtifact/).
@@ -169,6 +166,8 @@ fn struct_dynattrs(globals: &mut GlobalsBuilder) {
             },
         ))
     }
+
+    globals.type_symbol::<StarlarkDynamicAttrType>();
 }
 
 pub fn register_dynamic_attrs(globals: &mut GlobalsBuilder) {

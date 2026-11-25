@@ -66,6 +66,6 @@ fn digest_config_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkDigestConfig as DigestConfig)]
-pub(crate) fn register_digest_config_type(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_digest_config_type(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkDigestConfig>();
+}

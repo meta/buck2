@@ -342,11 +342,9 @@ fn resolved_string_with_macros_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(
-    ResolvedStringWithMacros<'static> as ResolvedStringWithMacros
-)]
-pub(crate) fn register_string_with_macros(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_string_with_macros(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<ResolvedStringWithMacros>();
+}
 
 #[cfg(test)]
 mod tests {

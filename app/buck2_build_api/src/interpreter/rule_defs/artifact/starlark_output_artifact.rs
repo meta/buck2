@@ -367,8 +367,6 @@ impl<'v> CommandLineArgLike<'v> for FrozenStarlarkOutputArtifact<'v> {
 }
 
 /// The result of calling [`Artifact.as_output()`](../Artifact/#artifactas_output).
-#[starlark_module]
-#[starlark_types(
-    StarlarkOutputArtifact<'_> as OutputArtifact
-)]
-pub(crate) fn register_output_artifact(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_output_artifact(globals: &mut GlobalsBuilder) {
+    globals.type_symbol_as::<StarlarkOutputArtifact>("OutputArtifact");
+}

@@ -325,9 +325,10 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(AnalysisContext<'_> as AnalysisContext, AnalysisActions<'_> as AnalysisActions)]
-pub(crate) fn register_analysis_context(builder: &mut GlobalsBuilder) {}
+pub(crate) fn register_analysis_context(builder: &mut GlobalsBuilder) {
+    builder.type_symbol::<AnalysisContext>();
+    builder.type_symbol::<AnalysisActions>();
+}
 
 pub(crate) fn init_analysis_context_ty() {
     AnalysisContextReprLate::init(AnalysisContext::starlark_type_repr(), |value| {

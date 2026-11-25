@@ -152,6 +152,6 @@ impl StarlarkAttribute {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkAttribute as Attr)]
-pub(crate) fn register_attr_type(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_attr_type(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkAttribute>();
+}

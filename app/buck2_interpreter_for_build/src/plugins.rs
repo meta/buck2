@@ -237,7 +237,6 @@ impl<'v> StarlarkValue<'v> for AllPlugins {}
 /// # Result: Both :lib and :bin get :my_derive_impl configured for their own exec platforms
 /// ```
 #[starlark_module]
-#[starlark_types(StarlarkPluginKind as PluginKind)]
 fn register_plugins_methods(r: &mut GlobalsBuilder) {
     /// Create a new plugin kind.
     ///
@@ -278,6 +277,8 @@ fn register_plugins_methods(r: &mut GlobalsBuilder) {
     /// This value is not supported on `uses_plugins` at this time, and hence it is not useful on
     /// `pulls_plugins` either.
     const All: AllPlugins = AllPlugins;
+
+    r.type_symbol_as::<StarlarkPluginKind>("PluginKind");
 }
 
 pub(crate) fn register_plugins(globals: &mut GlobalsBuilder) {

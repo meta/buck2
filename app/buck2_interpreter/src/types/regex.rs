@@ -165,7 +165,6 @@ fn regex_methods(builder: &mut MethodsBuilder) {
 }
 
 #[starlark_module]
-#[starlark_types(StarlarkBuckRegex as BuckRegex)]
 pub fn register_buck_regex(builder: &mut GlobalsBuilder) {
     /// Compile a regular expression from a string.
     ///
@@ -197,6 +196,8 @@ pub fn register_buck_regex(builder: &mut GlobalsBuilder) {
         };
         Ok(ValueOf::alloc(heap, regex))
     }
+
+    builder.type_symbol_as::<StarlarkBuckRegex>("BuckRegex");
 }
 
 #[cfg(test)]

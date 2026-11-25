@@ -364,9 +364,7 @@ impl<'v> LabelArg<'v> {
     }
 }
 
-#[starlark_module]
-#[starlark_types(
-    StarlarkTargetLabel as TargetLabel,
-    StarlarkConfiguredTargetLabel as ConfiguredTargetLabel
-)]
-pub fn register_target_label(globals: &mut GlobalsBuilder) {}
+pub fn register_target_label(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkTargetLabel>();
+    globals.type_symbol::<StarlarkConfiguredTargetLabel>();
+}

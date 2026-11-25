@@ -17,13 +17,11 @@ use crate::interpreter::rule_defs::transitive_set::transitive_set_json_projectio
 use crate::interpreter::rule_defs::transitive_set::traversal::TransitiveSetProjectionTraversal;
 use crate::interpreter::rule_defs::transitive_set::traversal::TransitiveSetTraversal;
 
-#[starlark_module]
-#[starlark_types(
-    TransitiveSet<'static> as TransitiveSet,
-    TransitiveSetArgsProjection<'static> as TransitiveSetArgsProjection,
-    FrozenTransitiveSetDefinition<'static> as TransitiveSetDefinition,
-    TransitiveSetJsonProjection<'static> as TransitiveSetJsonProjection,
-    TransitiveSetTraversal<'static> as TransitiveSetIterator,
-    TransitiveSetProjectionTraversal<'static> as TransitiveSetArgsProjectionIterator
-)]
-pub fn register_transitive_set_types(globals: &mut GlobalsBuilder) {}
+pub fn register_transitive_set_types(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<TransitiveSet>();
+    globals.type_symbol::<TransitiveSetArgsProjection>();
+    globals.type_symbol_as::<FrozenTransitiveSetDefinition>("TransitiveSetDefinition");
+    globals.type_symbol::<TransitiveSetJsonProjection>();
+    globals.type_symbol::<TransitiveSetTraversal>();
+    globals.type_symbol::<TransitiveSetProjectionTraversal>();
+}

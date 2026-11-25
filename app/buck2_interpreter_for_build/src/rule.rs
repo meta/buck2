@@ -1021,7 +1021,6 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable<'v> {
 }
 
 #[starlark_module]
-#[starlark_types(StarlarkRuleCallable<'_> as Rule)]
 pub fn register_rule_function(builder: &mut GlobalsBuilder) {
     /// Define a rule. As a simple example:
     ///
@@ -1110,4 +1109,6 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             StarlarkRuleCallable::new_anon(r#impl, attrs, doc, artifact_promise_mappings, eval)?;
         Ok(eval.heap().alloc(rule))
     }
+
+    builder.type_symbol_as::<StarlarkRuleCallable>("Rule");
 }

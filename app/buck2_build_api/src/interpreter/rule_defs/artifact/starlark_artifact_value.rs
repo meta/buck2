@@ -189,9 +189,9 @@ fn artifact_value_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkArtifactValue as ArtifactValue)]
-pub(crate) fn register_artifact_value(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_artifact_value(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkArtifactValue>();
+}
 
 #[cfg(test)]
 mod tests {

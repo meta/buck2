@@ -396,9 +396,7 @@ fn select_concat_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(
-    StarlarkSelectDict as SelectDict,
-    StarlarkSelectConcat as SelectConcat
-)]
-pub fn register_select_types(globals: &mut GlobalsBuilder) {}
+pub fn register_select_types(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkSelectDict>();
+    globals.type_symbol::<StarlarkSelectConcat>();
+}

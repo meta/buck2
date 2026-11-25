@@ -12,7 +12,6 @@ use allocative::Allocative;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::starlark_module;
 use starlark::static_starlark_value;
 use starlark::values::AllocFrozenRepresentation;
 use starlark::values::AllocRepresentation;
@@ -56,6 +55,6 @@ impl<'fv> AllocFrozenRepresentation<'fv> for StarlarkProjectRoot {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkProjectRoot as ProjectRoot)]
-pub fn register_project_root(globals: &mut GlobalsBuilder) {}
+pub fn register_project_root(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkProjectRoot>();
+}

@@ -1427,8 +1427,6 @@ fn command_line_inputs_methods(_builder: &mut MethodsBuilder) {
     // No methods currently - this type only supports len() and equality via StarlarkValue trait
 }
 
-#[starlark_module]
-#[starlark_types(
-    StarlarkCommandLineInputs as CommandLineInputs
-)]
-pub(crate) fn register_command_line_inputs(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_command_line_inputs(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkCommandLineInputs>();
+}

@@ -72,8 +72,6 @@ fn resolved_dynamic_value_methods(method: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(
-    StarlarkResolvedDynamicValue<'_> as ResolvedDynamicValue
-)]
-pub fn register_resolved_dynamic_value(globals: &mut GlobalsBuilder) {}
+pub fn register_resolved_dynamic_value(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkResolvedDynamicValue>();
+}

@@ -256,8 +256,6 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(
-    Dependency<'static> as Dependency
-)]
-pub(crate) fn register_dependency(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_dependency(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<Dependency>();
+}

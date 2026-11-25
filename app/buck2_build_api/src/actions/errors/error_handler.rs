@@ -548,12 +548,10 @@ impl StarlarkActionSubError {
     }
 }
 
-#[starlark_module]
-#[starlark_types(
-    StarlarkActionSubError as ActionSubError,
-    StarlarkActionErrorContext<'_> as ActionErrorCtx
-)]
-pub(crate) fn register_action_error_types(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_action_error_types(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkActionSubError>();
+    globals.type_symbol::<StarlarkActionErrorContext>();
+}
 
 /// Global methods for testing starlark action error handler.
 #[starlark_module]

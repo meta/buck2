@@ -274,7 +274,6 @@ impl<'v> StarlarkValue<'v> for StarlarkSelector<'v> {
 }
 
 #[starlark_module]
-#[starlark_types(StarlarkSelector<'_> as Select)]
 pub fn register_select(globals: &mut GlobalsBuilder) {
     fn select<'v>(
         #[starlark(require = pos)] d: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
@@ -404,6 +403,8 @@ pub fn register_select(globals: &mut GlobalsBuilder) {
     ) -> starlark::Result<bool> {
         StarlarkSelector::select_test(d, eval, func)
     }
+
+    globals.type_symbol::<StarlarkSelector>();
 }
 #[starlark_module]
 pub fn register_select_internal(globals: &mut GlobalsBuilder) {

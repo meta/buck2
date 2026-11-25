@@ -49,9 +49,9 @@ impl<'v> StarlarkValue<'v> for StarlarkDynamicValue {
     // used for docs of `DynamicValue`
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkDynamicValue as DynamicValue)]
-pub fn register_dynamic_value(globals: &mut GlobalsBuilder) {}
+pub fn register_dynamic_value(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkDynamicValue>();
+}
 
 /// A value produced by a dynamic action that can be consumed by other dynamic actions.
 ///

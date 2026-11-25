@@ -49,7 +49,6 @@ use pagable::pagable_typetag;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_complex_value;
-use starlark::starlark_module;
 use starlark::values::Freeze;
 use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
@@ -356,8 +355,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkWriteJsonCommandLineArg<'v> {
     }
 }
 
-#[starlark_module]
-#[starlark_types(
-    StarlarkWriteJsonCommandLineArg<'_> as WriteJsonCliArgs
-)]
-pub(crate) fn register_write_json_cli_args(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_write_json_cli_args(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkWriteJsonCommandLineArg>();
+}

@@ -53,43 +53,42 @@ use crate::bxl::starlark_defs::uquery::StarlarkUQueryCtx;
 use crate::bxl::starlark_defs::visibility_intersection::StarlarkVisibilityIntersectionLayer;
 
 #[starlark_module]
-#[starlark_types(
-    CliArgs as CliArgs,
-    BxlContext<'_> as Context,
-    StarlarkActionAttr as ActionAttr,
-    StarlarkAuditCtx<'_> as AuditContext,
-    StarlarkAQueryCtx<'_> as AqueryContext,
-    StarlarkCQueryCtx<'_> as CqueryContext,
-    StarlarkUQueryCtx<'_> as UqueryContext,
-    BxlActions<'_> as Actions,
-    BxlFilesystem<'_> as Filesystem,
-    StarlarkBxlBuildResult as BuildResult,
-    StarlarkAnalysisResult as AnalysisResult,
-    EnsuredArtifact as EnsuredArtifact,
-    StarlarkFileNode as FileNode,
-    StarlarkActionQueryNode as ActionQueryNode,
-    StarlarkTargetNode as UnconfiguredTargetNode,
-    StarlarkConfiguredTargetNode as ConfiguredTargetNode,
-    StarlarkLazyAttrs<'_> as LazyAttrs,
-    StarlarkLazyResolvedAttrs<'_> as LazyResolvedAttrs,
-    StarlarkConfiguredAttr as ConfiguredAttr,
-    StarlarkTargetUniverse<'_> as TargetUniverse,
-    StarlarkOutputStream as OutputStream,
-    StarlarkLazyCtx<'_> as LazyContext,
-    StarlarkLazy as Lazy,
-    StarlarkError as Error,
-    StarlarkActionError as ActionError,
-    StarlarkResult<'_> as Result,
-    StarlarkLazyUqueryCtx as LazyUqueryContext,
-    StarlarkLazyCqueryCtx as LazyCqueryContext,
-    StarlarkFailedArtifactIterable<'_> as FailedArtifactsIterable,
-    StarlarkProvidersArtifactIterable<'_> as BuiltArtifactsIterable,
-    StarlarkVisibilityIntersectionLayer as VisibilityIntersectionLayer
-)]
 pub(crate) fn register_bxl_type_names_in_bxl_namespace(globals: &mut GlobalsBuilder) {
     const UnconfiguredTargetSet: StarlarkValueAsType<StarlarkTargetSet<TargetNode>> =
         UNCONFIGURED_TARGET_SET_TYPE;
     const ConfiguredTargetSet: StarlarkValueAsType<StarlarkTargetSet<ConfiguredTargetNode>> =
         CONFIGURED_TARGET_SET_TYPE;
     const TargetSet: StarlarkTargetSetType = StarlarkTargetSetType;
+
+    globals.type_symbol::<CliArgs>();
+    globals.type_symbol::<BxlContext>();
+    globals.type_symbol::<StarlarkActionAttr>();
+    globals.type_symbol::<StarlarkAuditCtx>();
+    globals.type_symbol::<StarlarkAQueryCtx>();
+    globals.type_symbol::<StarlarkCQueryCtx>();
+    globals.type_symbol::<StarlarkUQueryCtx>();
+    globals.type_symbol::<BxlActions>();
+    globals.type_symbol::<BxlFilesystem>();
+    globals.type_symbol::<StarlarkBxlBuildResult>();
+    globals.type_symbol::<StarlarkAnalysisResult>();
+    globals.type_symbol::<EnsuredArtifact>();
+    globals.type_symbol::<StarlarkFileNode>();
+    globals.type_symbol::<StarlarkActionQueryNode>();
+    globals.type_symbol::<StarlarkTargetNode>();
+    globals.type_symbol::<StarlarkConfiguredTargetNode>();
+    globals.type_symbol::<StarlarkLazyAttrs>();
+    globals.type_symbol::<StarlarkLazyResolvedAttrs>();
+    globals.type_symbol::<StarlarkConfiguredAttr>();
+    globals.type_symbol::<StarlarkTargetUniverse>();
+    globals.type_symbol::<StarlarkOutputStream>();
+    globals.type_symbol::<StarlarkLazyCtx>();
+    globals.type_symbol::<StarlarkLazy>();
+    globals.type_symbol::<StarlarkError>();
+    globals.type_symbol::<StarlarkActionError>();
+    globals.type_symbol::<StarlarkResult>();
+    globals.type_symbol::<StarlarkLazyUqueryCtx>();
+    globals.type_symbol::<StarlarkLazyCqueryCtx>();
+    globals.type_symbol::<StarlarkFailedArtifactIterable>();
+    globals.type_symbol::<StarlarkProvidersArtifactIterable>();
+    globals.type_symbol::<StarlarkVisibilityIntersectionLayer>();
 }

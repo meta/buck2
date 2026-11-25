@@ -32,7 +32,6 @@ use pagable::Pagable;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_complex_value;
-use starlark::starlark_module;
 use starlark::values::Freeze;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
@@ -179,6 +178,6 @@ impl CommandLineSink for TextFingerprintSink<'_> {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkDepFileFingerprint<'_> as DepFileFingerprint)]
-pub(crate) fn register_dep_file_fingerprint(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_dep_file_fingerprint(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkDepFileFingerprint>();
+}

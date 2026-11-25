@@ -14,6 +14,6 @@ use starlark::environment::GlobalsBuilder;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 
-#[starlark_module]
-#[starlark_types(StarlarkArtifact as Artifact)]
-pub(crate) fn register_artifact(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_artifact(globals: &mut GlobalsBuilder) {
+    globals.type_symbol_as::<StarlarkArtifact>("Artifact");
+}

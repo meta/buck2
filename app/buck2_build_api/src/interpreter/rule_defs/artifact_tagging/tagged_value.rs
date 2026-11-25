@@ -90,6 +90,6 @@ impl<'v> StarlarkTaggedValue<'v> {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkTaggedValue<'_> as TaggedValue)]
-pub(crate) fn register_tagged_value(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_tagged_value(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkTaggedValue>();
+}

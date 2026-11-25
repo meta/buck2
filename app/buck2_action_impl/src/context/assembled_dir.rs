@@ -85,9 +85,9 @@ fn assembled_dir_members(globals: &mut GlobalsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkAssembledDirEntry<'_> as AssembledDirEntry)]
-fn register_assembled_dir_entry_type(globals: &mut GlobalsBuilder) {}
+fn register_assembled_dir_entry_type(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkAssembledDirEntry>();
+}
 
 pub(crate) fn register_assembled_dir(globals: &mut GlobalsBuilder) {
     register_assembled_dir_entry_type(globals);

@@ -230,9 +230,10 @@ fn anon_targets_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkAnonTarget<'_> as AnonTarget, StarlarkAnonTargets<'_> as AnonTargets)]
-pub(crate) fn register_anon_target_types(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_anon_target_types(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkAnonTarget>();
+    globals.type_symbol::<StarlarkAnonTargets>();
+}
 
 pub(crate) fn init_register_anon_target_types() {
     REGISTER_BUCK2_ANON_TARGETS_GLOBALS.init(register_anon_target_types);

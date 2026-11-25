@@ -99,10 +99,6 @@ pub fn new_dynamic_actions_callable<'v>(
 }
 
 #[starlark_module]
-#[starlark_types(
-    StarlarkDynamicActions<'_> as DynamicActions,
-    FrozenStarlarkDynamicActionsCallable<'_> as DynamicActionsCallable
-)]
 pub fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
     /// Create new dynamic action callable. Returned object will be callable,
     /// and the result of calling it can be passed to `ctx.actions.dynamic_output_new`.
@@ -125,4 +121,7 @@ pub fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
     ) -> starlark::Result<ValueOf<'v, DynamicActionsCallableView<'v>>> {
         Ok(heap.alloc(new_dynamic_actions_callable(r#impl, attrs, &P_ACTIONS)?))
     }
+
+    globals.type_symbol_as::<StarlarkDynamicActions>("DynamicActions");
+    globals.type_symbol_as::<FrozenStarlarkDynamicActionsCallable>("DynamicActionsCallable");
 }

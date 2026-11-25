@@ -90,6 +90,6 @@ fn package_path_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkPackagePath as PackagePath)]
-pub fn register_package_path(globals: &mut GlobalsBuilder) {}
+pub fn register_package_path(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkPackagePath>();
+}

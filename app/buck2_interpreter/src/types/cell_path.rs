@@ -89,6 +89,6 @@ fn cell_path_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkCellPath as CellPath)]
-pub fn register_cell_path(globals: &mut GlobalsBuilder) {}
+pub fn register_cell_path(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkCellPath>();
+}

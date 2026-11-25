@@ -184,9 +184,9 @@ fn artifact_tag_methods(_: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(ArtifactTag as ArtifactTag)]
-pub(crate) fn register_artifact_tag(globals: &mut GlobalsBuilder) {}
+pub(crate) fn register_artifact_tag(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<ArtifactTag>();
+}
 
 #[cfg(test)]
 mod tests {

@@ -308,9 +308,9 @@ fn promise_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
-#[starlark_types(StarlarkPromise<'_> as Promise)]
-pub fn register_promise(globals: &mut GlobalsBuilder) {}
+pub fn register_promise(globals: &mut GlobalsBuilder) {
+    globals.type_symbol::<StarlarkPromise>();
+}
 
 #[cfg(test)]
 mod tests {

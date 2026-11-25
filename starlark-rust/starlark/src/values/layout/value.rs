@@ -1084,7 +1084,11 @@ impl<'v> Value<'v> {
     /// [`get_attr`](Value::get_attr) succeeds, but potentially more efficient.
     pub fn has_attr(self, attribute: &str, heap: Heap<'v>) -> bool {
         let aref = self.get_ref();
-        if let Some(methods) = aref.vtable().methods() {
+        if let Some(members) = aref.vtable().members() {
+            if members.get_str(Hashed::new(attribute)).is_some() {
+                return true;
+            }
+        } else if let Some(methods) = aref.vtable().methods() {
             if methods.get(attribute).is_some() {
                 return true;
             }
@@ -1096,13 +1100,17 @@ impl<'v> Value<'v> {
     /// `dir()` function.
     pub fn dir_attr(self) -> Vec<String> {
         let aref = self.get_ref();
-        let mut result = if let Some(methods) = aref.vtable().methods() {
-            let mut res = methods.names();
-            res.extend(aref.dir_attr());
-            res
-        } else {
-            aref.dir_attr()
-        };
+        let mut result = aref.dir_attr();
+        if let Some(members) = aref.vtable().members() {
+            result.extend(
+                members
+                    .members()
+                    .into_iter()
+                    .map(|member| member.name().to_owned()),
+            );
+        } else if let Some(methods) = aref.vtable().methods() {
+            result.extend(methods.names());
+        }
         result.sort();
         result
     }

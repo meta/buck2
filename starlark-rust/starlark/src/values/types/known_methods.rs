@@ -42,17 +42,18 @@ use crate::values::list::value::FrozenList;
 use crate::values::set::value::FrozenSet;
 use crate::values::string::StarlarkStr;
 
-/// Method and a `Methods` container which declares it.
+/// A method and the table that declares it.
 ///
-/// The method comes from a `&'static Methods`, so it is immortal and is brought to the brand of
-/// the heap in use through [`HeapEdge::immortal`].
+/// The method is a `static` or comes from a `&'static Methods`, so it is immortal and is brought
+/// to the brand of the heap in use through [`HeapEdge::immortal`].
 #[derive(Clone, Copy)]
 pub(crate) struct KnownMethod {
     /// The table of the type the method is defined by, as the type's vtable names it: the
-    /// address of its static table, or else, with zero here, the table it builds at run
-    /// time. A receiver whose vtable names the same table has this method under this name.
+    /// address of its static table, with zero for `type_methods`, or else the address of the
+    /// table it builds at run time, with zero here. A receiver whose vtable names the same
+    /// table has this method under this name.
     type_members: usize,
-    type_methods: &'static Methods,
+    type_methods: usize,
     /// The method.
     method: ValueTyped<'static, NativeMethod>,
     /// Copied here from `method` to faster invocation (one fewer deref).
@@ -95,7 +96,7 @@ impl KnownMethod {
             // Two types with the same run-time table have the same members, whichever of
             // them the method was taken from.
             None => match vtable.methods_unconditionally() {
-                Some(methods) => ptr::eq(methods, self.type_methods),
+                Some(methods) => ptr::from_ref(methods).addr() == self.type_methods,
                 None => false,
             },
         }
@@ -131,15 +132,26 @@ impl KnownMethods {
             type_members: Option<&'static MemberTable>,
             type_methods: Option<&'static Methods>,
         ) {
-            let type_methods = type_methods.unwrap();
+            let members: Vec<(&'static str, Value<'static>)> = match (type_members, type_methods) {
+                (Some(table), _) => table
+                    .members()
+                    .into_iter()
+                    .map(|member| (member.name(), member.value()))
+                    .collect(),
+                (None, Some(type_methods)) => type_methods.members::<'static>().collect(),
+                (None, None) => Vec::new(),
+            };
             let mut has_at_least_one_method = false;
-            for (name, member) in type_methods.members::<'static>() {
+            for (name, member) in members {
                 // Take methods, ignore attributes.
                 if let Some(method) = ValueTyped::<NativeMethod>::new(member) {
                     // First wins, e. g. `list.clear` is hit, and `dict.clear` is miss.
                     methods.entry(name).or_insert(KnownMethod {
                         type_members: type_members.map_or(0, |table| ptr::from_ref(table).addr()),
-                        type_methods,
+                        type_methods: match type_members {
+                            Some(_) => 0,
+                            None => type_methods.map_or(0, |table| ptr::from_ref(table).addr()),
+                        },
                         method,
                         imp: method.as_ref().function,
                     });
@@ -151,11 +163,14 @@ impl KnownMethods {
         }
 
         fn add<T: StarlarkValue<'static>>(methods: &mut HashMap<&'static str, KnownMethod>) {
-            add_methods(
-                methods,
-                <T::Type as StarlarkType<'static>>::MEMBERS,
-                T::get_methods(),
-            );
+            let type_members = <T::Type as StarlarkType<'static>>::MEMBERS;
+            // Asking a type for its run-time table builds it, and a type with a static table
+            // is never read through that one.
+            let type_methods = match type_members {
+                Some(_) => None,
+                None => T::get_methods(),
+            };
+            add_methods(methods, type_members, type_methods);
         }
 
         // We don't need to add all the methods, only the most common ones. This is fine.

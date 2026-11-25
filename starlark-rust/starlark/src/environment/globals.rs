@@ -319,7 +319,7 @@ impl Globals {
     pub fn documentation(&self) -> DocModule {
         self.0.data.by_ref(|data| {
             let (docs, members) = common_documentation(
-                &self.0.docstring,
+                self.0.docstring.as_deref(),
                 data.variables
                     .iter()
                     .filter(|(_, v)| !v.doc_hidden)
@@ -666,15 +666,13 @@ macro_rules! globals_static {
 }
 
 pub(crate) fn common_documentation<'a, 'v, T: IntoIterator<Item = (&'a str, Value<'v>)>>(
-    docstring: &Option<String>,
+    docstring: Option<&str>,
     members: T,
 ) -> (
     Option<DocString>,
     impl Iterator<Item = (String, DocItem)> + use<'a, 'v, T>,
 ) {
-    let main_docs = docstring
-        .as_ref()
-        .and_then(|ds| DocString::from_docstring(DocStringKind::Rust, ds));
+    let main_docs = docstring.and_then(|ds| DocString::from_docstring(DocStringKind::Rust, ds));
     let member_docs = members
         .into_iter()
         .map(|(name, val)| (name.to_owned(), val.documentation()))

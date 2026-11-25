@@ -25,7 +25,6 @@ use crate::collections::symbol::map::SymbolMap;
 use crate::collections::symbol::symbol::Symbol;
 use crate::docs::DocType;
 use crate::environment::MemberTable;
-use crate::environment::common_documentation;
 use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::FrozenValueTyped;
@@ -134,25 +133,13 @@ impl Methods {
 
     /// Fetch the documentation.
     pub fn documentation(&'static self, ty: Ty) -> DocType {
-        let (docs, members) = common_documentation(
-            &self.docstring,
+        DocType::of_members(
+            self.docstring.as_deref(),
             self.members
                 .iter()
                 .map(|(n, v)| (n.as_str(), v.at().to_value())),
-        );
-
-        DocType {
-            docs,
-            members: members
-                .filter_map(|(n, item)| {
-                    // This is only `None` if the item is a module, but types shouldn't really have
-                    // modules in them anyway, so that seems ok
-                    Some((n, item.try_as_member_with_collapsed_object().ok()?))
-                })
-                .collect(),
             ty,
-            constructor: None,
-        }
+        )
     }
 }
 

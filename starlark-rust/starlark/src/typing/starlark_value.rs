@@ -28,6 +28,7 @@ use allocative::Allocative;
 use dupe::Dupe;
 #[cfg(feature = "pagable")]
 use pagable::StaticValue;
+use starlark_map::Hashed;
 use starlark_syntax::codemap::Span;
 
 use crate::typing::Ty;
@@ -450,7 +451,11 @@ impl TyStarlarkValue {
     }
 
     pub(crate) fn attr_from_methods(self, name: &str) -> Result<Ty, TypingNoContextError> {
-        if let Some(methods) = (self.vtable.vtable.get_methods)() {
+        if let Some(members) = self.vtable.vtable.members {
+            if let Some(member) = members.get_str(Hashed::new(name)) {
+                return Ok(member.ty());
+            }
+        } else if let Some(methods) = (self.vtable.vtable.get_methods)() {
             if let Some(ty) = methods.get_ty(name) {
                 return Ok(ty);
             }

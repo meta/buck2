@@ -17,12 +17,14 @@
 
 //! The methods and attributes of a type as static data.
 
+use dupe::Dupe;
 use starlark_map::Hashed;
 use starlark_map::StarlarkHashValue;
 
 use crate::__derive_refs::components::NativeCallableComponents;
 use crate::collections::symbol::symbol::Symbol;
 use crate::collections::symbol::symbol::name_head;
+use crate::docs::DocType;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::eval::runtime::frame_span::FrameSpan;
@@ -224,6 +226,24 @@ impl Member {
                 Ok(heap.alloc_complex(BoundMethod::new(this, method)))
             }
             MemberKind::Attribute { value } => value.0.as_payload().invoke(this, heap),
+            MemberKind::Empty => unreachable!("an empty slot is not handed out"),
+        }
+    }
+
+    /// The method before it is bound, or the attribute before it is read.
+    pub(crate) fn value<'v>(&'static self) -> Value<'v> {
+        match self.kind {
+            MemberKind::Method { value, .. } => value.at(),
+            MemberKind::Attribute { value } => HeapEdge::immortal().rebrand(value.value()),
+            MemberKind::Empty => unreachable!("an empty slot is not handed out"),
+        }
+    }
+
+    /// The type of `this.name`: what an attribute evaluates to, or a method as a callable.
+    pub(crate) fn ty(&self) -> Ty {
+        match self.kind {
+            MemberKind::Method { value, .. } => value.0.as_payload().ty().dupe(),
+            MemberKind::Attribute { value } => value.0.as_payload().ty(),
             MemberKind::Empty => unreachable!("an empty slot is not handed out"),
         }
     }
@@ -430,5 +450,16 @@ impl MemberTable {
     /// The documentation written on the module the table was declared by.
     pub(crate) fn docstring(&self) -> Option<&'static str> {
         self.docstring
+    }
+
+    /// The documentation of a type `ty` that has these members.
+    pub fn documentation(&'static self, ty: Ty) -> DocType {
+        DocType::of_members(
+            self.docstring,
+            self.members()
+                .into_iter()
+                .map(|member| (member.name(), member.value())),
+            ty,
+        )
     }
 }

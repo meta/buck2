@@ -35,11 +35,14 @@ pub use parse::DocStringKind;
 use starlark_map::small_map::SmallMap;
 
 use crate as starlark;
+use crate::environment::common_documentation;
 pub use crate::eval::runtime::params::display::FmtParam;
 use crate::eval::runtime::params::display::iter_fmt_param_spec;
 use crate::typing::Ty;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
+use crate::values::Value;
 
 /// The documentation provided by a user for a specific module, object, function, etc.
 #[derive(Debug, Clone, PartialEq, Trace, Default, Allocative, Pagable)]
@@ -229,6 +232,9 @@ pub struct DocType {
 impl DocType {
     pub fn from_starlark_value<T: StarlarkValue<'static>>() -> DocType {
         let ty = T::get_type_starlark_repr();
+        if let Some(members) = <T::Type as StarlarkType<'static>>::MEMBERS {
+            return members.documentation(ty);
+        }
         match T::get_methods() {
             Some(methods) => methods.documentation(ty),
             None => DocType {
@@ -237,6 +243,29 @@ impl DocType {
                 ty,
                 constructor: None,
             },
+        }
+    }
+
+    /// The documentation of a type `ty` whose members are `members`, each a method before it
+    /// is bound or an attribute before it is read, and whose module of methods is documented
+    /// by `docstring`.
+    pub(crate) fn of_members<'a, 'v>(
+        docstring: Option<&str>,
+        members: impl IntoIterator<Item = (&'a str, Value<'v>)>,
+        ty: Ty,
+    ) -> DocType {
+        let (docs, members) = common_documentation(docstring, members);
+        DocType {
+            docs,
+            members: members
+                .filter_map(|(n, item)| {
+                    // This is only `None` if the item is a module, but types shouldn't really have
+                    // modules in them anyway, so that seems ok
+                    Some((n, item.try_as_member_with_collapsed_object().ok()?))
+                })
+                .collect(),
+            ty,
+            constructor: None,
         }
     }
 }

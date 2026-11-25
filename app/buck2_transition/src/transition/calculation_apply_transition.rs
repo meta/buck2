@@ -51,7 +51,7 @@ use starlark::eval::Evaluator;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::string::StarlarkStr;
 use starlark::values::structs::AllocStruct;
 
@@ -119,7 +119,7 @@ fn call_transition_function<'v>(
         .eval_function(impl_, &[], &args)
         .map_err(buck2_error::Error::from)?;
     if transition.is_split() {
-        match ValueOf::<DictType<StarlarkStr, PlatformInfo>>::new(new_platforms) {
+        match ValueOf::<StarlarkDict<'v, StarlarkStr, PlatformInfo>>::new(new_platforms) {
             Some(dict) => {
                 let mut split = BuckMutInsertionMap::new();
                 for entry in dict.iter() {

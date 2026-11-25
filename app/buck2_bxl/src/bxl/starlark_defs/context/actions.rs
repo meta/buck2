@@ -48,7 +48,7 @@ use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::starlark_value;
 use strong_hash::StrongHash;
 
@@ -197,7 +197,7 @@ pub(crate) struct BxlActions<'v> {
 
 /// Dependencies configured for the bxl action's execution platform, by the label they were
 /// requested as.
-type Deps<'v> = ValueOf<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>;
+type Deps<'v> = ValueOf<'v, StarlarkDict<'v, StarlarkProvidersLabel, Dependency<'v>>>;
 
 impl<'v> BxlActions<'v> {
     pub(crate) async fn new<'c>(
@@ -264,7 +264,7 @@ async fn alloc_deps<'v>(
         })
         .collect::<Result<_, _>>()?;
 
-    Ok(heap.alloc(AllocDict(deps)))
+    Ok(heap.alloc(AllocDict(deps)).into())
 }
 
 starlark::methods_static!(BXL_ACTIONS_METHODS = bxl_actions_methods);

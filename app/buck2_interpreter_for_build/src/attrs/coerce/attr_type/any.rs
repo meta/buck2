@@ -16,7 +16,7 @@ use buck2_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::DictRef;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::int::IntView;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
@@ -38,7 +38,7 @@ enum Literal<'v> {
     None(NoneType),
     Bool(bool),
     Int(IntView<'v>),
-    Dict(DictRef<'v>),
+    Dict(StarlarkDict<'v>),
     Tuple(StarlarkTuple<'v>),
     List(StarlarkList<'v>),
     Str(&'v str),
@@ -54,7 +54,7 @@ fn to_literal<'v>(
         Some(Literal::Int(x)) => ctx.attr_arena().encode_int(x.to_integer()?),
         Some(Literal::Dict(x)) => {
             let pairs = x
-                .iter()
+                .entries()
                 .map(|(k, v)| Ok((to_literal(k, ctx)?, to_literal(v, ctx)?)))
                 .collect::<buck2_error::Result<Vec<_>>>()?;
             ctx.attr_arena().encode_dict(&pairs)

@@ -16,7 +16,7 @@ use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::DictRef;
+use starlark::values::dict::StarlarkDict;
 
 use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::AttrTypeExt;
@@ -29,11 +29,11 @@ impl AttrTypeCoerce for DictAttrType {
         ctx: &dyn AttrCoercionContext<'v>,
         value: Value<'v>,
     ) -> buck2_error::Result<AttrToken> {
-        let dict = DictRef::unpack_value_err(value)?;
+        let dict = <StarlarkDict>::unpack_value_err(value)?;
         let mut res = Vec::with_capacity(dict.len());
         if self.sorted {
             // First sort the values
-            let mut items = dict.iter().collect::<Vec<_>>();
+            let mut items = dict.entries().collect::<Vec<_>>();
             // If two things are incompatible, just return Eq. The resulting order is undefined, but safely undefined.
             items.sort_by(|a, b| a.0.compare(b.0).unwrap_or(Ordering::Equal));
 
@@ -44,7 +44,7 @@ impl AttrTypeCoerce for DictAttrType {
                 ));
             }
         } else {
-            for (k, v) in dict.iter() {
+            for (k, v) in dict.entries() {
                 res.push((
                     self.key.coerce(configurable, ctx, k)?,
                     self.value.coerce(configurable, ctx, v)?,

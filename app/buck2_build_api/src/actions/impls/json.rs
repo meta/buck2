@@ -26,7 +26,7 @@ use serde::Serializer;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::enumeration::EnumValue;
 use starlark::values::int::IntView;
 use starlark::values::list::StarlarkList;
@@ -135,7 +135,7 @@ pub enum JsonUnpack<'v> {
     Bool(bool),
     List(ValueOf<'v, StarlarkList<'v>>),
     Tuple(ValueOf<'v, StarlarkTuple<'v>>),
-    Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
+    Dict(ValueOf<'v, StarlarkDict<'v>>),
     Struct(ValueOf<'v, Struct<'v>>),
     Record(ValueOf<'v, Record<'v>>),
     Enum(ValueOf<'v, EnumValue<'v>>),
@@ -169,8 +169,7 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
             JsonUnpack::List(x) => serializer.collect_seq(x.values().map(|v| self.with_value(v))),
             JsonUnpack::Tuple(x) => serializer.collect_seq(x.values().map(|v| self.with_value(v))),
             JsonUnpack::Dict(x) => serializer.collect_map(
-                x.dict()
-                    .iter()
+                x.entries()
                     .map(|(k, v)| (self.with_value(k), self.with_value(v))),
             ),
             JsonUnpack::Struct(x) => {
@@ -357,7 +356,7 @@ pub fn visit_json_artifacts<'v>(
             }
         }
         JsonUnpack::Dict(x) => {
-            for (k, v) in x.dict().iter() {
+            for (k, v) in x.entries() {
                 visit_json_artifacts(k, visitor)?;
                 visit_json_artifacts(v, visitor)?;
             }

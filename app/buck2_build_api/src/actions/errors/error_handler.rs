@@ -29,7 +29,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
@@ -63,7 +63,7 @@ pub struct StarlarkActionErrorContext<'v> {
 
 /// The outputs an error handler may read, by artifact.
 pub type OutputArtifacts<'v> =
-    ValueOf<'v, DictType<StarlarkArtifactView<'v>, StarlarkArtifactValue>>;
+    ValueOf<'v, StarlarkDict<'v, StarlarkArtifactView<'v>, StarlarkArtifactValue>>;
 
 impl<'v> StarlarkActionErrorContext<'v> {
     pub(crate) fn new_from_command_execution(

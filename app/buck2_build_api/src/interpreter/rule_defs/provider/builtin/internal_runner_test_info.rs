@@ -34,8 +34,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictRef;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::float::StarlarkFloat;
 use starlark::values::int::IntView;
 use starlark::values::list::StarlarkList;
@@ -98,7 +97,7 @@ pub struct InternalRunnerTestInfo<'v> {
     listing_command: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkCmdArgsLike>>,
 
     /// The environment for this test.
-    env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
+    env: Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>>,
 
     /// The labels for this test.
     labels: Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>>,
@@ -132,14 +131,16 @@ pub struct InternalRunnerTestInfo<'v> {
     exec_group: Option<ValueOf<'v, StarlarkExecutionGroupView<'v>>>,
 
     /// Executors that can be used to override the default executor.
-    executor_overrides: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCommandExecutorConfig>>>,
+    executor_overrides:
+        Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCommandExecutorConfig>>>,
 
     /// Mapping from a local resource type to a target with a corresponding provider.
     /// Required types are passed from test runner.
     /// If the value for a corresponding type is omitted it means local resource
     /// should be ignored when executing tests even if those are passed as required from test runner.
-    local_resources:
-        Option<ValueOf<'v, DictType<StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>>,
+    local_resources: Option<
+        ValueOf<'v, StarlarkDict<'v, StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>,
+    >,
 
     /// List of local resource types which should be set up additionally to those which are
     /// passed from test runner. Allows specifying local resources on a per-rule basis.
@@ -165,7 +166,7 @@ pub struct InternalRunnerTestInfo<'v> {
         StarlarkCallable<
             'v,
             (StarlarkStr,),
-            StarlarkList<'static, DictType<StarlarkStr, Value<'static>>>,
+            StarlarkList<'static, StarlarkDict<'static, StarlarkStr, Value<'static>>>,
         >,
     >,
 
@@ -187,7 +188,7 @@ pub struct InternalRunnerTestInfo<'v> {
         StarlarkCallable<
             'v,
             (StarlarkStr, StarlarkStr, IntView<'static>),
-            StarlarkList<'static, DictType<StarlarkStr, Value<'static>>>,
+            StarlarkList<'static, StarlarkDict<'static, StarlarkStr, Value<'static>>>,
         >,
     >,
 }
@@ -312,7 +313,7 @@ impl<'v> InternalRunnerTestInfo<'v> {
 
             list.values()
                 .map(|item| {
-                    let dict = DictRef::from_value(item).ok_or_else(|| {
+                    let dict = StarlarkDict::from_value(item).ok_or_else(|| {
                         buck2_error!(
                             buck2_error::ErrorTag::Input,
                             "parse_test_listing items must be dicts, got: `{}`",
@@ -399,7 +400,7 @@ impl<'v> InternalRunnerTestInfo<'v> {
 
             list.values()
                 .map(|item| {
-                    let dict = DictRef::from_value(item).ok_or_else(|| {
+                    let dict = StarlarkDict::from_value(item).ok_or_else(|| {
                         buck2_error!(
                             buck2_error::ErrorTag::Input,
                             "parse_test_result items must be dicts, got: `{}`",
@@ -511,7 +512,7 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
             StarlarkCallable<
                 'v,
                 (StarlarkStr,),
-                StarlarkList<'static, DictType<StarlarkStr, Value<'static>>>,
+                StarlarkList<'static, StarlarkDict<'static, StarlarkStr, Value<'static>>>,
             >,
         >,
         parse_test_result: ValueOf<
@@ -519,7 +520,7 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
             StarlarkCallable<
                 'v,
                 (StarlarkStr, StarlarkStr, IntView<'static>),
-                StarlarkList<'static, DictType<StarlarkStr, Value<'static>>>,
+                StarlarkList<'static, StarlarkDict<'static, StarlarkStr, Value<'static>>>,
             >,
         >,
         listing_command: TestCommand<'v>,

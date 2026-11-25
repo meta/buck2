@@ -34,7 +34,7 @@ use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneType;
 use starlark::values::typing::StarlarkCallable;
@@ -115,8 +115,8 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
             'v,
             (
                 Value<'static>,
-                DictType<StarlarkArtifactView<'static>, StarlarkArtifactValue>,
-                DictType<StarlarkArtifactView<'static>, StarlarkArtifactView<'static>>,
+                StarlarkDict<'static, StarlarkArtifactView<'static>, StarlarkArtifactValue>,
+                StarlarkDict<'static, StarlarkArtifactView<'static>, StarlarkArtifactView<'static>>,
             ),
             NoneType,
         >,

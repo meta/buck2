@@ -61,7 +61,7 @@ use starlark::values::StarlarkTypeExpr;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::StarlarkList;
 use starlark::values::string::StarlarkStr;
 use starlark::values::structs::Struct;
@@ -114,12 +114,19 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
             BxlAnonCallbackParamSpec,
             StarlarkList<'static, StarlarkProvider>,
         >,
-        #[starlark(require = named)] attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
+        #[starlark(require = named)] attrs: ValueOf<
+            'v,
+            StarlarkDict<'v, StarlarkStr, StarlarkAttribute>,
+        >,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = ValueOf::empty_dict())]
         artifact_promise_mappings: ValueOf<
             'v,
-            DictType<StarlarkStr, StarlarkCallable<'v, (Value<'static>,), StarlarkList<'static>>>,
+            StarlarkDict<
+                'v,
+                StarlarkStr,
+                StarlarkCallable<'v, (Value<'static>,), StarlarkList<'static>>,
+            >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkRuleCallableView<'v>>> {

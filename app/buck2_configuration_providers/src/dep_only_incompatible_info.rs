@@ -29,7 +29,7 @@ use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::StarlarkList;
 use starlark::values::string::StarlarkStr;
 
@@ -73,7 +73,8 @@ use crate::dep_only_incompatible_rollout::DepOnlyIncompatibleRollout;
 )]
 #[repr(C)]
 pub struct DepOnlyIncompatibleInfo<'v> {
-    pub custom_soft_errors: ValueOf<'v, DictType<StarlarkStr, DepOnlyIncompatibleRollout<'v>>>,
+    pub custom_soft_errors:
+        ValueOf<'v, StarlarkDict<'v, StarlarkStr, DepOnlyIncompatibleRollout<'v>>>,
 }
 
 #[starlark_module]
@@ -81,7 +82,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
     fn DepOnlyIncompatibleInfo<'v>(
         #[starlark(require = named)] custom_soft_errors: ValueOf<
             'v,
-            DictType<StarlarkStr, DepOnlyIncompatibleRollout<'v>>,
+            StarlarkDict<'v, StarlarkStr, DepOnlyIncompatibleRollout<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, DepOnlyIncompatibleInfo<'v>>> {
@@ -94,7 +95,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
             entries.push((category, rollout));
         }
         Ok(eval.heap().alloc(DepOnlyIncompatibleInfo {
-            custom_soft_errors: eval.heap().alloc(AllocDict(entries)),
+            custom_soft_errors: eval.heap().alloc(AllocDict(entries)).into(),
         }))
     }
 }

@@ -25,8 +25,7 @@ use buck2_hash::IntentionallyStdHashMap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictRef;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::float::UnpackFloat;
 use starlark::values::list::StarlarkList;
 use starlark::values::string::StarlarkStr;
@@ -54,20 +53,20 @@ impl<'v> StarlarkUserEventParser<'v> {
     pub(crate) fn parse(
         &self,
         id: &str,
-        metadata: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
+        metadata: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
     ) -> buck2_error::Result<StarlarkUserEvent> {
         Ok(StarlarkUserEvent {
             id: id.to_owned(),
-            metadata: self.unpack_metadata_map(metadata.dict())?,
+            metadata: self.unpack_metadata_map(metadata.dict().untyped())?,
         })
     }
 
     fn unpack_metadata_map(
         &self,
-        metadata: DictRef<'v>,
+        metadata: StarlarkDict<'v>,
     ) -> buck2_error::Result<IntentionallyStdHashMap<String, StarlarkUserMetadataValue>> {
         metadata
-            .iter()
+            .entries()
             .map(|(k, v)| {
                 let k = match k.unpack_str() {
                     Some(k) => k.to_owned(),
@@ -116,7 +115,7 @@ impl<'v> StarlarkUserEventParser<'v> {
             Ok(StarlarkUserMetadataValue {
                 value: Some(StringValue(path)),
             })
-        } else if let Some(dict) = DictRef::from_value(v) {
+        } else if let Some(dict) = StarlarkDict::from_value(v) {
             let dict = self.unpack_metadata_map(dict)?;
             let dict = StarlarkUserMetadataDictValue { value: dict };
             Ok(StarlarkUserMetadataValue {

@@ -13,7 +13,7 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 
@@ -27,7 +27,7 @@ pub(crate) fn register_load_symbols(builder: &mut GlobalsBuilder) {
     /// here later in the same module, or if they overlap with existing definitions.
     /// This function should be used rarely.
     fn load_symbols<'v>(
-        symbols: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
+        symbols: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         for entry in symbols.try_items::<&str, Value>() {

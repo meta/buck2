@@ -142,7 +142,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 use strong_hash::StrongHash;
@@ -347,7 +347,7 @@ pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
+    pub(crate) env: Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -368,7 +368,7 @@ pub(crate) struct FrozenStarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
+    pub(crate) env: Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -1832,11 +1832,12 @@ impl Action for RunAction {
             artifact_value_dict.push((artifact, artifact_value));
         }
 
-        Ok(Some(heap.alloc(AllocDict(
-            artifact_value_dict.into_iter().map(|(artifact, value)| {
-                (ValueOf::alloc(heap, artifact), ValueOf::alloc(heap, value))
-            }),
-        ))))
+        Ok(Some(
+            heap.alloc(AllocDict(artifact_value_dict.into_iter().map(
+                |(artifact, value)| (ValueOf::alloc(heap, artifact), ValueOf::alloc(heap, value)),
+            )))
+            .into(),
+        ))
     }
 
     async fn execute(

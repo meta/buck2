@@ -42,7 +42,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
@@ -57,7 +57,7 @@ use crate::bxl::starlark_defs::cli_args::CliArgValue;
 pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) {
     fn bxl_main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<StarlarkStr, CliArgs>>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, StarlarkDict<'v, StarlarkStr, CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -69,7 +69,7 @@ pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) 
 pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
     fn main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<StarlarkStr, CliArgs>>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, StarlarkDict<'v, StarlarkStr, CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -79,7 +79,7 @@ pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
 
 fn bxl_impl<'v>(
     r#impl: StarlarkCallable<'v>,
-    cli_args: ValueOf<'v, DictType<StarlarkStr, CliArgs>>,
+    cli_args: ValueOf<'v, StarlarkDict<'v, StarlarkStr, CliArgs>>,
     doc: &str,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {

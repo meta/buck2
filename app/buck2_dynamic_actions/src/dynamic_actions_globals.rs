@@ -23,7 +23,7 @@ use starlark::util::ArcStr;
 use starlark::values::Heap;
 use starlark::values::StarlarkTypeExpr;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallableChecked;
 
@@ -44,7 +44,7 @@ pub fn new_dynamic_actions_callable<'v>(
         DynamicActionsCallbackParamSpec,
         DynamicActionsCallbackReturnType,
     >,
-    attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>>,
+    attrs: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkDynamicAttrType<'v>>>,
     callback_param: &DynamicActionsCallbackParam,
 ) -> buck2_error::Result<DynamicActionsCallable<'v>> {
     if attrs.dict().get_str(callback_param.name.as_str()).is_some() {
@@ -119,7 +119,7 @@ pub fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] attrs: ValueOf<
             'v,
-            DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>,
+            StarlarkDict<'v, StarlarkStr, StarlarkDynamicAttrType<'v>>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, DynamicActionsCallableView<'v>>> {

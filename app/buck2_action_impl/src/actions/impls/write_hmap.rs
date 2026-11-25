@@ -51,8 +51,7 @@ use pagable::pagable_typetag;
 use starlark::values::OwnedFrozen;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::DictRef;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::string::StarlarkStr;
 
 use crate::actions::impls::produce;
@@ -69,13 +68,14 @@ enum WriteHmapActionValidationError {
 
 /// Header map entries: include name to `(artifact, path below it)`.
 /// An empty path means the artifact itself.
-pub(crate) type HmapMappings<'v> = DictType<StarlarkStr, (StarlarkArtifactView<'v>, StarlarkStr)>;
+pub(crate) type HmapMappings<'v> =
+    StarlarkDict<'v, StarlarkStr, (StarlarkArtifactView<'v>, StarlarkStr)>;
 
 fn for_each_mapping<'v>(
     mappings: Value<'v>,
     mut f: impl FnMut(&'v str, StarlarkArtifactView<'v>, &'v str) -> buck2_error::Result<()>,
 ) -> buck2_error::Result<()> {
-    for (name, entry) in DictRef::unpack_value_err(mappings)?.iter() {
+    for (name, entry) in <StarlarkDict>::unpack_value_err(mappings)?.entries() {
         let name = <&str>::unpack_value_err(name)?;
         let (artifact, subpath) = <(StarlarkArtifactView, &str)>::unpack_value_err(entry)?;
         f(name, artifact, subpath)?;
@@ -141,10 +141,10 @@ impl WriteHmapAction {
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> buck2_error::Result<Vec<u8>> {
         self.contents.by_ref(|v| {
-            let mappings = DictRef::unpack_value_err(*v)?;
+            let mappings = <StarlarkDict>::unpack_value_err(*v)?;
             encode_hmap(
                 fs.path_separator(),
-                mappings.iter().map(|(name, entry)| {
+                mappings.entries().map(|(name, entry)| {
                     let name = <&str>::unpack_value_err(name)?;
                     let (artifact, subpath) =
                         <(StarlarkArtifactView, &str)>::unpack_value_err(entry)?;

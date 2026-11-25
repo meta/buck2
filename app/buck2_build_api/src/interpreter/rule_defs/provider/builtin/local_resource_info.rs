@@ -24,7 +24,7 @@ use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::float::StarlarkFloat;
 use starlark::values::int::IntView;
 use starlark::values::none::NoneOr;
@@ -74,7 +74,7 @@ pub struct LocalResourceInfo<'v> {
     setup: ValueOf<'v, StarlarkCmdArgsView<'v>>,
     /// Mapping from environment variable (appended to an execution command which is dependent on this local resource)
     /// to keys in setup command JSON output.
-    resource_env_vars: ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>,
+    resource_env_vars: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
     /// Timeout in seconds for `setup` command.
     setup_timeout_seconds: Option<ValueOf<'v, Either<IntView<'v>, StarlarkFloat>>>,
 }
@@ -105,7 +105,7 @@ fn local_resource_info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(require = named)] setup: StarlarkCommandLineValueUnpack<'v>,
         #[starlark(require = named)] resource_env_vars: ValueOf<
             'v,
-            DictType<StarlarkStr, StarlarkStr>,
+            StarlarkDict<'v, StarlarkStr, StarlarkStr>,
         >,
         #[starlark(require = named, default = NoneOr::None)] setup_timeout_seconds: NoneOr<
             ValueOf<'v, Either<IntView<'v>, StarlarkFloat>>,

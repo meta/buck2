@@ -50,7 +50,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -467,13 +467,13 @@ impl<'v> TransitiveSetDefinitionLike<'v> for FrozenTransitiveSetDefinition<'v> {
 pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
     fn transitive_set<'v>(
         #[starlark(require = named)] args_projections: Option<
-            ValueOf<'v, DictType<StarlarkStr, Projection<'v>>>,
+            ValueOf<'v, StarlarkDict<'v, StarlarkStr, Projection<'v>>>,
         >,
         #[starlark(require = named)] json_projections: Option<
-            ValueOf<'v, DictType<StarlarkStr, Projection<'v>>>,
+            ValueOf<'v, StarlarkDict<'v, StarlarkStr, Projection<'v>>>,
         >,
         #[starlark(require = named)] reductions: Option<
-            ValueOf<'v, DictType<StarlarkStr, Reduction<'v>>>,
+            ValueOf<'v, StarlarkDict<'v, StarlarkStr, Reduction<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, TransitiveSetDefinitionView<'v>>> {

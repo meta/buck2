@@ -34,7 +34,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictRef;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
 use starlark::values::tuple::StarlarkTuple;
@@ -436,8 +436,8 @@ impl<'v> ModifierSource<'v> for Value<'v> {
     }
 
     fn entries(self) -> Option<Vec<(&'v str, Self)>> {
-        DictRef::from_value(self)?
-            .iter()
+        StarlarkDict::from_value(self)?
+            .entries()
             .map(|(k, v)| Some((k.unpack_str()?, v)))
             .collect()
     }

@@ -42,7 +42,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::AllocList;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
@@ -272,7 +272,7 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         // TODO(nga): this should be either positional or named, not both.
         rule: StarlarkRuleCallableView<'v>,
-        attrs: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
+        attrs: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
         #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
         >,
@@ -311,7 +311,7 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
                 'v,
                 (
                     StarlarkRuleCallableView<'v>,
-                    DictType<StarlarkStr, Value<'v>>,
+                    StarlarkDict<'v, StarlarkStr, Value<'v>>,
                 ),
             >,
         >,

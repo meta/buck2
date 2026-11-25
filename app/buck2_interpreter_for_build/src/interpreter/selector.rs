@@ -35,7 +35,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -45,7 +45,7 @@ use starlark::values::string::StarlarkStr;
 pub enum StarlarkSelector<'v> {
     /// Simplest form, backed by dictionary representation
     /// wrapped into `select` function call.
-    Primary(ValueOf<'v, DictType<StarlarkStr, Value<'v>>>),
+    Primary(ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>),
     Sum(Value<'v>, Value<'v>),
 }
 
@@ -88,7 +88,7 @@ impl<'v> Serialize for StarlarkSelector<'v> {
 starlark_complex_value!(pub StarlarkSelector);
 
 impl<'v> StarlarkSelector<'v> {
-    pub fn new(d: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>) -> Self {
+    pub fn new(d: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>) -> Self {
         StarlarkSelector::Primary(d)
     }
 
@@ -174,7 +174,9 @@ impl<'v> StarlarkSelector<'v> {
                     }
                     Ok(eval
                         .heap()
-                        .alloc(StarlarkSelector::new(eval.heap().alloc(AllocDict(mapped))))
+                        .alloc(StarlarkSelector::new(
+                            eval.heap().alloc(AllocDict(mapped)).into(),
+                        ))
                         .to_value())
                 }
                 StarlarkSelector::Sum(left, right) => {
@@ -283,7 +285,7 @@ starlark::methods_static!(SELECTOR_METHODS = selector_methods);
 #[starlark_types(StarlarkSelector<'_> as Select)]
 pub fn register_select(globals: &mut GlobalsBuilder) {
     fn select<'v>(
-        #[starlark(require = pos)] d: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
+        #[starlark(require = pos)] d: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkSelector<'v>>> {
         Ok(ValueOf::alloc(heap, StarlarkSelector::new(d)))

@@ -40,7 +40,7 @@ use starlark::environment::Module;
 use starlark::values::FrozenValueTyped;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::DictRef;
+use starlark::values::dict::StarlarkDict;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
 
@@ -154,7 +154,10 @@ pub(crate) fn resolution_ctx_with_providers<'v>(
                     .configure(ConfigurationData::testing_new());
                 let val = FrozenProviderCollectionValue::try_from_value(
                     frozen.get("ret").unwrap().map::<Value<'static>, _>(|x| {
-                        DictRef::from_value(x).unwrap().get_str(var_name).unwrap()
+                        StarlarkDict::from_value(x)
+                            .unwrap()
+                            .get_str(var_name)
+                            .unwrap()
                     }),
                 )
                 .unwrap();

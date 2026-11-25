@@ -23,7 +23,7 @@ use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
@@ -54,7 +54,7 @@ pub struct InstallInfo<'v> {
     // Label for the installer
     installer: ValueOf<'v, StarlarkConfiguredProvidersLabel>,
     // list of files that need to be installed
-    files: ValueOf<'v, DictType<StarlarkStr, StarlarkArtifactView<'v>>>,
+    files: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkArtifactView<'v>>>,
 }
 
 impl<'v> InstallInfo<'v> {
@@ -90,7 +90,7 @@ impl<'v> InstallInfo<'v> {
 fn install_info_creator(globals: &mut GlobalsBuilder) {
     fn InstallInfo<'v>(
         installer: ValueOf<'v, StarlarkConfiguredProvidersLabel>,
-        files: ValueOf<'v, DictType<StarlarkStr, StarlarkArtifactView<'v>>>,
+        files: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkArtifactView<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, InstallInfo<'v>>> {
         let info = InstallInfo { installer, files };

@@ -61,8 +61,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::any_complex::StarlarkAnyComplex;
-use starlark::values::dict::DictRef;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::StarlarkList;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::starlark_value;
@@ -610,7 +609,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                     Some(x)
                 } else if StarlarkList::from_value(x).is_some_and(|x| x.is_empty()) {
                     Some(Value::new_empty_list())
-                } else if DictRef::from_value(x).is_some_and(|x| x.is_empty()) {
+                } else if StarlarkDict::from_value(x).is_some_and(|x| x.is_empty()) {
                     Some(Value::new_empty_dict())
                 } else {
                     return Err(buck2_error::Error::from(
@@ -654,7 +653,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
         #[starlark(require=named, default = "")] doc: &str,
         #[starlark(require=named)] fields: Either<
             ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
-            ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
+            ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, UserProviderCallableView<'v>>> {

@@ -34,7 +34,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
 
@@ -51,13 +51,13 @@ use crate::constraint_value_info::ConstraintValueInfo;
 #[derive(Debug, Trace, Freeze, ProvidesStaticType, Allocative, StarlarkPagable)]
 #[repr(C)]
 pub struct ConfigurationInfo<'v> {
-    constraints: ValueOf<'v, DictType<StarlarkTargetLabel, ConstraintValueInfo<'v>>>,
-    values: ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>,
-    root_values: ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>,
+    constraints: ValueOf<'v, StarlarkDict<'v, StarlarkTargetLabel, ConstraintValueInfo<'v>>>,
+    values: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
+    root_values: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
 }
 
-type Constraints<'v> = ValueOf<'v, DictType<StarlarkTargetLabel, ConstraintValueInfo<'v>>>;
-type Buckconfigs<'v> = ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>;
+type Constraints<'v> = ValueOf<'v, StarlarkDict<'v, StarlarkTargetLabel, ConstraintValueInfo<'v>>>;
+type Buckconfigs<'v> = ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>;
 
 impl<'v> ConfigurationInfo<'v> {
     pub fn to_config_setting_data(&self) -> buck2_error::Result<ConfigSettingData> {
@@ -113,9 +113,9 @@ impl<'v> ConfigurationInfo<'v> {
             (constraint_setting_label, constraint_value)
         });
         ConfigurationInfo {
-            constraints: heap.alloc(AllocDict(constraints)),
-            values: heap.alloc(AllocDict::empty()),
-            root_values: heap.alloc(AllocDict::empty()),
+            constraints: heap.alloc(AllocDict(constraints)).into(),
+            values: heap.alloc(AllocDict::empty()).into(),
+            root_values: heap.alloc(AllocDict::empty()).into(),
         }
     }
 }
@@ -165,16 +165,18 @@ fn copy_constraints<'v>(
         }
         entries.push((setting, value));
     }
-    Ok(heap.alloc(AllocDict(entries)))
+    Ok(heap.alloc(AllocDict(entries)).into())
 }
 
 fn copy_dict<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>>(
-    dict: ValueOf<'v, DictType<K, V>>,
+    dict: ValueOf<'v, StarlarkDict<'v, K, V>>,
     heap: Heap<'v>,
-) -> starlark::Result<ValueOf<'v, DictType<K, V>>> {
-    Ok(heap.alloc(AllocDict(
-        dict.iter().collect::<starlark::Result<Vec<_>>>()?,
-    )))
+) -> starlark::Result<ValueOf<'v, StarlarkDict<'v, K, V>>> {
+    Ok(heap
+        .alloc(AllocDict(
+            dict.iter().collect::<starlark::Result<Vec<_>>>()?,
+        ))
+        .into())
 }
 
 #[starlark_module]
@@ -303,15 +305,7 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         let setting_info = value.setting();
         let label = setting_info.label();
 
-        let mut constraints = this.constraints.dict_mut()?;
-
-        let previous = constraints.aref.insert_hashed(
-            label
-                .to_value()
-                .get_hashed()
-                .expect("StarlarkTargetLabel is hashable"),
-            value.to_value(),
-        );
+        let previous = this.constraints.dict().insert(label, value)?;
 
         match previous {
             Some(v) => Ok(NoneOr::Other(ValueTyped::new_err(v)?)),
@@ -351,15 +345,8 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, ConstraintValueInfo<'v>>>> {
         let label = key.label();
-        let mut constraints = this.constraints.dict_mut()?;
-
         // Remove and return the value
-        let removed = constraints.aref.remove_hashed(
-            label
-                .to_value()
-                .get_hashed()
-                .expect("StarlarkTargetLabel is hashable"),
-        );
+        let removed = this.constraints.dict().remove(label.to_value())?;
 
         match removed {
             Some(v) => Ok(NoneOr::Other(ValueTyped::new_err(v)?)),
@@ -417,10 +404,11 @@ mod tests {
     fn to_configuration_data_rejects_root_buckconfigs_with_clear_error() {
         Heap::temp(|heap| {
             let info = ConfigurationInfo {
-                constraints: heap.alloc(AllocDict::empty()),
-                values: heap.alloc(AllocDict::empty()),
+                constraints: heap.alloc(AllocDict::empty()).into(),
+                values: heap.alloc(AllocDict::empty()).into(),
                 root_values: heap
-                    .alloc(AllocDict([(heap.alloc("apple.key"), heap.alloc("value"))])),
+                    .alloc(AllocDict([(heap.alloc("apple.key"), heap.alloc("value"))]))
+                    .into(),
             };
 
             let Err(err) = info.to_configuration_data() else {

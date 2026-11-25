@@ -34,7 +34,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictRef;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::StarlarkList;
 use starlark::values::tuple::StarlarkTuple;
 use starlark::values::typing::TypeCompiled;
@@ -341,9 +341,9 @@ impl<'v> DynamicAttrType<'v> {
             }
             DynamicAttrType::Dict(elem_ty) => {
                 let (key_ty, value_ty) = &**elem_ty;
-                let dict = DictRef::unpack_value_err(value)?;
+                let dict = <StarlarkDict>::unpack_value_err(value)?;
                 let mut res = BuckMutInsertionMap::with_capacity(dict.len());
-                for (key, value) in dict.iter_hashed() {
+                for (key, value) in dict.entries_hashed() {
                     if !key_ty.matches(key.into_key()) {
                         return Err(buck2_error!(
                             buck2_error::ErrorTag::Input,

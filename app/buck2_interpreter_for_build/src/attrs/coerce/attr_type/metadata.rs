@@ -23,7 +23,7 @@ use buck2_node::metadata::value::MetadataValue;
 use starlark::values::StarlarkTypeExpr;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::DictRef;
+use starlark::values::dict::StarlarkDict;
 
 use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
@@ -39,10 +39,10 @@ impl AttrTypeCoerce for MetadataAttrType {
             return Err(internal_error!("Metadata attribute is not configurable"));
         }
 
-        let dict = DictRef::unpack_value_err(value)?;
+        let dict = <StarlarkDict>::unpack_value_err(value)?;
 
         let mut map = BuckMutInsertionMap::with_capacity(dict.len());
-        for (key, value) in dict.iter() {
+        for (key, value) in dict.entries() {
             let key = MetadataKeyRef::new(key.unpack_str_err()?)?;
 
             let value = value

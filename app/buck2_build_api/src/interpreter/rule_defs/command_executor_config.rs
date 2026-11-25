@@ -47,8 +47,7 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictRef;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
@@ -122,7 +121,7 @@ fn parse_remote_execution_properties(
         return Ok(None);
     }
 
-    let properties = DictRef::from_value(value.to_value()).ok_or_else(|| {
+    let properties = StarlarkDict::from_value(value.to_value()).ok_or_else(|| {
         buck2_error::Error::from(CommandExecutorConfigErrors::RePropertiesNotADict(
             value.to_repr(),
             value.get_type().to_owned(),
@@ -132,7 +131,7 @@ fn parse_remote_execution_properties(
     Ok(Some(RePlatformFields {
         properties: Arc::new(
             properties
-                .iter()
+                .entries()
                 .map(|(name, value)| {
                     let values = StarlarkList::from_value(value).map_or_else(
                         || vec![value.to_str()],
@@ -229,18 +228,18 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         #[starlark(default = ValueOf::empty_list(), require = named)]
         remote_execution_dependencies: ValueOf<
             'v,
-            StarlarkList<'v, DictType<StarlarkStr, StarlarkStr>>,
+            StarlarkList<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(default = ValueOf::empty_list(), require = named)]
         remote_execution_gang_workers: ValueOf<
             'v,
-            StarlarkList<'v, DictType<StarlarkStr, StarlarkStr>>,
+            StarlarkList<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(default = NoneOr::None, require = named)] remote_execution_dynamic_image: NoneOr<
-            DictRef<'v>,
+            StarlarkDict<'v>,
         >,
         #[starlark(default = NoneOr::None, require = named)] meta_internal_extra_params: NoneOr<
-            DictRef<'v>,
+            StarlarkDict<'v>,
         >,
         #[starlark(default = NoneOr::None, require = named)] priority: NoneOr<i32>,
         heap: Heap<'v>,
@@ -459,7 +458,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
 }
 
 pub fn parse_custom_re_image(
-    image: Option<DictRef<'_>>,
+    image: Option<StarlarkDict<'_>>,
 ) -> buck2_error::Result<Option<Box<RemoteExecutorCustomImage>>> {
     let Some(dict) = image else {
         return Ok(None);
@@ -475,7 +474,10 @@ pub fn parse_custom_re_image(
         }
     }
 
-    fn get_value<'v>(dict_ref: &DictRef<'v>, name: &'static str) -> buck2_error::Result<Value<'v>> {
+    fn get_value<'v>(
+        dict_ref: StarlarkDict<'v>,
+        name: &'static str,
+    ) -> buck2_error::Result<Value<'v>> {
         if let Some(value) = dict_ref.get_str(name) {
             if value.is_none() {
                 Err(CommandExecutorConfigErrors::InvalidField(name).into())
@@ -487,16 +489,19 @@ pub fn parse_custom_re_image(
         }
     }
 
-    fn get_string<'v>(dict_ref: &DictRef<'v>, name: &'static str) -> buck2_error::Result<String> {
+    fn get_string<'v>(
+        dict_ref: StarlarkDict<'v>,
+        name: &'static str,
+    ) -> buck2_error::Result<String> {
         let value = get_value(dict_ref, name)?;
         Ok(value.to_str())
     }
 
-    let identifier_value = get_value(&dict, "identifier")?;
-    let identifier = if let Some(identifier_dict) = DictRef::from_value(identifier_value) {
+    let identifier_value = get_value(dict, "identifier")?;
+    let identifier = if let Some(identifier_dict) = StarlarkDict::from_value(identifier_value) {
         ImagePackageIdentifier {
-            name: get_string(&identifier_dict, "name")?,
-            uuid: get_string(&identifier_dict, "uuid")?,
+            name: get_string(identifier_dict, "name")?,
+            uuid: get_string(identifier_dict, "uuid")?,
         }
     } else {
         let identifier = identifier_value.to_str();
@@ -513,7 +518,7 @@ pub fn parse_custom_re_image(
         }
     };
 
-    let mount_globs_value = get_value(&dict, "drop_host_mount_globs")?;
+    let mount_globs_value = get_value(dict, "drop_host_mount_globs")?;
     let mount_globs = list_ref("drop_host_mount_globs", mount_globs_value)?;
     let mut drop_host_mount_globs = vec![];
     for item in mount_globs.values() {
@@ -532,7 +537,7 @@ fn parse_remote_execution_policy(
     match policy {
         None => Ok(RemoteExecutionPolicy::default()),
         Some(policy) => {
-            let re_policy_dict = DictRef::from_value(policy.to_value()).ok_or_else(|| {
+            let re_policy_dict = StarlarkDict::from_value(policy.to_value()).ok_or_else(|| {
                 buck2_error::Error::from(CommandExecutorConfigErrors::RePolicyNotADict(
                     policy.to_value().to_repr(),
                     policy.to_value().get_type().to_owned(),
@@ -597,7 +602,7 @@ fn parse_remote_execution_caf_fbpkgs(
 
             Ok(re_caf_fbpkgs_list
                 .values()
-                .map(|caf_fbpkg| match DictRef::from_value(caf_fbpkg) {
+                .map(|caf_fbpkg| match StarlarkDict::from_value(caf_fbpkg) {
                     Some(dict_ref) => {
                         let name = dict_ref
                             .get_str("name")
@@ -632,7 +637,7 @@ fn parse_remote_execution_caf_fbpkgs(
 }
 
 pub fn parse_meta_internal_extra_params<'v>(
-    params: Option<DictRef<'v>>,
+    params: Option<StarlarkDict<'v>>,
 ) -> buck2_error::Result<Arc<MetaInternalExtraParams>> {
     let Some(params) = params else {
         return Ok(MetaInternalExtraParams::default_arc());
@@ -640,7 +645,7 @@ pub fn parse_meta_internal_extra_params<'v>(
 
     let gang = params
         .get_str("remote_execution_gang")
-        .and_then(DictRef::from_value)
+        .and_then(StarlarkDict::from_value)
         .map(|dict| parse_remote_execution_gang(Some(dict)))
         .transpose()?
         .flatten();
@@ -674,7 +679,7 @@ pub fn parse_meta_internal_extra_params<'v>(
     }
 }
 fn parse_remote_execution_gang<'v>(
-    gang: Option<DictRef<'v>>,
+    gang: Option<StarlarkDict<'v>>,
 ) -> buck2_error::Result<Option<ReGang>> {
     let Some(gang) = gang else {
         return Ok(None);
@@ -684,7 +689,7 @@ fn parse_remote_execution_gang<'v>(
     let capabilities_value = gang
         .get_str("capabilities")
         .ok_or(CommandExecutorConfigErrors::MissingField("capabilities"))?;
-    let capabilities_dict = DictRef::from_value(capabilities_value).ok_or_else(|| {
+    let capabilities_dict = StarlarkDict::from_value(capabilities_value).ok_or_else(|| {
         buck2_error::Error::from(CommandExecutorConfigErrors::ReGangCapabilitiesNotADict(
             capabilities_value.to_repr(),
             capabilities_value.get_type().to_owned(),
@@ -692,7 +697,7 @@ fn parse_remote_execution_gang<'v>(
     })?;
 
     let capabilities: BuckFixedSortedMap<String, String> = capabilities_dict
-        .iter()
+        .entries()
         .map(|(k, v)| (k.to_str(), v.to_str()))
         .collect();
 
@@ -802,14 +807,18 @@ mod tests {
     {
         Heap::temp(|heap| {
             let params = heap.alloc(AllocDict([("cancel_on_client_disconnect", true)]));
-            let params = parse_meta_internal_extra_params(Some(params.dict()))?;
+            let params = parse_meta_internal_extra_params(
+                starlark::values::dict::StarlarkDict::from_value(params.to_value()),
+            )?;
             assert!(params.cancel_on_client_disconnect);
 
             let params = heap.alloc(AllocDict([(
                 "allow_unsandboxed_action_cache_uploads",
                 true,
             )]));
-            let params = parse_meta_internal_extra_params(Some(params.dict()))?;
+            let params = parse_meta_internal_extra_params(
+                starlark::values::dict::StarlarkDict::from_value(params.to_value()),
+            )?;
             assert!(!params.cancel_on_client_disconnect, "defaults to false");
             Ok(())
         })
@@ -825,7 +834,9 @@ mod tests {
                 "remote_execution_caf_fbpkgs",
                 heap.alloc(AllocList([fbpkg])),
             )]));
-            let params = parse_meta_internal_extra_params(Some(params.dict()))?;
+            let params = parse_meta_internal_extra_params(
+                starlark::values::dict::StarlarkDict::from_value(params.to_value()),
+            )?;
             Ok(params
                 .remote_execution_caf_fbpkgs
                 .iter()

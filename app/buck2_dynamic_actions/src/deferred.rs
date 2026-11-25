@@ -80,7 +80,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::AllocList;
 use starlark::values::tuple::AllocTuple;
 
@@ -94,9 +94,10 @@ use crate::resolved_dynamic_value::StarlarkResolvedDynamicValue;
 
 /// The materialized inputs of a dynamic action, by artifact.
 pub type ArtifactValues<'v> =
-    ValueOf<'v, DictType<StarlarkArtifactView<'v>, StarlarkArtifactValue>>;
+    ValueOf<'v, StarlarkDict<'v, StarlarkArtifactView<'v>, StarlarkArtifactValue>>;
 /// The outputs of a dynamic action, declared on its own registry, by the artifact they stand for.
-pub type Outputs<'v> = ValueOf<'v, DictType<StarlarkArtifactView<'v>, StarlarkArtifactView<'v>>>;
+pub type Outputs<'v> =
+    ValueOf<'v, StarlarkDict<'v, StarlarkArtifactView<'v>, StarlarkArtifactView<'v>>>;
 
 pub enum DynamicLambdaArgs<'v> {
     OldPositional {
@@ -580,11 +581,11 @@ fn artifact_values<'v>(
             StarlarkArtifactValue::new(artifact.dupe(), path.to_owned(), artifact_fs.fs().dupe());
         artifact_values_dict.push((k, v));
     }
-    Ok(heap.alloc(AllocDict(
-        artifact_values_dict
-            .into_iter()
-            .map(|(k, v)| (ValueOf::alloc(heap, k), ValueOf::alloc(heap, v))),
-    )))
+    Ok(heap
+        .alloc(AllocDict(artifact_values_dict.into_iter().map(|(k, v)| {
+            (ValueOf::alloc(heap, k), ValueOf::alloc(heap, v))
+        })))
+        .into())
 }
 
 /// Prepare dict of output artifacts for dynamic actions.
@@ -603,7 +604,7 @@ fn outputs<'v>(
         ));
     }
 
-    Ok(heap.alloc(AllocDict(outputs_dict)))
+    Ok(heap.alloc(AllocDict(outputs_dict)).into())
 }
 
 fn new_attr_value<'v>(

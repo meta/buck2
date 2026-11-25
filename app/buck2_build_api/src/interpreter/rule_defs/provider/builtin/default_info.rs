@@ -30,7 +30,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
@@ -132,7 +132,7 @@ pub struct DefaultInfo<'v> {
     /// `ProviderCollection`, this collection must include at least a `DefaultInfo` provider. The
     /// subtargets can have their own subtargets as well, which can be accessed by chaining them,
     /// e.g.: `buck2 build cell//foo:bar[baz][qux]`.
-    sub_targets: ValueOf<'v, DictType<StarlarkStr, ProviderCollection<'v>>>,
+    sub_targets: ValueOf<'v, StarlarkDict<'v, StarlarkStr, ProviderCollection<'v>>>,
     /// A list of `Artifact`s that are built by default if this rule is requested
     /// explicitly (via CLI or `$(location)` etc), or depended on as as a "source"
     /// (i.e., `attrs.source()`).
@@ -160,7 +160,7 @@ fn validate_default_info<'v>(info: &DefaultInfo<'v>) -> buck2_error::Result<()> 
 impl<'v> DefaultInfo<'v> {
     pub fn empty(heap: Heap<'v>) -> Self {
         DefaultInfo {
-            sub_targets: heap.alloc(AllocDict::empty()),
+            sub_targets: heap.alloc(AllocDict::empty()).into(),
             default_outputs: heap.alloc(AllocList::empty()),
             other_outputs: heap.alloc(AllocList::empty()),
         }
@@ -320,7 +320,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         other_outputs: ValueOf<'v, StarlarkList<'v, StarlarkCmdArgsLike>>,
         #[starlark(default = ValueOf::empty_dict())] sub_targets: ValueOf<
             'v,
-            DictType<StarlarkStr, Value<'v>>,
+            StarlarkDict<'v, StarlarkStr, Value<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, DefaultInfo<'v>>> {
@@ -350,7 +350,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         Ok(heap.alloc(DefaultInfo {
             default_outputs,
             other_outputs,
-            sub_targets: heap.alloc(AllocDict(sub_targets)),
+            sub_targets: heap.alloc(AllocDict(sub_targets)).into(),
         }))
     }
 }

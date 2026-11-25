@@ -28,7 +28,7 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
@@ -68,7 +68,7 @@ pub struct ExternalRunnerTestInfo<'v> {
 
     /// The environment for this test. Here again, the external test runner is what gives this
     /// meaning.
-    env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
+    env: Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>>,
 
     /// The labels for this test.
     labels: Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>>,
@@ -102,14 +102,16 @@ pub struct ExternalRunnerTestInfo<'v> {
     exec_group: Option<ValueOf<'v, StarlarkExecutionGroupView<'v>>>,
 
     /// Executors that Tpx can use to override the default executor.
-    executor_overrides: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCommandExecutorConfig>>>,
+    executor_overrides:
+        Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCommandExecutorConfig>>>,
 
     /// Mapping from a local resource type to a target with a corresponding provider.
     /// Required types are passed from test runner.
     /// If the value for a corresponding type is omitted it means local resource
     /// should be ignored when executing tests even if those are passed as required from test runner.
-    local_resources:
-        Option<ValueOf<'v, DictType<StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>>,
+    local_resources: Option<
+        ValueOf<'v, StarlarkDict<'v, StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>,
+    >,
 
     /// List of local resource types which should be set up additionally to those which are
     /// passed from test runner. Allows specifying local resources on a per-rule basis.
@@ -255,12 +257,12 @@ impl<'v> TestCommandMember<'v> {
 // over them. (The provider macro reads field types syntactically, so the structs spell them out.)
 
 pub(super) type TestCommand<'v> = ValueOf<'v, StarlarkListOrTuple<'v, StarlarkCmdArgsLike>>;
-pub(super) type TestEnv<'v> = ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>;
+pub(super) type TestEnv<'v> = ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>;
 pub(super) type StrSeq<'v> = ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>;
 pub(super) type ExecutorOverrides<'v> =
-    ValueOf<'v, DictType<StarlarkStr, StarlarkCommandExecutorConfig>>;
+    ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCommandExecutorConfig>>;
 pub(super) type LocalResources<'v> =
-    ValueOf<'v, DictType<StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>;
+    ValueOf<'v, StarlarkDict<'v, StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>;
 pub(super) type RequiredLocalResources<'v> =
     ValueOf<'v, StarlarkListOrTuple<'v, StarlarkRequiredTestLocalResource>>;
 

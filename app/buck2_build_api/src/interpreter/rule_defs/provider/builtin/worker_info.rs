@@ -24,7 +24,7 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::int::IntView;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
@@ -53,7 +53,7 @@ pub struct WorkerInfo<'v> {
     // Command to spawn a new worker
     pub exe: ValueOf<'v, StarlarkCmdArgsView<'v>>,
     /// Environment for the command that spawns the worker.
-    env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
+    env: Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>>,
     // Maximum number of concurrent commands to execute on a worker instance without queuing
     pub concurrency: Option<ValueOf<'v, IntView<'v>>>,
     // Whether to always run actions using this worker via the streaming API
@@ -74,7 +74,7 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
     fn WorkerInfo<'v>(
         #[starlark(default = AllocList::EMPTY)] exe: Value<'v>,
         #[starlark(default = NoneOr::None)] env: NoneOr<
-            ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>,
+            ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] concurrency: NoneOr<
             ValueOf<'v, IntView<'v>>,

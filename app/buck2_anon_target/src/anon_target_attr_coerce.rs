@@ -46,7 +46,7 @@ use dupe::IterDupedExt;
 use either::Either;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::DictRef;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::int::IntView;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
@@ -321,7 +321,7 @@ enum AnyLiteral<'v> {
     None(NoneType),
     Bool(bool),
     Int(IntView<'v>),
-    Dict(DictRef<'v>),
+    Dict(StarlarkDict<'v>),
     Tuple(StarlarkTuple<'v>),
     List(StarlarkList<'v>),
     Str(&'v str),
@@ -333,7 +333,7 @@ fn to_anon_target_any(value: Value, ctx: &AnonAttrCtx) -> buck2_error::Result<An
         Some(AnyLiteral::Bool(x)) => Ok(AnonTargetAttr::Bool(BoolLiteral(x))),
         Some(AnyLiteral::Int(x)) => Ok(AnonTargetAttr::Int(x.to_integer()?)),
         Some(AnyLiteral::Dict(x)) => Ok(AnonTargetAttr::Dict(
-            x.iter()
+            x.entries()
                 .map(|(k, v)| Ok((to_anon_target_any(k, ctx)?, to_anon_target_any(v, ctx)?)))
                 .collect::<buck2_error::Result<_>>()?,
         )),
@@ -371,11 +371,11 @@ fn to_anon_target_dict(
     ctx: &AnonAttrCtx,
     value: Value,
 ) -> buck2_error::Result<AnonTargetAttr> {
-    if let Some(dict) = DictRef::from_value(value) {
+    if let Some(dict) = StarlarkDict::from_value(value) {
         let mut res = Vec::with_capacity(dict.len());
         if dict_attr_type.sorted {
             // First sort the values
-            let mut items = dict.iter().collect::<Vec<_>>();
+            let mut items = dict.entries().collect::<Vec<_>>();
             // If two things are incompatible, just return Eq. The resulting order is undefined, but safely undefined.
             items.sort_by(|a, b| a.0.compare(b.0).unwrap_or(Ordering::Equal));
 
@@ -386,7 +386,7 @@ fn to_anon_target_dict(
                 ));
             }
         } else {
-            for (k, v) in dict.iter() {
+            for (k, v) in dict.entries() {
                 res.push((
                     dict_attr_type.key.coerce_item(ctx, k)?,
                     dict_attr_type.value.coerce_item(ctx, v)?,

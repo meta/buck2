@@ -52,8 +52,7 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::StringValue;
 use starlark::values::ValueOf;
-use starlark::values::dict::DictRef;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::StarlarkList;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
@@ -262,7 +261,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named)] category: StringValue<'v>,
         #[starlark(require = named, default = NoneOr::None)] identifier: NoneOr<StringValue<'v>>,
         #[starlark(require = named)] env: Option<
-            ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>,
+            ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>,
         >,
         #[starlark(require = named, default = false)] local_only: bool,
         #[starlark(require = named, default = false)] prefer_local: bool,
@@ -272,7 +271,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named)] weight: Option<u32>,
         #[starlark(require = named)] weight_percentage: Option<u32>,
         #[starlark(require = named)] dep_files: Option<
-            ValueOf<'v, DictType<StarlarkStr, ArtifactTag>>,
+            ValueOf<'v, StarlarkDict<'v, StarlarkStr, ArtifactTag>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())]
         dep_file_fingerprints: ValueOf<
@@ -301,18 +300,18 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = ValueOf::empty_list())]
         remote_execution_dependencies: ValueOf<
             'v,
-            StarlarkList<'v, DictType<StarlarkStr, StarlarkStr>>,
+            StarlarkList<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())] re_gang_workers: ValueOf<
             'v,
-            StarlarkList<'v, DictType<StarlarkStr, StarlarkStr>>,
+            StarlarkList<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(default = NoneOr::None, require = named)] remote_execution_dynamic_image: NoneOr<
-            DictRef<'v>,
+            StarlarkDict<'v>,
         >,
         #[starlark(require = named, default = NoneOr::None)] timeout_seconds: NoneOr<u32>,
         #[starlark(require = named, default = NoneOr::None)] meta_internal_extra_params: NoneOr<
-            DictRef<'v>,
+            StarlarkDict<'v>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())]
         outputs_for_error_handler: ValueOf<
@@ -345,7 +344,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         impl<'v> RunCommandArtifactVisitor<'v> {
             fn new(
-                dep_files: Option<ValueOf<'v, DictType<StarlarkStr, ArtifactTag>>>,
+                dep_files: Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, ArtifactTag>>>,
             ) -> buck2_error::Result<Self> {
                 let dep_file_artifact_tags = if let Some(dep_files) = dep_files {
                     let mut tags = BuckMutInsertionSet::with_capacity(dep_files.dict().len());

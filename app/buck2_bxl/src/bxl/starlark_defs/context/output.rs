@@ -58,7 +58,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
@@ -472,7 +472,7 @@ impl StarlarkOutputStream {
             List(ValueOf<'v, StarlarkList<'v>>),
             Tuple(ValueOf<'v, StarlarkTuple<'v>>),
             Set(ValueOf<'v, SetType<Value<'v>>>),
-            Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
+            Dict(ValueOf<'v, StarlarkDict<'v>>),
             Struct(ValueOf<'v, Struct<'v>>),
             Record(ValueOf<'v, Record<'v>>),
         }
@@ -534,8 +534,7 @@ impl StarlarkOutputStream {
                         serializer.collect_seq(x.set().iter().map(|v| self.with_value(v)))
                     }
                     Some(SerializedHere::Dict(x)) => serializer.collect_map(
-                        x.dict()
-                            .iter()
+                        x.entries()
                             .map(|(k, v)| (self.with_value(k), self.with_value(v))),
                     ),
                     Some(SerializedHere::Struct(x)) => {
@@ -588,7 +587,7 @@ enum EnsureMultipleArtifactsArg<'v> {
     EnsuredArtifactArgs(ValueOf<'v, StarlarkList<'v, StarlarkArtifactView<'v>>>),
     ProvidersArtifactIterable(ValueOf<'v, StarlarkProvidersArtifactIterable<'v>>),
     BxlBuildResult(ValueOf<'v, StarlarkBxlBuildResult>),
-    Dict(ValueOf<'v, DictType<Value<'v>, StarlarkBxlBuildResult>>),
+    Dict(ValueOf<'v, StarlarkDict<'v, Value<'v>, StarlarkBxlBuildResult>>),
     CmdLine(&'v dyn CommandLineArgLike<'v>),
 }
 

@@ -58,7 +58,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -271,7 +271,7 @@ pub(crate) static IMPL_ATTRS_PARAM: ParamNameAndType = ParamNameAndType {
 };
 
 pub(crate) type ImplSingleReturnTy<'v> = PlatformInfo<'v>;
-type ImplSplitReturnTy<'v> = DictType<StarlarkStr, PlatformInfo<'v>>;
+type ImplSplitReturnTy<'v> = StarlarkDict<'v, StarlarkStr, PlatformInfo<'v>>;
 
 struct TransitionImplParams;
 
@@ -336,7 +336,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             TransitionImplParams,
             Either<ImplSingleReturnTy<'static>, ImplSplitReturnTy<'static>>,
         >,
-        #[starlark(require = named)] refs: ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>,
+        #[starlark(require = named)] refs: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
         #[starlark(require = named)] attrs: Option<
             ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         >,

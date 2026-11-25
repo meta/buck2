@@ -112,7 +112,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::dict::DictType;
+use starlark::values::dict::StarlarkDict;
 use starlark::values::string::StarlarkStr;
 
 use crate::anon_promises::AnonPromises;
@@ -259,7 +259,7 @@ impl AnonTargetKey {
         execution_platform: &ExecutionPlatformResolution,
         uses_execution_groups: bool,
         rule: ValueTyped<'v, FrozenStarlarkRuleCallable<'v>>,
-        attributes: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
+        attributes: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
     ) -> buck2_error::Result<(
         Arc<StarlarkRuleType>,
         TargetLabel,
@@ -333,7 +333,7 @@ impl AnonTargetKey {
         execution_platform: &ExecutionPlatformResolution,
         uses_execution_groups: bool,
         rule: ValueTyped<'v, FrozenStarlarkRuleCallable<'v>>,
-        attributes: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
+        attributes: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
         owner_key: &BaseDeferredKey,
     ) -> buck2_error::Result<Self> {
         let (rule_type, name, attrs, exec_cfg) = Self::prepare_anon_target_data(
@@ -738,7 +738,7 @@ impl<'v> AnonTargetsRegistry<'v> {
     pub(crate) fn anon_target_key(
         &self,
         rule: ValueTyped<'v, FrozenStarlarkRuleCallable<'v>>,
-        attributes: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
+        attributes: ValueOf<'v, StarlarkDict<'v, StarlarkStr, Value<'v>>>,
         owner_key: &BaseDeferredKey,
         execution_group: Option<&ExecutionGroup>,
     ) -> buck2_error::Result<AnonTargetKey> {

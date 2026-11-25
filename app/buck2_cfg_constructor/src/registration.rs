@@ -104,8 +104,8 @@ pub(crate) fn register_set_cfg_constructor(globals: &mut GlobalsBuilder) {
         #[starlark(require=named)] stage0: Value<'v>,
         #[starlark(require=named)] stage1: Value<'v>,
         #[starlark(require=named)] key: &str,
-        #[starlark(require = named, default = NoneOr::None)] aliases: NoneOr<Value<'v>>,
-        #[starlark(require = named, default = NoneOr::None)] extra_data: NoneOr<Value<'v>>,
+        #[starlark(require = named, default = NoneType)] aliases: NoneOr<Value<'v>>,
+        #[starlark(require = named, default = NoneType)] extra_data: NoneOr<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let build_context = BuildContext::from_context(eval)?;

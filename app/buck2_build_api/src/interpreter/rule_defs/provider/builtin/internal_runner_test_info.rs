@@ -40,6 +40,7 @@ use starlark::values::int::IntView;
 use starlark::values::list::StarlarkList;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
 
@@ -524,22 +525,22 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
             >,
         >,
         listing_command: TestCommand<'v>,
-        #[starlark(default = NoneOr::None)] command: NoneOr<TestCommand<'v>>,
-        #[starlark(default = NoneOr::None)] env: NoneOr<TestEnv<'v>>,
-        #[starlark(default = NoneOr::None)] labels: NoneOr<StrSeq<'v>>,
-        #[starlark(default = NoneOr::None)] contacts: NoneOr<StrSeq<'v>>,
-        #[starlark(default = NoneOr::None)] use_project_relative_paths: NoneOr<ValueOf<'v, bool>>,
-        #[starlark(default = NoneOr::None)] run_from_project_root: NoneOr<ValueOf<'v, bool>>,
-        #[starlark(default = NoneOr::None)] default_executor: NoneOr<
+        #[starlark(default = NoneType)] command: NoneOr<TestCommand<'v>>,
+        #[starlark(default = NoneType)] env: NoneOr<TestEnv<'v>>,
+        #[starlark(default = NoneType)] labels: NoneOr<StrSeq<'v>>,
+        #[starlark(default = NoneType)] contacts: NoneOr<StrSeq<'v>>,
+        #[starlark(default = NoneType)] use_project_relative_paths: NoneOr<ValueOf<'v, bool>>,
+        #[starlark(default = NoneType)] run_from_project_root: NoneOr<ValueOf<'v, bool>>,
+        #[starlark(default = NoneType)] default_executor: NoneOr<
             ValueOf<'v, StarlarkCommandExecutorConfig>,
         >,
-        #[starlark(default = NoneOr::None)] executor_overrides: NoneOr<ExecutorOverrides<'v>>,
-        #[starlark(default = NoneOr::None)] local_resources: NoneOr<LocalResources<'v>>,
-        #[starlark(default = NoneOr::None)] required_local_resources: NoneOr<
+        #[starlark(default = NoneType)] executor_overrides: NoneOr<ExecutorOverrides<'v>>,
+        #[starlark(default = NoneType)] local_resources: NoneOr<LocalResources<'v>>,
+        #[starlark(default = NoneType)] required_local_resources: NoneOr<
             RequiredLocalResources<'v>,
         >,
-        #[starlark(default = NoneOr::None)] worker: NoneOr<ValueOf<'v, WorkerInfo<'v>>>,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+        #[starlark(default = NoneType)] worker: NoneOr<ValueOf<'v, WorkerInfo<'v>>>,
+        #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             ValueOf<'v, StarlarkExecutionGroupView<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,

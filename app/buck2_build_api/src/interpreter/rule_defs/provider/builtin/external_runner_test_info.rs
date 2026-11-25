@@ -31,6 +31,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::StarlarkDict;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
@@ -434,36 +435,37 @@ fn validate_external_runner_test_info<'v>(
 fn external_runner_test_info_creator(globals: &mut GlobalsBuilder) {
     fn ExternalRunnerTestInfo<'v>(
         #[starlark(require = named)] r#type: StringValue<'v>,
-        #[starlark(require = named, default = NoneOr::None)] command: NoneOr<TestCommand<'v>>,
-        #[starlark(require = named, default = NoneOr::None)] env: NoneOr<TestEnv<'v>>,
-        #[starlark(require = named, default = NoneOr::None)] labels: NoneOr<StrSeq<'v>>,
-        #[starlark(require = named, default = NoneOr::None)] contacts: NoneOr<StrSeq<'v>>,
-        #[starlark(require = named, default = NoneOr::None)] use_project_relative_paths: NoneOr<
+        #[starlark(require = named, default = NoneType)] command: NoneOr<TestCommand<'v>>,
+        #[starlark(require = named, default = NoneType)] env: NoneOr<TestEnv<'v>>,
+        #[starlark(require = named, default = NoneType)] labels: NoneOr<StrSeq<'v>>,
+        #[starlark(require = named, default = NoneType)] contacts: NoneOr<StrSeq<'v>>,
+        #[starlark(require = named, default = NoneType)] use_project_relative_paths: NoneOr<
             ValueOf<'v, bool>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] run_from_project_root: NoneOr<
+        #[starlark(require = named, default = NoneType)] run_from_project_root: NoneOr<
             ValueOf<'v, bool>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] default_executor: NoneOr<
+        #[starlark(require = named, default = NoneType)] default_executor: NoneOr<
             ValueOf<'v, StarlarkCommandExecutorConfig>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+        #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             ValueOf<'v, StarlarkExecutionGroupView<'v>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] executor_overrides: NoneOr<
+        #[starlark(require = named, default = NoneType)] executor_overrides: NoneOr<
             ExecutorOverrides<'v>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] local_resources: NoneOr<
+        #[starlark(require = named, default = NoneType)] local_resources: NoneOr<
             LocalResources<'v>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] required_local_resources: NoneOr<
+        #[starlark(require = named, default = NoneType)] required_local_resources: NoneOr<
             RequiredLocalResources<'v>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] worker: NoneOr<
+        #[starlark(require = named, default = NoneType)] worker: NoneOr<
             ValueOf<'v, WorkerInfo<'v>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)]
-        supports_test_execution_caching: NoneOr<ValueOf<'v, bool>>,
+        #[starlark(require = named, default = NoneType)] supports_test_execution_caching: NoneOr<
+            ValueOf<'v, bool>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, ExternalRunnerTestInfo<'v>>> {
         let exec_group = exec_group.into_option();

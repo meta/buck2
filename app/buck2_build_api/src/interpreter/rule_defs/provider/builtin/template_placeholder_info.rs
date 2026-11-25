@@ -16,12 +16,12 @@ use buck2_hash::BuckMutInsertionMap;
 use either::Either;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
+use starlark::values::EmptyDict;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::StarlarkDict;
 use starlark::values::string::StarlarkStr;
@@ -119,10 +119,11 @@ impl<'v> TemplatePlaceholderInfo<'v> {
 #[starlark_module]
 fn template_placeholder_info_creator(builder: &mut GlobalsBuilder) {
     fn TemplatePlaceholderInfo<'v>(
-        #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
-        unkeyed_variables: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>,
-        #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
-        keyed_variables: ValueOf<
+        #[starlark(default = EmptyDict)] unkeyed_variables: ValueOf<
+            'v,
+            StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>,
+        >,
+        #[starlark(default = EmptyDict)] keyed_variables: ValueOf<
             'v,
             StarlarkDict<
                 'v,

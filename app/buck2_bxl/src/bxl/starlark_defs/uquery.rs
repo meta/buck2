@@ -36,6 +36,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -121,7 +122,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkUQueryCtx<'v>,
         from: TargetListExprArg<'v>,
         to: TargetListExprArg<'v>,
-        #[starlark(default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<TargetNode>>> {
         let set = this.ctx.via_dice(eval, |dice| {
@@ -155,7 +156,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkUQueryCtx<'v>,
         from: TargetListExprArg<'v>,
         to: TargetListExprArg<'v>,
-        #[starlark(default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<TargetNode>>> {
         let set = this.ctx.via_dice(eval, |dice| {
@@ -272,8 +273,8 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
     fn deps<'v>(
         this: &StarlarkUQueryCtx<'v>,
         universe: TargetListExprArg<'v>,
-        #[starlark(default = NoneOr::None)] depth: NoneOr<i32>,
-        #[starlark(default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(default = NoneType)] depth: NoneOr<i32>,
+        #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<TargetNode>>> {
         let set = this
@@ -317,8 +318,8 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkUQueryCtx<'v>,
         universe: TargetListExprArg<'v>,
         from: TargetListExprArg<'v>,
-        #[starlark(default = NoneOr::None)] depth: NoneOr<i32>,
-        #[starlark(default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(default = NoneType)] depth: NoneOr<i32>,
+        #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<TargetNode>>> {
         let set = this
@@ -614,7 +615,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
     fn eval<'v>(
         this: &StarlarkUQueryCtx<'v>,
         query: &'v str,
-        #[starlark(default = NoneOr::None)] query_args: NoneOr<UnpackUnconfiguredQueryArgs<'v>>,
+        #[starlark(default = NoneType)] query_args: NoneOr<UnpackUnconfiguredQueryArgs<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let query_args = match query_args {

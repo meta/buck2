@@ -26,6 +26,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 
 use crate::execution_platform_info::ExecutionPlatformInfo;
@@ -109,8 +110,8 @@ fn info_creator(globals: &mut GlobalsBuilder) {
             'v,
             StarlarkList<'v, ExecutionPlatformInfo<'v>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] fallback: NoneOr<Fallback<'v>>,
-        #[starlark(require = named, default = NoneOr::None)] exec_marker_constraint: NoneOr<
+        #[starlark(require = named, default = NoneType)] fallback: NoneOr<Fallback<'v>>,
+        #[starlark(require = named, default = NoneType)] exec_marker_constraint: NoneOr<
             StringValue<'v>,
         >,
         heap: Heap<'v>,

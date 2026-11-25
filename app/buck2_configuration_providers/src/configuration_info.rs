@@ -25,12 +25,12 @@ use starlark::environment::GlobalsBuilder;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyDict;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkTypeExpr;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
@@ -182,8 +182,7 @@ fn configuration_info_creator(globals: &mut GlobalsBuilder) {
     fn ConfigurationInfo<'v>(
         #[starlark(require = named)] constraints: Constraints<'v>,
         #[starlark(require = named)] values: Buckconfigs<'v>,
-        #[starlark(require = named, default = ValueOf::new_unchecked(Value::new_empty_dict()))]
-        root_values: Buckconfigs<'v>,
+        #[starlark(require = named, default = EmptyDict)] root_values: Buckconfigs<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, ConfigurationInfo<'v>>> {
         let constraints = copy_constraints(constraints, eval.heap())?;

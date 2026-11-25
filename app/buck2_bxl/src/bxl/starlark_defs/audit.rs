@@ -24,6 +24,7 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
@@ -33,6 +34,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -102,8 +104,7 @@ fn audit_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkAuditCtx<'v>,
         // TODO(nga): parameters should be either positional or named, not both.
         output_path: &'v str,
-        #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
-        target_platform: ValueAsStarlarkTargetLabel<'v>,
+        #[starlark(default = NoneType)] target_platform: ValueAsStarlarkTargetLabel<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<
         // TODO(nga): used precise type.
@@ -169,7 +170,7 @@ fn audit_methods(builder: &mut MethodsBuilder) {
     fn cell<'v>(
         this: &StarlarkAuditCtx<'v>,
         // TODO(nga): parameters should be either positional or named, not both.
-        #[starlark(default = ValueOf::empty_list())] aliases_to_resolve: ValueOf<
+        #[starlark(default = EmptyList)] aliases_to_resolve: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkStr>,
         >,

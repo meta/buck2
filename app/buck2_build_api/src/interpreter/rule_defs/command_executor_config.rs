@@ -40,6 +40,7 @@ use buck2_hash::BuckFixedSortedMap;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
+use starlark::values::EmptyList;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
@@ -197,19 +198,17 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
     fn CommandExecutorConfig<'v>(
         #[starlark(require = named)] local_enabled: bool,
         #[starlark(require = named)] remote_enabled: bool,
-        #[starlark(default = NoneOr::None, require = named)] remote_cache_enabled: NoneOr<bool>,
+        #[starlark(default = NoneType, require = named)] remote_cache_enabled: NoneOr<bool>,
         #[starlark(default = false, require = named)] remote_dep_file_cache_enabled: bool,
         #[starlark(default = NoneType, require = named)] remote_execution_properties: Value<'v>,
-        #[starlark(default = NoneOr::None, require = named)] remote_execution_action_key: NoneOr<
+        #[starlark(default = NoneType, require = named)] remote_execution_action_key: NoneOr<
             &'v str,
         >,
-        #[starlark(default = NoneOr::None, require = named)]
+        #[starlark(default = NoneType, require = named)]
         remote_execution_max_input_files_mebibytes: NoneOr<i32>,
-        #[starlark(default = NoneOr::None, require = named)]
+        #[starlark(default = NoneType, require = named)]
         remote_execution_queue_time_threshold_s: NoneOr<u64>,
-        #[starlark(default = NoneOr::None, require = named)] remote_execution_use_case: NoneOr<
-            &'v str,
-        >,
+        #[starlark(default = NoneType, require = named)] remote_execution_use_case: NoneOr<&'v str>,
         #[starlark(default = false, require = named)] use_limited_hybrid: bool,
         #[starlark(default = false, require = named)] allow_limited_hybrid_fallbacks: bool,
         #[starlark(default = false, require = named)] allow_hybrid_fallbacks_on_failure: bool,
@@ -217,31 +216,28 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         #[starlark(default = false, require = named)] use_persistent_workers: bool,
         #[starlark(default = false, require = named)] use_bazel_protocol_remote_persistent_workers: bool,
         #[starlark(default = false, require = named)] allow_cache_uploads: bool,
-        #[starlark(default = NoneOr::None, require = named)] max_cache_upload_mebibytes: NoneOr<
-            i32,
-        >,
+        #[starlark(default = NoneType, require = named)] max_cache_upload_mebibytes: NoneOr<i32>,
         #[starlark(default = false, require = named)] experimental_low_pass_filter: bool,
-        #[starlark(default = NoneOr::None, require = named)] remote_output_paths: NoneOr<&str>,
-        #[starlark(default = NoneOr::None, require = named)] network_access: NoneOr<&str>,
-        #[starlark(default = NoneOr::None, require = named)]
-        remote_execution_resource_units: NoneOr<i64>,
-        #[starlark(default = ValueOf::empty_list(), require = named)]
-        remote_execution_dependencies: ValueOf<
+        #[starlark(default = NoneType, require = named)] remote_output_paths: NoneOr<&str>,
+        #[starlark(default = NoneType, require = named)] network_access: NoneOr<&str>,
+        #[starlark(default = NoneType, require = named)] remote_execution_resource_units: NoneOr<
+            i64,
+        >,
+        #[starlark(default = EmptyList, require = named)] remote_execution_dependencies: ValueOf<
             'v,
             StarlarkList<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
         >,
-        #[starlark(default = ValueOf::empty_list(), require = named)]
-        remote_execution_gang_workers: ValueOf<
+        #[starlark(default = EmptyList, require = named)] remote_execution_gang_workers: ValueOf<
             'v,
             StarlarkList<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
         >,
-        #[starlark(default = NoneOr::None, require = named)] remote_execution_dynamic_image: NoneOr<
+        #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: NoneOr<
             StarlarkDict<'v>,
         >,
-        #[starlark(default = NoneOr::None, require = named)] meta_internal_extra_params: NoneOr<
+        #[starlark(default = NoneType, require = named)] meta_internal_extra_params: NoneOr<
             StarlarkDict<'v>,
         >,
-        #[starlark(default = NoneOr::None, require = named)] priority: NoneOr<i32>,
+        #[starlark(default = NoneType, require = named)] priority: NoneOr<i32>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkCommandExecutorConfig>> {
         let command_executor_config = {

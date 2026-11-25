@@ -39,6 +39,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 
 use crate::bxl::starlark_defs::context::BxlContext;
@@ -199,8 +200,8 @@ fn aquery_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkAQueryCtx<'v>,
         // TODO(nga): parameters should be either positional or named, not both.
         universe: UnpackActionNodes<'v>,
-        #[starlark(default = NoneOr::None)] depth: NoneOr<i32>,
-        #[starlark(default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(default = NoneType)] depth: NoneOr<i32>,
+        #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ActionQueryNode>>> {
         let set = this
@@ -331,7 +332,7 @@ fn aquery_methods(builder: &mut MethodsBuilder) {
     fn eval<'v>(
         this: &StarlarkAQueryCtx<'v>,
         query: &'v str,
-        #[starlark(default = NoneOr::None)] query_args: NoneOr<UnpackUnconfiguredQueryArgs<'v>>,
+        #[starlark(default = NoneType)] query_args: NoneOr<UnpackUnconfiguredQueryArgs<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let query_args = match query_args {

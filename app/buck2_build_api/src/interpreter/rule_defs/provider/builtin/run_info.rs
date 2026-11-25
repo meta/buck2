@@ -15,6 +15,7 @@ use buck2_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
+use starlark::values::EmptyList;
 use starlark::values::Freeze;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
@@ -93,8 +94,7 @@ pub type OwnedRunInfo = OwnedFrozen<ValueTyped<'static, RunInfo<'static>>>;
 fn run_info_creator(globals: &mut GlobalsBuilder) {
     fn RunInfo<'v>(
         // TODO(nga): make the argument either named or positional.
-        #[starlark(default = StarlarkCommandLineValueUnpack::List(ValueOf::empty_list()))]
-        args: StarlarkCommandLineValueUnpack<'v>,
+        #[starlark(default = EmptyList)] args: StarlarkCommandLineValueUnpack<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, RunInfo<'v>>> {
         let heap = eval.heap();

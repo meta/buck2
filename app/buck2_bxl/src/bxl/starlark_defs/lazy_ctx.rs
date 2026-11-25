@@ -21,6 +21,7 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
@@ -28,6 +29,7 @@ use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::StarlarkList;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -250,9 +252,9 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     fn configured_target_node<'v>(
         #[starlark(this)] this: &'v StarlarkLazyCtx,
         #[starlark(require = pos)] expr: ConfiguredTargetNodeArg<'v>,
-        #[starlark(require = named, default = ValueAsStarlarkTargetLabel::NONE)]
+        #[starlark(require = named, default = NoneType)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] modifiers: ValueOf<
             'v,
             StarlarkList<'v, StarlarkStr>,
         >,
@@ -357,9 +359,9 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// Gets the lazy cquery context.
     fn cquery<'v>(
         this: &'v StarlarkLazyCtx,
-        #[starlark(require = named, default = ValueAsStarlarkTargetLabel::NONE)]
+        #[starlark(require = named, default = NoneType)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] modifiers: ValueOf<
             'v,
             StarlarkList<'v, StarlarkStr>,
         >,

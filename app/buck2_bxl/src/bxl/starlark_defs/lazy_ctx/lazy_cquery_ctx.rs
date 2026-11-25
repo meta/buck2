@@ -25,6 +25,7 @@ use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -91,10 +92,10 @@ fn lazy_cquery_methods(builder: &mut MethodsBuilder) {
     fn eval<'v>(
         this: &StarlarkLazyCqueryCtx,
         #[starlark(require = pos)] query: &'v str,
-        #[starlark(require = named, default = NoneOr::None)] query_args: NoneOr<
+        #[starlark(require = named, default = NoneType)] query_args: NoneOr<
             UnpackUnconfiguredQueryArgs<'v>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] target_universe: NoneOr<
+        #[starlark(require = named, default = NoneType)] target_universe: NoneOr<
             ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         >,
         heap: Heap<'v>,

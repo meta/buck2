@@ -17,6 +17,7 @@ use buck2_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
+use starlark::values::EmptyList;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::StarlarkPagable;
@@ -26,8 +27,8 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::StarlarkDict;
 use starlark::values::int::IntView;
-use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
@@ -72,14 +73,14 @@ fn next_id() -> u64 {
 #[starlark_module]
 fn worker_info_creator(globals: &mut GlobalsBuilder) {
     fn WorkerInfo<'v>(
-        #[starlark(default = AllocList::EMPTY)] exe: Value<'v>,
-        #[starlark(default = NoneOr::None)] env: NoneOr<
+        #[starlark(default = EmptyList)] exe: Value<'v>,
+        #[starlark(default = NoneType)] env: NoneOr<
             ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] concurrency: NoneOr<
+        #[starlark(require = named, default = NoneType)] concurrency: NoneOr<
             ValueOf<'v, IntView<'v>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] streaming: NoneOr<ValueOf<'v, bool>>,
+        #[starlark(require = named, default = NoneType)] streaming: NoneOr<ValueOf<'v, bool>>,
         #[starlark(require = named, default = false)]
         supports_bazel_remote_persistent_worker_protocol: bool,
         eval: &mut Evaluator<'v, '_, '_>,

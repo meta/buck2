@@ -25,6 +25,7 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 
 use crate::actions::impls::cas_artifact::ArtifactKind;
 use crate::actions::impls::cas_artifact::DirectoryKind;
@@ -52,12 +53,12 @@ pub(crate) fn analysis_actions_methods_download(methods: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] output: OutputArtifactArg<'v>,
         #[starlark(require = pos)] url: &str,
-        #[starlark(require = named, default = NoneOr::None)] vpnless_url: NoneOr<&str>,
-        #[starlark(require = named, default = NoneOr::None)] sha1: NoneOr<&str>,
-        #[starlark(require = named, default = NoneOr::None)] sha256: NoneOr<&str>,
-        #[starlark(require = named, default = NoneOr::None)] size_bytes: NoneOr<u64>,
+        #[starlark(require = named, default = NoneType)] vpnless_url: NoneOr<&str>,
+        #[starlark(require = named, default = NoneType)] sha1: NoneOr<&str>,
+        #[starlark(require = named, default = NoneType)] sha256: NoneOr<&str>,
+        #[starlark(require = named, default = NoneType)] size_bytes: NoneOr<u64>,
         #[starlark(require = named, default = false)] is_executable: bool,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         let mut this = this.state()?;
@@ -108,9 +109,7 @@ pub(crate) fn analysis_actions_methods_download(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] is_executable: bool,
         #[starlark(require = named, default = false)] is_tree: bool,
         #[starlark(require = named, default = false)] is_directory: bool,
-        #[starlark(require = named, default = NoneOr::Other(true))] has_content_based_path: NoneOr<
-            bool,
-        >,
+        #[starlark(require = named, default = true)] has_content_based_path: NoneOr<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         let mut registry = this.state()?;

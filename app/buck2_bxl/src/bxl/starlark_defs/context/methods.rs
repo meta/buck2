@@ -38,6 +38,7 @@ use futures::FutureExt;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOf;
@@ -152,9 +153,8 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     fn configured_targets<'v>(
         this: &'v BxlContext<'v>,
         #[starlark(require = pos)] labels: ConfiguredTargetListExprArg<'v>,
-        #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
-        target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = NoneOr::None)] modifiers: NoneOr<
+        #[starlark(default = NoneType)] target_platform: ValueAsStarlarkTargetLabel<'v>,
+        #[starlark(require = named, default = NoneType)] modifiers: NoneOr<
             ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -302,10 +302,9 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     fn target_universe<'v>(
         this: ValueTyped<'v, BxlContext<'v>>,
         labels: ConfiguredTargetListExprArg<'v>,
-        #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
-        target_platform: ValueAsStarlarkTargetLabel<'v>,
+        #[starlark(default = NoneType)] target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = false)] keep_going: bool,
-        #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] modifiers: ValueOf<
             'v,
             StarlarkList<'v, StarlarkStr>,
         >,
@@ -369,8 +368,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     fn cquery<'v>(
         this: ValueTyped<'v, BxlContext<'v>>,
         // TODO(nga): parameter should be either positional or named, not both.
-        #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
-        target_platform: ValueAsStarlarkTargetLabel<'v>,
+        #[starlark(default = NoneType)] target_platform: ValueAsStarlarkTargetLabel<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkCQueryCtx<'v>>> {
         let global_cfg_options = this.resolve_global_cfg_options(target_platform, vec![])?;
@@ -387,8 +385,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     /// The `target_platform` is a target label, or a string that is a target label.
     fn aquery<'v>(
         this: ValueTyped<'v, BxlContext<'v>>,
-        #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
-        target_platform: ValueAsStarlarkTargetLabel<'v>,
+        #[starlark(default = NoneType)] target_platform: ValueAsStarlarkTargetLabel<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAQueryCtx<'v>>> {
         Ok(ValueOf::alloc(
@@ -453,15 +450,11 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     /// platform resolution from the parent BXL.
     fn bxl_actions<'v>(
         this: &'v BxlContext<'v>,
-        #[starlark(require = named, default = NoneOr::None)] exec_deps: NoneOr<
-            ProvidersExprArg<'v>,
-        >,
-        #[starlark(require = named, default = NoneOr::None)] toolchains: NoneOr<
-            ProvidersExprArg<'v>,
-        >,
-        #[starlark(require = named, default = ValueAsStarlarkTargetLabel::NONE)]
+        #[starlark(require = named, default = NoneType)] exec_deps: NoneOr<ProvidersExprArg<'v>>,
+        #[starlark(require = named, default = NoneType)] toolchains: NoneOr<ProvidersExprArg<'v>>,
+        #[starlark(require = named, default = NoneType)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = NoneOr::None)] exec_compatible_with: NoneOr<
+        #[starlark(require = named, default = NoneType)] exec_compatible_with: NoneOr<
             TargetListExprArg<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -664,8 +657,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         this: &'v BxlContext<'v>,
         // TODO(nga): parameter should be either positional or named, not both.
         labels: AnyProvidersExprArg<'v>,
-        #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
-        target_platform: ValueAsStarlarkTargetLabel<'v>,
+        #[starlark(default = NoneType)] target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = "default")] materializations: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<

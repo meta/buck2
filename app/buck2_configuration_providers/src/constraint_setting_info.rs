@@ -32,6 +32,7 @@ use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 
 /// Provider that signals that a target can be used as a constraint key. This is the only provider
 /// returned by a `constraint_setting()` target.
@@ -84,7 +85,7 @@ impl<'v> ConstraintSettingInfo<'v> {
 fn constraint_info_creator(globals: &mut GlobalsBuilder) {
     fn ConstraintSettingInfo<'v>(
         #[starlark(require = named)] label: ValueOf<'v, StarlarkTargetLabel>,
-        #[starlark(require = named, default = NoneOr::None)] default: NoneOr<
+        #[starlark(require = named, default = NoneType)] default: NoneOr<
             ValueOf<'v, StarlarkProvidersLabel>,
         >,
         heap: Heap<'v>,

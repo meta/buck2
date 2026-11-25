@@ -48,6 +48,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 
 use crate::actions::impls::dep_file_fingerprint::DepFileFingerprintFormat;
 use crate::actions::impls::dep_file_fingerprint::StarlarkDepFileFingerprint;
@@ -183,10 +184,10 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         dep_files_fingerprint_using_canonical_paths: bool,
         #[starlark(require = named, default = false)] pretty: bool,
         #[starlark(require = named, default = false)] absolute: bool,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
         #[starlark(require = named, default = false)]
         use_dep_files_placeholder_for_content_based_paths: bool,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+        #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -274,8 +275,8 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] output: OutputArtifactArg<'v>,
         #[starlark(require = pos)] content: ValueOf<'v, HmapMappings<'v>>,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -341,10 +342,10 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)]
         dep_files_fingerprint_using_canonical_paths: bool,
         #[starlark(require = named, default = false)] absolute: bool,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
         #[starlark(require = named, default = false)]
         use_dep_files_placeholder_for_content_based_paths: bool,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+        #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,

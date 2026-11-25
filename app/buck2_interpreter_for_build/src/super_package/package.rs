@@ -30,6 +30,7 @@ use either::Either;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
@@ -268,15 +269,17 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
 
     fn package<'v>(
         #[starlark(require=named, default=false)] inherit: bool,
-        #[starlark(require=named, default=NoneOr::None)] visibility: NoneOr<
+        #[starlark(require=named, default=NoneType)] visibility: NoneOr<
             ValueOf<'v, StarlarkListOrTuple<'v, Either<StarlarkStr, StarlarkTargetNameGlob>>>,
         >,
-        #[starlark(require=named, default=ValueOf::empty_list())] within_view: ValueOf<
+        #[starlark(require=named, default=EmptyList)] within_view: ValueOf<
             'v,
             StarlarkListOrTuple<'v, Either<StarlarkStr, StarlarkTargetNameGlob>>,
         >,
-        #[starlark(require=named, default=ValueOf::empty_list())]
-        visibility_exempt_targets: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
+        #[starlark(require=named, default=EmptyList)] visibility_exempt_targets: ValueOf<
+            'v,
+            StarlarkListOrTuple<'v, StarlarkStr>,
+        >,
         eval: &mut Evaluator,
     ) -> starlark::Result<NoneType> {
         let build_context = BuildContext::from_context(eval)?;

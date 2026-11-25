@@ -57,6 +57,7 @@ use starlark::starlark_module;
 use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::util::ArcStr;
+use starlark::values::EmptyDict;
 use starlark::values::StarlarkTypeExpr;
 use starlark::values::Value;
 use starlark::values::ValueOf;
@@ -119,8 +120,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
             StarlarkDict<'v, StarlarkStr, StarlarkAttribute>,
         >,
         #[starlark(require = named, default = "")] doc: &str,
-        #[starlark(require = named, default = ValueOf::empty_dict())]
-        artifact_promise_mappings: ValueOf<
+        #[starlark(require = named, default = EmptyDict)] artifact_promise_mappings: ValueOf<
             'v,
             StarlarkDict<
                 'v,

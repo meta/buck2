@@ -11,6 +11,7 @@
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::ValueOf;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
@@ -53,7 +54,7 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
     /// that to change to case sensitive in the near future.
     fn glob<'v>(
         include: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
-        #[starlark(require = named, default = ValueOf::empty_list())] exclude: ValueOf<
+        #[starlark(require = named, default = EmptyList)] exclude: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkStr>,
         >,

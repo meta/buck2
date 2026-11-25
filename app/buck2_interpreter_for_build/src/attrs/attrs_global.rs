@@ -32,12 +32,14 @@ use either::Either;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::Heap;
 use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 use starlark::values::tuple::StarlarkTuple;
 
@@ -194,13 +196,13 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// must declare the group in `rule(exec_groups = ...)`. A rule that declares named execution
     /// groups must pass `exec_group`, with `DefaultExecGroup` for the default group.
     fn exec_dep<'v>(
-        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] providers: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+        #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -257,13 +259,13 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// `rule(exec_groups = ...)`. A rule that declares named execution groups must pass
     /// `exec_group`, with `DefaultExecGroup` for the default group.
     fn toolchain_dep<'v>(
-        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] providers: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+        #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -286,7 +288,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     }
 
     fn transition_dep<'v>(
-        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] providers: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
@@ -326,7 +328,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     }
 
     fn configured_dep<'v>(
-        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] providers: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
@@ -343,7 +345,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     }
 
     fn split_transition_dep<'v>(
-        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] providers: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
@@ -408,16 +410,15 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// The `pulls_plugins` and `pulls_and_pushes_plugins` parameters control plugin propagation.
     /// See the [`plugins`](../plugins) namespace documentation for a full explanation.
     fn dep<'v>(
-        #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] providers: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
-        #[starlark(require = named, default = ValueOf::empty_list())] pulls_plugins: ValueOf<
+        #[starlark(require = named, default = EmptyList)] pulls_plugins: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkPluginKindView<'v>>,
         >,
-        #[starlark(require = named, default = Either::Left(ValueOf::empty_list()))]
-        pulls_and_pushes_plugins: Either<
+        #[starlark(require = named, default = EmptyList)] pulls_and_pushes_plugins: Either<
             ValueOf<'v, StarlarkListOrTuple<'v, StarlarkPluginKindView<'v>>>,
             ValueOf<'v, AllPlugins>,
         >,
@@ -574,7 +575,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] anon_target_compatible: bool,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+        #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,

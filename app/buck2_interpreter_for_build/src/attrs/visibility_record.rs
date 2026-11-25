@@ -11,6 +11,7 @@
 use buck2_node::visibility::StarlarkTargetNameGlob;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::Heap;
 use starlark::values::ValueOf;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
@@ -48,7 +49,7 @@ pub(crate) fn register_target_name_glob(builder: &mut GlobalsBuilder) {
     #[starlark(as_type = StarlarkTargetNameGlob)]
     fn target_name_glob<'v>(
         #[starlark(require = pos)] name_globs: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
-        #[starlark(require = named, default = ValueOf::empty_list())] within: ValueOf<
+        #[starlark(require = named, default = EmptyList)] within: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkStr>,
         >,

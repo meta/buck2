@@ -50,6 +50,7 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
@@ -690,7 +691,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkOutputStream,
         #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
         #[starlark(default = " ")] sep: &'v str,
-        #[starlark(require = named, default = ValueOf::empty_list())] wait_on: ValueOf<
+        #[starlark(require = named, default = EmptyList)] wait_on: ValueOf<
             'v,
             StarlarkList<'v, Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
         >,
@@ -753,7 +754,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkOutputStream,
         value: Value<'v>,
         #[starlark(require=named, default=true)] pretty: bool,
-        #[starlark(require = named, default = ValueOf::empty_list())] wait_on: ValueOf<
+        #[starlark(require = named, default = EmptyList)] wait_on: ValueOf<
             'v,
             StarlarkList<'v, Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
         >,

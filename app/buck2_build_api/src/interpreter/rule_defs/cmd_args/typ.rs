@@ -39,6 +39,7 @@ use starlark::environment::MethodsBuilder;
 use starlark::eval::Arguments;
 use starlark::static_starlark_value;
 use starlark::values::AllocValue;
+use starlark::values::EmptyList;
 use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
@@ -1126,7 +1127,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
     fn relative_to<'v>(
         mut this: StarlarkCommandLineMut<'v>,
         #[starlark(require = pos)] directory: ValueOf<'v, RelativeOrigin<'v>>,
-        #[starlark(require = named, default = 0u32)] parent: u32,
+        #[starlark(require = named, default = 0)] parent: u32,
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
         this.borrow.options_mut().relative_to = Some((directory, parent));
         Ok(this)
@@ -1332,7 +1333,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
         relative_to: Option<
             Either<ValueOf<'v, RelativeOrigin<'v>>, (ValueOf<'v, RelativeOrigin<'v>>, u32)>,
         >,
-        #[starlark(default = Either::Right(ValueOf::empty_list()))] replace_regex: Either<
+        #[starlark(default = EmptyList)] replace_regex: Either<
             (CmdArgsRegex<'v>, StringValue<'v>),
             ValueOf<'v, StarlarkList<'v, (CmdArgsRegex<'v>, StarlarkStr)>>,
         >,

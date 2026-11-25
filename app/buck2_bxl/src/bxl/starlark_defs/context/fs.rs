@@ -43,6 +43,7 @@ use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 
 use super::BxlContext;
@@ -289,7 +290,7 @@ fn fs_operations(builder: &mut MethodsBuilder) {
     fn source<'v>(
         this: &'v BxlFilesystem<'v>,
         expr: FileExpr<'v>,
-        #[starlark(default = NoneOr::None)] target_hint: NoneOr<ValueOf<'v, TargetListExprArg<'v>>>,
+        #[starlark(default = NoneType)] target_hint: NoneOr<ValueOf<'v, TargetListExprArg<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         let buck_path = this.ctx.via_dice(eval, |dice| {

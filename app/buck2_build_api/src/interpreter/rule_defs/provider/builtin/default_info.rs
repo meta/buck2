@@ -20,6 +20,8 @@ use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
+use starlark::values::EmptyDict;
+use starlark::values::EmptyList;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FrozenHeap;
@@ -34,6 +36,7 @@ use starlark::values::dict::StarlarkDict;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
@@ -310,15 +313,17 @@ enum DefaultOutputError {
 fn default_info_creator(builder: &mut GlobalsBuilder) {
     fn DefaultInfo<'v>(
         // TODO(nga): parameters must be named only.
-        #[starlark(default = NoneOr::None)] default_output: NoneOr<
+        #[starlark(default = NoneType)] default_output: NoneOr<
             ValueOf<'v, StarlarkArtifactView<'v>>,
         >,
-        #[starlark(default = NoneOr::None)] default_outputs: NoneOr<
+        #[starlark(default = NoneType)] default_outputs: NoneOr<
             ValueOf<'v, StarlarkList<'v, StarlarkArtifactView<'v>>>,
         >,
-        #[starlark(default = ValueOf::new_unchecked(Value::new_empty_list()))]
-        other_outputs: ValueOf<'v, StarlarkList<'v, StarlarkCmdArgsLike>>,
-        #[starlark(default = ValueOf::empty_dict())] sub_targets: ValueOf<
+        #[starlark(default = EmptyList)] other_outputs: ValueOf<
+            'v,
+            StarlarkList<'v, StarlarkCmdArgsLike>,
+        >,
+        #[starlark(default = EmptyDict)] sub_targets: ValueOf<
             'v,
             StarlarkDict<'v, StarlarkStr, Value<'v>>,
         >,

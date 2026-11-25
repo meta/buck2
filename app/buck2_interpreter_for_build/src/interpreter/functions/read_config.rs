@@ -14,6 +14,7 @@ use starlark::starlark_module;
 use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 
 use crate::interpreter::build_context::BuildContext;
 
@@ -68,7 +69,7 @@ pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
         #[starlark(require = pos)] section: StringValue,
         #[starlark(require = pos)] key: StringValue,
         // Unlike `read_config` we only allow string or `None` as default.
-        #[starlark(require = pos, default = NoneOr::None)] default: NoneOr<StringValue<'v>>,
+        #[starlark(require = pos, default = NoneType)] default: NoneOr<StringValue<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneOr<StringValue<'v>>> {
         let buckconfigs = &BuildContext::from_context(eval)?.buckconfigs;

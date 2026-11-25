@@ -22,6 +22,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 
 use crate::bxl::starlark_defs::file_set::FileSetExpr;
@@ -82,7 +83,7 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] from: TargetListExprArg<'v>,
         #[starlark(require = pos)] to: TargetListExprArg<'v>,
-        #[starlark(require = named, default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(require = named, default = NoneType)] filter: NoneOr<&'v str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let from = OwnedTargetListExprArg::from_ref(&from)?;
@@ -105,7 +106,7 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] from: TargetListExprArg<'v>,
         #[starlark(require = pos)] to: TargetListExprArg<'v>,
-        #[starlark(require = named, default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(require = named, default = NoneType)] filter: NoneOr<&'v str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let from = OwnedTargetListExprArg::from_ref(&from)?;
@@ -194,8 +195,8 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
     fn deps<'v>(
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] universe: TargetListExprArg<'v>,
-        #[starlark(require = pos, default = NoneOr::None)] depth: NoneOr<i32>,
-        #[starlark(require = named, default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(require = pos, default = NoneType)] depth: NoneOr<i32>,
+        #[starlark(require = named, default = NoneType)] filter: NoneOr<&'v str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let universe = OwnedTargetListExprArg::from_ref(&universe)?;
@@ -222,8 +223,8 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] universe: TargetListExprArg<'v>,
         #[starlark(require = pos)] from: TargetListExprArg<'v>,
-        #[starlark(require = pos, default = NoneOr::None)] depth: NoneOr<i32>,
-        #[starlark(require = named, default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(require = pos, default = NoneType)] depth: NoneOr<i32>,
+        #[starlark(require = named, default = NoneType)] filter: NoneOr<&'v str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let universe = OwnedTargetListExprArg::from_ref(&universe)?;
@@ -426,7 +427,7 @@ fn lazy_uquery_methods(builder: &mut MethodsBuilder) {
     fn eval<'v>(
         #[starlark(this)] this: &'v StarlarkLazyUqueryCtx,
         #[starlark(require = pos)] query: &'v str,
-        #[starlark(require = named, default = NoneOr::None)] query_args: NoneOr<
+        #[starlark(require = named, default = NoneType)] query_args: NoneOr<
             UnpackUnconfiguredQueryArgs<'v>,
         >,
         heap: Heap<'v>,

@@ -34,6 +34,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -133,7 +134,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkCQueryCtx<'v>,
         from: ConfiguredTargetListExprArg<'v>,
         to: ConfiguredTargetListExprArg<'v>,
-        #[starlark(default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let set = this.ctx.via_dice(eval, move |dice| {
@@ -167,7 +168,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
         this: &StarlarkCQueryCtx<'v>,
         from: ConfiguredTargetListExprArg<'v>,
         to: ConfiguredTargetListExprArg<'v>,
-        #[starlark(default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let set = this.ctx.via_dice(eval, |dice| {
@@ -314,7 +315,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
     fn owner<'v>(
         this: &StarlarkCQueryCtx<'v>,
         files: FileSetExpr,
-        #[starlark(default = NoneOr::None)] universe: NoneOr<ConfiguredTargetListExprArg<'v>>,
+        #[starlark(default = NoneType)] universe: NoneOr<ConfiguredTargetListExprArg<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let set = this
@@ -354,8 +355,8 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
     fn deps<'v>(
         this: &StarlarkCQueryCtx<'v>,
         universe: ConfiguredTargetListExprArg<'v>,
-        #[starlark(default = NoneOr::None)] depth: NoneOr<i32>,
-        #[starlark(default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(default = NoneType)] depth: NoneOr<i32>,
+        #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let set = this
@@ -505,7 +506,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
         universe: ConfiguredTargetListExprArg<'v>,
         from: ConfiguredTargetListExprArg<'v>,
         depth: Option<i32>,
-        #[starlark(default = NoneOr::None)] filter: NoneOr<&'v str>,
+        #[starlark(default = NoneType)] filter: NoneOr<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let set = this
@@ -553,8 +554,8 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
     fn eval<'v>(
         this: &StarlarkCQueryCtx<'v>,
         query: &'v str,
-        #[starlark(default = NoneOr::None)] query_args: NoneOr<UnpackUnconfiguredQueryArgs<'v>>,
-        #[starlark(default = NoneOr::None)] target_universe: NoneOr<
+        #[starlark(default = NoneType)] query_args: NoneOr<UnpackUnconfiguredQueryArgs<'v>>,
+        #[starlark(default = NoneType)] target_universe: NoneOr<
             ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,

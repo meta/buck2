@@ -28,6 +28,7 @@ use starlark::values::dict::StarlarkDict;
 use starlark::values::float::StarlarkFloat;
 use starlark::values::int::IntView;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
@@ -107,7 +108,7 @@ fn local_resource_info_creator(globals: &mut GlobalsBuilder) {
             'v,
             StarlarkDict<'v, StarlarkStr, StarlarkStr>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] setup_timeout_seconds: NoneOr<
+        #[starlark(require = named, default = NoneType)] setup_timeout_seconds: NoneOr<
             ValueOf<'v, Either<IntView<'v>, StarlarkFloat>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,

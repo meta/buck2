@@ -50,6 +50,7 @@ use mini_vec::MiniBoxSlice;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::StringValue;
 use starlark::values::ValueOf;
 use starlark::values::dict::StarlarkDict;
@@ -259,7 +260,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] arguments: StarlarkCommandLineValueUnpack<'v>,
         #[starlark(require = named)] category: StringValue<'v>,
-        #[starlark(require = named, default = NoneOr::None)] identifier: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = NoneType)] identifier: NoneOr<StringValue<'v>>,
         #[starlark(require = named)] env: Option<
             ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>,
         >,
@@ -273,19 +274,20 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named)] dep_files: Option<
             ValueOf<'v, StarlarkDict<'v, StarlarkStr, ArtifactTag>>,
         >,
-        #[starlark(require = named, default = ValueOf::empty_list())]
-        dep_file_fingerprints: ValueOf<
+        #[starlark(require = named, default = EmptyList)] dep_file_fingerprints: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkDepFileFingerprint<'v>>,
         >,
         #[starlark(require = named)] metadata_env_var: Option<&str>,
         #[starlark(require = named)] metadata_path: Option<&str>,
-        #[starlark(require = named, default = ValueOf::empty_list())]
-        incremental_metadata_ignore_tags: ValueOf<'v, StarlarkListOrTuple<'v, ArtifactTag>>,
+        #[starlark(require = named, default = EmptyList)] incremental_metadata_ignore_tags: ValueOf<
+            'v,
+            StarlarkListOrTuple<'v, ArtifactTag>,
+        >,
         // TODO(scottcao): Refactor `no_outputs_cleanup` to `outputs_cleanup`
         #[starlark(require = named, default = false)] no_outputs_cleanup: bool,
         #[starlark(require = named, default = false)] incremental_remote_outputs: bool,
-        #[starlark(require = named, default = NoneOr::None)] allow_cache_upload: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] allow_cache_upload: NoneOr<bool>,
         #[starlark(require = named, default = false)] allow_dep_file_cache_upload: bool,
         #[starlark(require = named, default = false)] allow_offline_output_cache: bool,
         #[starlark(require = named, default = false)] force_full_hybrid_if_capable: bool,
@@ -293,35 +295,31 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             Either<ValueOf<'v, WorkerRunInfo<'v>>, ValueOf<'v, RunInfo<'v>>>,
         >,
         #[starlark(require = named, default = false)] unique_input_inodes: bool,
-        #[starlark(require = named, default = NoneOr::None)] error_handler: NoneOr<
+        #[starlark(require = named, default = NoneType)] error_handler: NoneOr<
             StarlarkCallable<'v>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-        #[starlark(require = named, default = ValueOf::empty_list())]
-        remote_execution_dependencies: ValueOf<
+        #[starlark(require = named, default = EmptyList)] remote_execution_dependencies: ValueOf<
             'v,
             StarlarkList<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
         >,
-        #[starlark(require = named, default = ValueOf::empty_list())] re_gang_workers: ValueOf<
+        #[starlark(require = named, default = EmptyList)] re_gang_workers: ValueOf<
             'v,
             StarlarkList<'v, StarlarkDict<'v, StarlarkStr, StarlarkStr>>,
         >,
-        #[starlark(default = NoneOr::None, require = named)] remote_execution_dynamic_image: NoneOr<
+        #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: NoneOr<
             StarlarkDict<'v>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] timeout_seconds: NoneOr<u32>,
-        #[starlark(require = named, default = NoneOr::None)] meta_internal_extra_params: NoneOr<
+        #[starlark(require = named, default = NoneType)] timeout_seconds: NoneOr<u32>,
+        #[starlark(require = named, default = NoneType)] meta_internal_extra_params: NoneOr<
             StarlarkDict<'v>,
         >,
-        #[starlark(require = named, default = ValueOf::empty_list())]
-        outputs_for_error_handler: ValueOf<
+        #[starlark(require = named, default = EmptyList)] outputs_for_error_handler: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkOutputArtifactView<'v>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] expect_eligible_for_dedupe: NoneOr<
-            bool,
-        >,
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+        #[starlark(require = named, default = NoneType)] expect_eligible_for_dedupe: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
         >,
     ) -> starlark::Result<NoneType> {

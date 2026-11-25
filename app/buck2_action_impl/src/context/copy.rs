@@ -25,6 +25,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::StarlarkDict;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 
 use crate::actions::impls::assembled_dir::UnregisteredAssembledDirAction;
@@ -130,8 +131,8 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] dest: OutputArtifactArg<'v>,
         #[starlark(require = pos)] src: StarlarkArtifactView<'v>,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
-        #[starlark(require = named, default = NoneOr::None)] executable_bit_override: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] executable_bit_override: NoneOr<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         // `copy_file` can copy either a file or a directory, even though its name has the word
@@ -156,7 +157,7 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] dest: OutputArtifactArg<'v>,
         #[starlark(require = pos)] src: StarlarkArtifactView<'v>,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         // `copy_file` can copy either a file or a directory, even though its name has the word
@@ -177,8 +178,8 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] dest: OutputArtifactArg<'v>,
         #[starlark(require = pos)] src: StarlarkArtifactView<'v>,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
-        #[starlark(require = named, default = NoneOr::None)] executable_bit_override: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] executable_bit_override: NoneOr<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         Ok(copy_file_impl(
@@ -203,7 +204,7 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             'v,
             StarlarkDict<'v, StarlarkStr, StarlarkArtifactView<'v>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         Ok(create_dir_tree(
@@ -225,8 +226,8 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             'v,
             StarlarkDict<'v, StarlarkStr, StarlarkArtifactView<'v>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
-        #[starlark(require = named, default = NoneOr::None)] executable_bit_override: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] executable_bit_override: NoneOr<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         Ok(create_dir_tree(
@@ -273,7 +274,7 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             'v,
             StarlarkDict<'v, StarlarkStr, StarlarkAssembledDirEntry<'v>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] has_content_based_path: NoneOr<bool>,
+        #[starlark(require = named, default = NoneType)] has_content_based_path: NoneOr<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         Ok(create_assembled_dir_tree(

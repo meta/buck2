@@ -34,6 +34,7 @@ use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
 use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -212,17 +213,17 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
     fn new_sub_error<'v>(
         #[starlark(this)] _this: &'v StarlarkActionErrorContext,
         #[starlark(require = named)] category: &str,
-        #[starlark(require = named, default = NoneOr::None)] message: NoneOr<&str>,
-        #[starlark(require = named, default = NoneOr::None)] file: NoneOr<&str>,
-        #[starlark(require = named, default = NoneOr::None)] lnum: NoneOr<u64>,
-        #[starlark(require = named, default = NoneOr::None)] end_lnum: NoneOr<u64>,
-        #[starlark(require = named, default = NoneOr::None)] col: NoneOr<u64>,
-        #[starlark(require = named, default = NoneOr::None)] end_col: NoneOr<u64>,
-        #[starlark(require = named, default = NoneOr::None)] error_type: NoneOr<&str>,
-        #[starlark(require = named, default = NoneOr::None)] error_number: NoneOr<u64>,
+        #[starlark(require = named, default = NoneType)] message: NoneOr<&str>,
+        #[starlark(require = named, default = NoneType)] file: NoneOr<&str>,
+        #[starlark(require = named, default = NoneType)] lnum: NoneOr<u64>,
+        #[starlark(require = named, default = NoneType)] end_lnum: NoneOr<u64>,
+        #[starlark(require = named, default = NoneType)] col: NoneOr<u64>,
+        #[starlark(require = named, default = NoneType)] end_col: NoneOr<u64>,
+        #[starlark(require = named, default = NoneType)] error_type: NoneOr<&str>,
+        #[starlark(require = named, default = NoneType)] error_number: NoneOr<u64>,
         #[starlark(require = named, default = false)] show_in_stderr: bool,
-        #[starlark(require = named, default = NoneOr::None)] subcategory: NoneOr<&str>,
-        #[starlark(require = named, default = NoneOr::None)] remediation: NoneOr<&str>,
+        #[starlark(require = named, default = NoneType)] subcategory: NoneOr<&str>,
+        #[starlark(require = named, default = NoneType)] remediation: NoneOr<&str>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkActionSubError>> {
         let sub_error = StarlarkActionSubError {

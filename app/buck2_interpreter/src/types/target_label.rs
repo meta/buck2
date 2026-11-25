@@ -30,6 +30,7 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::EmptyList;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
@@ -164,8 +165,7 @@ fn label_methods(builder: &mut MethodsBuilder) {
     fn with_sub_target<'v>(
         this: &StarlarkTargetLabel,
         // TODO(nga): must be either positional or named.
-        #[starlark(default = SubtargetNameArg::List(ValueOf::empty_list()))]
-        subtarget_name: SubtargetNameArg<'v>,
+        #[starlark(default = EmptyList)] subtarget_name: SubtargetNameArg<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkProvidersLabel>> {
         let providers_name = value_to_providers_name(subtarget_name)?;
@@ -312,8 +312,7 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     fn with_sub_target<'v>(
         this: &'v StarlarkConfiguredTargetLabel,
         // TODO(nga): must be either positional or named.
-        #[starlark(default = SubtargetNameArg::List(ValueOf::empty_list()))]
-        subtarget_name: SubtargetNameArg<'v>,
+        #[starlark(default = EmptyList)] subtarget_name: SubtargetNameArg<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredProvidersLabel>> {
         let providers_name = value_to_providers_name(subtarget_name)?;

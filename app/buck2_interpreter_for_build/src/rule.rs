@@ -54,6 +54,7 @@ use starlark::eval::ParametersSpec;
 use starlark::starlark_module;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
+use starlark::values::EmptyList;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
@@ -1049,11 +1050,11 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] is_configuration_rule: bool,
         #[starlark(require = named, default = false)] is_toolchain_rule: bool,
-        #[starlark(require = named, default = ValueOf::empty_list())] uses_plugins: ValueOf<
+        #[starlark(require = named, default = EmptyList)] uses_plugins: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkPluginKindView<'v>>,
         >,
-        #[starlark(require = named, default = ValueOf::empty_list())] exec_groups: ValueOf<
+        #[starlark(require = named, default = EmptyList)] exec_groups: ValueOf<
             'v,
             StarlarkListOrTuple<'v, StarlarkExecutionGroupView<'v>>,
         >,

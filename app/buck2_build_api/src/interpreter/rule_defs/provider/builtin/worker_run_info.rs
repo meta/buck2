@@ -15,14 +15,15 @@ use buck2_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
+use starlark::values::EmptyList;
 use starlark::values::Freeze;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
@@ -55,13 +56,13 @@ pub struct WorkerRunInfo<'v> {
 #[starlark_module]
 fn worker_run_info_creator(globals: &mut GlobalsBuilder) {
     fn WorkerRunInfo<'v>(
-        #[starlark(require = named, default = NoneOr::None)] worker: NoneOr<
+        #[starlark(require = named, default = NoneType)] worker: NoneOr<
             ValueOf<'v, WorkerInfo<'v>>,
         >,
-        #[starlark(require = named, default = NoneOr::None)] remote_worker: NoneOr<
+        #[starlark(require = named, default = NoneType)] remote_worker: NoneOr<
             ValueOf<'v, WorkerInfo<'v>>,
         >,
-        #[starlark(require = named, default = AllocList::EMPTY)] exe: Value<'v>,
+        #[starlark(require = named, default = EmptyList)] exe: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, WorkerRunInfo<'v>>> {
         let heap = eval.heap();

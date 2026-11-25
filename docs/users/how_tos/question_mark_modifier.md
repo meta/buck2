@@ -8,8 +8,12 @@ modifiers, which allows users to specify modifiers for a target pattern by
 appending a `?` to the pattern followed by the modifiers delimited by `+`.
 
 ```sh
-buck2 build repo//foo:bar?debug+linux
+buck2 build 'repo//foo:bar?debug+asan'
 ```
+
+The examples on this page use the aliases `debug` and `asan`. A project declares
+its aliases when it [sets up modifiers](./modifiers_setup.md); a constraint
+value such as `repo//config:build_mode[debug]` can be written in their place.
 
 Since the `?modifier` syntax associates modifiers to target patterns rather than
 the command, it allows us to potentially condense multiple command invocations.
@@ -17,10 +21,10 @@ the command, it allows us to potentially condense multiple command invocations.
 ```sh
 # Using --modifier flags
 buck2 build --modifier debug repo//foo:bar
-buck2 build --modifier debug --modifier linux repo//foo:bar
+buck2 build --modifier debug --modifier asan repo//foo:bar
 
 # Using ?modifier syntax
-buck2 build repo//foo:bar?debug repo//foo:bar?debug+linux
+buck2 build 'repo//foo:bar?debug' 'repo//foo:bar?debug+asan'
 ```
 
 ### Use in `--target-universe` flag
@@ -30,7 +34,7 @@ For command invocations that specify the `--target-universe` flag, the
 
 ```sh
 # Use of `?modifier` syntax in `--target-universe` flag
-buck2 build repo//foo:bar --target-universe repo//foo:baz?debug
+buck2 build repo//foo:bar --target-universe 'repo//foo:baz?debug'
 ```
 
 Using the `?modifier` syntax outside of the `--target-universe` flag when it is
@@ -38,7 +42,7 @@ specified will throw an error.
 
 ```sh
 # Command that would fail and throw an error
-buck2 build repo//foo:bar?debug --target-universe repo//foo:baz
+buck2 build 'repo//foo:bar?debug' --target-universe repo//foo:baz
 ```
 
 ### Incompatible with `--modifier` flag
@@ -48,8 +52,8 @@ cannot be used.
 
 ```sh
 # Commands that would fail and throw an error
-buck2 build --modifier debug repo//foo:bar?linux
-buck2 build --modifier debug repo//foo:bar --target-universe repo//foo:baz?linux
+buck2 build --modifier debug 'repo//foo:bar?asan'
+buck2 build --modifier debug repo//foo:bar --target-universe 'repo//foo:baz?asan'
 ```
 
 ### Commands that support `?modifier` syntax
@@ -60,6 +64,7 @@ Currently, the following commands support the `?modifier` syntax:
 - `cquery` (only in `--target-universe` flag)
 - `ctargets`
 - `run`
+- `test`
 - `install`
 - `audit providers`
 - `audit subtargets`
@@ -74,18 +79,18 @@ in the `build` command.
 
 ```sh
 # CLI input
-buck2 build --show-output repo//foo:bar?debug repo//foo:bar?linux
+buck2 build --show-output 'repo//foo:bar?debug' 'repo//foo:bar?asan'
 
 # Example output
-repo//foo:bar?debug buck-out/v2/gen/...
-repo//foo:bar?linux buck-out/v2/gen/...
+repo//foo:bar?debug buck-out/v2/art/...
+repo//foo:bar?asan buck-out/v2/art/...
 ```
 
 #### `?modifier` syntax in `--build-report` flag
 
 ```sh
 # CLI input
-buck2 build repo//foo:bar?debug repo//foo:bar?linux --build-report repo/build_report.json
+buck2 build 'repo//foo:bar?debug' 'repo//foo:bar?asan' --build-report repo/build_report.json
 ```
 
 ```json
@@ -96,7 +101,7 @@ buck2 build repo//foo:bar?debug repo//foo:bar?linux --build-report repo/build_re
            "success": "SUCCESS",
            ...
        },
-       "repo//foo:bar?linux":  {
+       "repo//foo:bar?asan":  {
            "success": "SUCCESS",
            ...
        },

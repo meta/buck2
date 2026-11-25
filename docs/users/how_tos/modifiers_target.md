@@ -21,7 +21,7 @@ release_package(
         ":my_rust_bin",
     ],
     modifiers = [
-        "//constraints:release",
+        "root//config:build_mode[release]",
     ],
 )
 ```
@@ -30,26 +30,32 @@ As another example, imagine that we have a constraint that controls whether we
 use real or simulated IO:
 
 ```python
-constraint_setting(name = "io_mode")
-
-constraint_value(
-    name = "real_io",
-    constraint_setting = ":io_mode",
-)
-
-constraint_value(
-    name = "simulated_io",
-    constraint_setting = ":io_mode",
+constraint(
+    name = "io_mode",
+    default = "real",
+    values = [
+        "real",
+        "simulated",
+    ],
 )
 ```
 
-The default IO mode would be `real_io`, but we would like to override it for a
-specific test:
+The default IO mode is `real`, but we would like to override it for a specific
+test:
 
 ```python
 go_test(
     name = "simulated_io_test",
     srcs = ["test.go"],
-    modifiers = ["//constraints:simulated_io"],
+    modifiers = ["root//config:io_mode[simulated]"],
 )
 ```
+
+The attribute takes effect when the target is one that the command names:
+`buck2 test //:simulated_io_test`. A target that is built as a dependency of
+another is built in that other target's configuration, and its `modifiers` are
+not read. Modifiers on the [command line](./modifiers_cli.md) win over the
+attribute.
+
+The attribute has no effect until
+[modifiers have been set up](./modifiers_setup.md).

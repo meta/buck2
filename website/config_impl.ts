@@ -19,10 +19,33 @@ import { redirects } from './redirects';
 const lightCodeTheme = themes.github;
 const darkCodeTheme = themes.dracula;
 
+/**
+ * A remark plugin that removes the `<FbInternalOnly>` blocks of a page.
+ *
+ * The component itself renders nothing in the public site, but the table of contents of a
+ * page is collected from its Markdown, and would list the headings inside these blocks.
+ */
+function removeInternalOnlyBlocks() {
+  const remove = (node: any) => {
+    if (Array.isArray(node.children)) {
+      node.children = node.children.filter(
+        (child: any) =>
+          !(
+            (child.type === 'mdxJsxFlowElement' || child.type === 'mdxJsxTextElement') &&
+            child.name === 'FbInternalOnly'
+          ),
+      );
+      node.children.forEach(remove);
+    }
+  };
+  return remove;
+}
+
 const presetOptions: ClassicPresetOptions = ({
   docs: {
     path: '../docs',
     exclude: ['developers/**'],
+    beforeDefaultRemarkPlugins: isInternal() ? [] : [removeInternalOnlyBlocks],
     sidebarPath: require.resolve('./sidebars_generated.ts'),
     async sidebarItemsGenerator({ defaultSidebarItemsGenerator, ...args }) {
       const items = await defaultSidebarItemsGenerator({

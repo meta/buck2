@@ -41,7 +41,7 @@ use crate::values::list::value::ListData;
 use crate::values::list::value::ListGen;
 use crate::values::list::value::ListRepr;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::type_expr::UnionPayload;
@@ -313,17 +313,17 @@ impl<'v, T: StarlarkTypeExpr<'v>> StarlarkList<'v, T> {
 pub trait EmptyListType: sealed::Sealed {}
 
 impl<'v, T> EmptyListType for StarlarkList<'v, T> {}
-impl<'v, T> EmptyListType for Either<StarlarkList<'v, T>, TupleType<T>> {}
+impl<'v, T> EmptyListType for Either<StarlarkList<'v, T>, StarlarkTuple<'v, T>> {}
 
 mod sealed {
     use either::Either;
 
     use crate::values::list::StarlarkList;
-    use crate::values::tuple::TupleType;
+    use crate::values::tuple::StarlarkTuple;
 
     pub trait Sealed {}
     impl<'v, T> Sealed for StarlarkList<'v, T> {}
-    impl<'v, T> Sealed for Either<StarlarkList<'v, T>, TupleType<T>> {}
+    impl<'v, T> Sealed for Either<StarlarkList<'v, T>, StarlarkTuple<'v, T>> {}
 }
 
 impl<'v, T: StarlarkTypeExpr<'v> + EmptyListType> ValueOf<'v, T> {

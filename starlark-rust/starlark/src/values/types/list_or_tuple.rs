@@ -23,8 +23,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::list::StarlarkList;
-use crate::values::tuple::TupleOf;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::type_expr::StarlarkTypeExpr;
 
 /// `list[T] | tuple[T, ...]`, the usual type of a parameter that takes a sequence of `T`.
@@ -33,25 +32,23 @@ use crate::values::type_expr::StarlarkTypeExpr;
 /// A parameter of this type is one or the other side; code that only walks the items binds
 /// the handle, `ValueOf<'v, StarlarkListOrTuple<'v, T>>`, which has `iter`, `try_items` and
 /// `try_to_vec` for both.
-pub type StarlarkListOrTuple<'v, T = Value<'v>> = Either<StarlarkList<'v, T>, TupleType<T>>;
+pub type StarlarkListOrTuple<'v, T = Value<'v>> = Either<StarlarkList<'v, T>, StarlarkTuple<'v, T>>;
 
 impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, StarlarkListOrTuple<'v, T>> {
-    /// The items, as [`StarlarkList::iter`] or
-    /// [`ValueOf<TupleType<T>>::iter`](ValueOf::iter) gives them.
+    /// The items, as [`StarlarkList::iter`] or [`StarlarkTuple::iter`] gives them.
     pub fn iter(self) -> impl Iterator<Item = crate::Result<ValueOf<'v, T>>> + 'v {
         self.list_or_tuple()
-            .map_either(StarlarkList::iter, TupleOf::iter)
+            .map_either(StarlarkList::iter, StarlarkTuple::iter)
     }
 
     /// The items, each converted by `U`, a conversion from `T`, as
-    /// [`StarlarkList::try_items`] or
-    /// [`ValueOf<TupleType<T>>::try_items`](ValueOf::try_items) gives them.
+    /// [`StarlarkList::try_items`] or [`StarlarkTuple::try_items`] gives them.
     pub fn try_items<U>(self) -> impl Iterator<Item = crate::Result<U>> + 'v
     where
         U: UnpackValue<'v, Type = T> + 'v,
     {
         self.list_or_tuple()
-            .map_either(StarlarkList::try_items::<U>, TupleOf::try_items::<U>)
+            .map_either(StarlarkList::try_items::<U>, StarlarkTuple::try_items::<U>)
     }
 
     /// The items, converted into a `Vec`, as [`try_items`](Self::try_items) gives them.
@@ -64,11 +61,11 @@ impl<'v, T: StarlarkTypeExpr<'v>> ValueOf<'v, StarlarkListOrTuple<'v, T>> {
 
     /// The side that the value is, looked up; its items are not checked. A list and a tuple
     /// are different representations, so which side this is cannot change.
-    fn list_or_tuple(self) -> Either<StarlarkList<'v, T>, TupleOf<'v, T>> {
+    fn list_or_tuple(self) -> Either<StarlarkList<'v, T>, StarlarkTuple<'v, T>> {
         let value = self.to_value();
         match StarlarkList::from_value(value) {
             Some(list) => Either::Left(StarlarkList::of_repr(list.repr())),
-            None => Either::Right(TupleOf::of_handle(ValueOf::new_unchecked(value))),
+            None => Either::Right(ValueOf::<StarlarkTuple<'v, T>>::new_unchecked(value).tuple()),
         }
     }
 }

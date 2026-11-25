@@ -60,7 +60,7 @@ use crate::values::list::StarlarkList;
 use crate::values::list_or_tuple::StarlarkListOrTuple;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
-use crate::values::tuple::TupleOf;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::types::int::view::IntView;
 
@@ -328,7 +328,7 @@ fn test_radd() {
                     items
                         .map_either(
                             StarlarkList::try_items::<IntView>,
-                            TupleOf::try_items::<IntView>,
+                            StarlarkTuple::try_items::<IntView>,
                         )
                         .map(|x| x?.to_integer())
                         .collect::<crate::Result<_>>()?,

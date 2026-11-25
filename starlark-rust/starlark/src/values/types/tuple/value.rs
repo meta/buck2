@@ -35,6 +35,7 @@ use crate::private::Private;
 use crate::static_starlark_value;
 use crate::typing::Ty;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
@@ -43,6 +44,7 @@ use crate::values::comparison::equals_slice;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::layout::avalue::TrailingValues;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::tuple::TupleType;
 
 /// Define the tuple type.
@@ -133,58 +135,56 @@ impl<'v> Tuple<'v> {
     {
         self.content().iter().map(|e| e.to_value())
     }
-
-    /// A tuple of the items `times` times over: `tuple * times` and `times * tuple`.
-    // Inlined into `mul` and `rmul`: as a call it measured 13 instructions more on `t * 3`.
-    #[inline(always)]
-    fn repeated(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
-        let mut result = Vec::new();
-        for _i in 0..times {
-            result.extend(self.content().iter().map(|e| e.to_value()));
-        }
-        heap.alloc_tuple(&result)
-    }
 }
 
-#[starlark_value(type = Tuple::TYPE)]
-impl<'v> StarlarkValue<'v> for Tuple<'v> {
-    fn is_special(_: Private) -> bool
-    where
-        Self: Sized,
-    {
-        true
+/// A tuple of the items of `tuple` `times` times over: `tuple * times` and `times * tuple`.
+// Inlined into `mul` and `rmul`: as a call it measured 13 instructions more on `t * 3`.
+#[inline(always)]
+fn repeated<'v>(
+    tuple: StarlarkTuple<'v>,
+    times: i32,
+    heap: Heap<'v>,
+) -> ValueOf<'v, TupleType<Value<'v>>> {
+    let mut result = Vec::new();
+    for _i in 0..times {
+        result.extend(tuple.values());
+    }
+    heap.alloc_tuple(&result)
+}
+
+#[starlark_value(type = Tuple::TYPE, type_expr = by_hand)]
+impl<'v> StarlarkType<'v> for StarlarkTuple<'v> {
+    fn to_bool(this: Self) -> bool {
+        !this.is_empty()
     }
 
-    fn to_bool(&self) -> bool {
-        self.len() != 0
-    }
-
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        for v in self.content() {
+    fn write_hash(this: Self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+        for v in this.content() {
             v.write_hash(hasher)?;
         }
         Ok(())
     }
 
-    fn equals(&self, other: &Self) -> crate::Result<bool> {
-        equals_slice(self.content(), other.content(), |x, y| x.equals(*y))
+    fn equals(this: Self, other: Self) -> crate::Result<bool> {
+        equals_slice(this.content(), other.content(), |x, y| x.equals(*y))
     }
 
-    fn compare(&self, other: &Self) -> crate::Result<Ordering> {
-        compare_slice(self.content(), other.content(), |x, y| x.compare(*y))
+    fn compare(this: Self, other: Self) -> crate::Result<Ordering> {
+        compare_slice(this.content(), other.content(), |x, y| x.compare(*y))
     }
 
-    fn at(&self, index: i32) -> crate::Result<Value<'v>> {
-        let i = convert_index(index, self.len() as i32)? as usize;
-        Ok(self.content()[i].to_value())
+    fn at(this: Self, index: i32) -> crate::Result<Value<'v>> {
+        let content = this.content();
+        let i = convert_index(index, content.len() as i32)? as usize;
+        Ok(content[i])
     }
 
-    fn length(&self) -> i32 {
-        self.len() as i32
+    fn length(this: Self) -> i32 {
+        this.len() as i32
     }
 
-    fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
-        for x in self.content() {
+    fn is_in(this: Self, other: Value<'v>) -> crate::Result<bool> {
+        for x in this.content() {
             if x.equals(other)? {
                 return Ok(true);
             }
@@ -193,58 +193,73 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
     }
 
     fn slice(
-        &self,
+        this: Self,
         start: Option<Value>,
         stop: Option<Value>,
         stride: Option<Value>,
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
         Ok(heap
-            .alloc_tuple(&apply_slice(self.content(), start, stop, stride)?)
+            .alloc_tuple(&apply_slice(this.content(), start, stop, stride)?)
             .to_value())
     }
 
-    unsafe fn iterate(this: ValueOf<'v, Self>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(this: Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(this.to_value())
     }
 
-    unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        debug_assert!(index <= self.len());
-        let rem = self.len() - index;
+    unsafe fn iter_size_hint(this: Self, index: usize) -> (usize, Option<usize>) {
+        debug_assert!(index <= this.len());
+        let rem = this.len() - index;
         (rem, Some(rem))
     }
 
-    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.content().get(index).map(|v| v.to_value())
+    unsafe fn iter_next(this: Self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.content().get(index).copied()
     }
 
-    unsafe fn iter_stop(&self) {}
+    unsafe fn iter_stop(_this: Self) {}
 
-    fn add(&self, other: &Self, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
-        let mut result = Vec::with_capacity(self.len() + other.len());
-        for x in self.iter() {
-            result.push(x);
+    fn add(this: Self, other: Self, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
+        // The slices are taken once: read through the tuples again after the allocation, the
+        // lengths are loaded a second time.
+        let (this, other) = (this.content(), other.content());
+        let mut result = Vec::with_capacity(this.len() + other.len());
+        for x in this {
+            result.push(*x);
         }
-        for x in other.iter() {
-            result.push(x);
+        for x in other {
+            result.push(*x);
         }
         heap.alloc_tuple(&result)
     }
 
-    fn mul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
-        self.repeated(times, heap)
+    fn mul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
+        repeated(this, times, heap)
     }
 
-    fn rmul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
-        self.repeated(times, heap)
+    fn rmul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
+        repeated(this, times, heap)
     }
 
-    fn collect_repr_cycle(&self, collector: &mut String) {
+    fn collect_repr_cycle(_this: Self, collector: &mut String) {
         collector.push_str("(...)");
     }
 
     fn get_type_starlark_repr() -> Ty {
         Ty::any_tuple()
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for Tuple<'v> {
+    type Type = StarlarkTuple<'v>;
+
+    fn is_special(_: Private) -> bool
+    where
+        Self: Sized,
+    {
+        true
     }
 }
 

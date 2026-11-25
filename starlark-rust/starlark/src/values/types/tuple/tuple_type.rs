@@ -28,6 +28,7 @@ use crate::typing::Ty;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::tuple::TupleRef;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprHashable;
@@ -71,6 +72,28 @@ impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for TupleType<T> {
 
     fn unpack(_value: ValueOf<'v, Self>, _get: TupleOf<'v, T>) -> Result<Self, Infallible> {
         Ok(TupleType { _item: PhantomData })
+    }
+}
+
+/// A handle to a `tuple[T, ...]` under either of its two names is a handle under the other,
+/// for code that has one and is given the other while [`TupleType`] still exists.
+impl<'v, T: StarlarkTypeExpr<'v>> From<ValueOf<'v, TupleType<T>>>
+    for ValueOf<'v, StarlarkTuple<'v, T>>
+{
+    #[inline]
+    fn from(tuple: ValueOf<'v, TupleType<T>>) -> Self {
+        // The same type under its other name.
+        ValueOf::new_unchecked(tuple.to_value())
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> From<ValueOf<'v, StarlarkTuple<'v, T>>>
+    for ValueOf<'v, TupleType<T>>
+{
+    #[inline]
+    fn from(tuple: ValueOf<'v, StarlarkTuple<'v, T>>) -> Self {
+        // The same type under its other name.
+        ValueOf::new_unchecked(tuple.to_value())
     }
 }
 

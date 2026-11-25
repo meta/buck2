@@ -364,6 +364,20 @@ async fn one_batch(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every test above, in one project.
+pub async fn run_replace_directory_tests(buck: &Buck) -> anyhow::Result<()> {
+    run_replace_directory_test(buck).await?;
+    nested(buck).await?;
+    same_name(buck).await?;
+    gone(buck).await?;
+    package_file(buck).await?;
+    file_to_directory(buck).await?;
+    missing_to_directory(buck).await?;
+    empty_directory(buck).await?;
+    swap(buck).await?;
+    one_batch(buck).await
+}
+
 /// The build files that the last command evaluated.
 async fn evaluated(buck: &Buck) -> anyhow::Result<Vec<String>> {
     let log = buck.log(&["show"]).await?.stdout;

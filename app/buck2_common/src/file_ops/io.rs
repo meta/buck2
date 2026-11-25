@@ -488,6 +488,13 @@ impl FileChangeTracker {
         self.dir_trees_added_or_removed.insert(path);
     }
 
+    /// The paths reported with `dir_tree_added_or_removed`, for the tests of a file watcher.
+    pub fn testing_dir_trees_added_or_removed(&self) -> Vec<IProjectRelativePath> {
+        let mut paths: Vec<_> = self.dir_trees_added_or_removed.iter().copied().collect();
+        paths.sort();
+        paths
+    }
+
     /// Also covers the file having been replaced by something of another type, which watchers do
     /// not reliably distinguish from a modification.
     pub fn file_contents_changed(&mut self, path: IProjectRelativePath) {

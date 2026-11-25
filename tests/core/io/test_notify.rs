@@ -18,6 +18,8 @@ use common_io::file_watcher_file_tests::run_modify_file_test;
 use common_io::file_watcher_file_tests::run_remove_file_test;
 use common_io::file_watcher_file_tests::run_rename_file_test;
 use common_io::file_watcher_file_tests::run_replace_file_test;
+use common_io::file_watcher_replace_tests::run_changes_evaluate_their_package_only_test;
+use common_io::file_watcher_replace_tests::run_replace_directory_tests;
 use common_io::file_watcher_scm_tests::run_checkout_mergebase_changes_test;
 use common_io::file_watcher_scm_tests::run_checkout_with_mergebase_test;
 use common_io::file_watcher_scm_tests::run_rebase_with_mergebase_test;
@@ -176,4 +178,16 @@ async fn test_notify_change_symlink_target_test(buck: &Buck) -> anyhow::Result<(
         FileWatcherProvider::RustNotify,
     )
     .await
+}
+
+// notify reports the rename of a directory, and nothing for what is in it.
+
+#[buck_test(setup_eden = false)]
+async fn test_notify_replace_directory(buck: &Buck) -> anyhow::Result<()> {
+    run_replace_directory_tests(buck).await
+}
+
+#[buck_test(setup_eden = false)]
+async fn test_notify_changes_evaluate_their_package_only(buck: &Buck) -> anyhow::Result<()> {
+    run_changes_evaluate_their_package_only_test(buck).await
 }

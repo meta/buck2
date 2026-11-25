@@ -148,6 +148,9 @@ impl NotifyFileData {
         stats.add_ignored(self.ignored);
 
         for (path, event_kind) in self.events {
+            // notify reports a directory that is renamed, and nothing for what is in it, so every
+            // directory it reports as added or removed is one with what is in it. Where it does
+            // not tell a file from a directory, the path is reported as both.
             match event_kind {
                 EventKind::Create(create_kind) => match create_kind {
                     CreateKind::File => {
@@ -160,7 +163,7 @@ impl NotifyFileData {
                             FileWatcherEventType::Create,
                             FileWatcherKind::Directory,
                         );
-                        changed.dir_added_or_removed(path);
+                        changed.dir_tree_added_or_removed(path);
                     }
                     CreateKind::Any | CreateKind::Other => {
                         stats.add(path, FileWatcherEventType::Create, FileWatcherKind::File);
@@ -171,7 +174,7 @@ impl NotifyFileData {
                             FileWatcherEventType::Create,
                             FileWatcherKind::Directory,
                         );
-                        changed.dir_added_or_removed(path);
+                        changed.dir_tree_added_or_removed(path);
                     }
                 },
                 EventKind::Modify(modify_kind) => match modify_kind {
@@ -179,7 +182,7 @@ impl NotifyFileData {
                         stats.add(path, FileWatcherEventType::Modify, FileWatcherKind::File);
                         changed.file_contents_changed(path);
                     }
-                    ModifyKind::Name(_) | ModifyKind::Any | ModifyKind::Other => {
+                    ModifyKind::Name(_) => {
                         stats.add(path, FileWatcherEventType::Create, FileWatcherKind::File);
                         stats.add(path, FileWatcherEventType::Delete, FileWatcherKind::File);
                         changed.file_added_or_removed(path);
@@ -193,7 +196,16 @@ impl NotifyFileData {
                             FileWatcherEventType::Delete,
                             FileWatcherKind::Directory,
                         );
-                        changed.dir_added_or_removed(path);
+                        changed.dir_tree_added_or_removed(path);
+                    }
+                    // Not a rename, so a directory at the path is the one that was there. On
+                    // Windows this is the kind of every modification, and a directory is
+                    // modified each time an entry of it is added or removed: reported as added
+                    // with what is in it, everything below it would be read again each time.
+                    ModifyKind::Any | ModifyKind::Other => {
+                        stats.add(path, FileWatcherEventType::Create, FileWatcherKind::File);
+                        stats.add(path, FileWatcherEventType::Delete, FileWatcherKind::File);
+                        changed.file_added_or_removed(path);
                     }
                 },
                 EventKind::Remove(remove_kind) => match remove_kind {
@@ -207,7 +219,7 @@ impl NotifyFileData {
                             FileWatcherEventType::Delete,
                             FileWatcherKind::Directory,
                         );
-                        changed.dir_added_or_removed(path);
+                        changed.dir_tree_added_or_removed(path);
                     }
                     RemoveKind::Any | RemoveKind::Other => {
                         stats.add(path, FileWatcherEventType::Delete, FileWatcherKind::File);
@@ -217,7 +229,7 @@ impl NotifyFileData {
                             FileWatcherEventType::Delete,
                             FileWatcherKind::Directory,
                         );
-                        changed.dir_added_or_removed(path);
+                        changed.dir_tree_added_or_removed(path);
                     }
                 },
                 _ => {}
@@ -328,7 +340,9 @@ mod tests {
     use buck2_fs::fs_util::uncategorized as fs_util;
     use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
     use notify::event::CreateKind;
+    use notify::event::DataChange;
     use notify::event::Flag;
+    use notify::event::RenameMode;
 
     use super::*;
 
@@ -400,6 +414,75 @@ mod tests {
         );
         assert!(!stats.fresh_instance);
         assert!(stats.incomplete_events_reason.is_none());
+    }
+
+    /// The paths that `events` report as directories added or removed with what is in them.
+    fn dir_trees_added_or_removed(events: &[(&str, EventKind)]) -> Vec<String> {
+        let mut state = NotifyFileData::new();
+        for (path, kind) in events {
+            let path =
+                IProjectRelativePath::intern_directly(ProjectRelativePath::new(path).unwrap());
+            state.events.insert((path, *kind));
+        }
+        let (_stats, changes) = state.sync();
+        changes
+            .unwrap()
+            .testing_dir_trees_added_or_removed()
+            .into_iter()
+            .map(|path| path.to_string())
+            .collect()
+    }
+
+    /// A rename is reported for the directory and for nothing in it, by every backend: as
+    /// `Name(From)` and `Name(To)` by inotify and Windows, as `Name(Any)` by FSEvents. On
+    /// Windows a directory moved into the project or out of it is one created or removed: a
+    /// folder, or `Any` where Windows does not say what the path was.
+    #[test]
+    fn a_renamed_created_or_removed_directory_is_reported_with_what_is_in_it() {
+        assert_eq!(
+            dir_trees_added_or_removed(&[
+                (
+                    "from",
+                    EventKind::Modify(ModifyKind::Name(RenameMode::From))
+                ),
+                ("to", EventKind::Modify(ModifyKind::Name(RenameMode::To))),
+                ("any", EventKind::Modify(ModifyKind::Name(RenameMode::Any))),
+                ("created", EventKind::Create(CreateKind::Folder)),
+                ("created_any", EventKind::Create(CreateKind::Any)),
+                ("removed", EventKind::Remove(RemoveKind::Folder)),
+                ("removed_any", EventKind::Remove(RemoveKind::Any)),
+            ]),
+            [
+                "any",
+                "created",
+                "created_any",
+                "from",
+                "removed",
+                "removed_any",
+                "to"
+            ]
+        );
+    }
+
+    /// Windows reports a directory as `Modify(Any)` each time an entry of it is added or
+    /// removed, and inotify and FSEvents report a `chmod` of one as `Metadata(Any)`. Neither
+    /// may have everything below the directory read again.
+    #[test]
+    fn a_modified_directory_is_not_reported_as_added() {
+        assert_eq!(
+            dir_trees_added_or_removed(&[
+                ("modified", EventKind::Modify(ModifyKind::Any)),
+                ("other", EventKind::Modify(ModifyKind::Other)),
+                (
+                    "chmod",
+                    EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any))
+                ),
+                ("data", EventKind::Modify(ModifyKind::Data(DataChange::Any))),
+                ("file", EventKind::Create(CreateKind::File)),
+                ("file_removed", EventKind::Remove(RemoveKind::File)),
+            ]),
+            Vec::<String>::new()
+        );
     }
 
     /// `chmod` arrives from every notify backend as `Modify(Metadata(Any))` (inotify

@@ -81,20 +81,39 @@ impl<'v> IntView<'v> {
     }
 
     /// The integer as a fixed-width Rust integer, or an error if it does not fit.
+    #[inline]
     pub fn to_integer<I>(self) -> crate::Result<I>
     where
         I: TryFrom<i32> + TryFrom<&'v BigInt>,
     {
-        let option = match self.as_int_ref() {
-            StarlarkIntRef::Small(x) => I::try_from(x.to_i32()).ok(),
-            StarlarkIntRef::Big(x) => x.unpack_integer(),
-        };
-        option.ok_or_else(|| {
+        #[cold]
+        #[inline(never)]
+        fn too_big<'v, I>(int: IntView<'v>) -> crate::Error {
             crate::Error::new_value(IntegerTooBigError {
                 integer_type: std::any::type_name::<I>(),
-                value: self.to_string(),
+                value: int.to_string(),
             })
-        })
+        }
+
+        // A big integer is rare and its conversion is a loop: kept out of the callers, which
+        // are the conversions of parameters, inlined into every native function that takes a
+        // fixed-width integer.
+        #[cold]
+        #[inline(never)]
+        fn big<'v, I: TryFrom<&'v BigInt>>(
+            int: IntView<'v>,
+            x: &'v StarlarkBigInt,
+        ) -> crate::Result<I> {
+            x.unpack_integer().ok_or_else(|| too_big::<I>(int))
+        }
+
+        match self.as_int_ref() {
+            StarlarkIntRef::Small(x) => match I::try_from(x.to_i32()) {
+                Ok(x) => Ok(x),
+                Err(_) => Err(too_big::<I>(self)),
+            },
+            StarlarkIntRef::Big(x) => big(self, x),
+        }
     }
 }
 

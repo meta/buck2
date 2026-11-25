@@ -174,15 +174,13 @@ impl<'v> StarlarkType<'v> for IntView<'v> {
     /// ```
     #[starlark(constructor, speculative_exec_safe)]
     fn int(
-        #[starlark(require = pos)] a: Option<
-            ValueOf<'v, Either<Either<IntView<'v>, StarlarkFloat>, Either<bool, StarlarkStr>>>,
+        #[starlark(require = pos, default = 0)] a: ValueOf<
+            'v,
+            Either<Either<IntView<'v>, StarlarkFloat>, Either<bool, StarlarkStr>>,
         >,
         base: Option<i32>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, IntView<'v>>> {
-        let Some(a) = a else {
-            return Ok(heap.alloc(0));
-        };
         let num_or_bool = match a.get() {
             Either::Left(num) => Either::Left(num),
             Either::Right(Either::Left(b)) => Either::Right(b),

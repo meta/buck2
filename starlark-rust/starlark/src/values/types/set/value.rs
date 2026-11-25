@@ -37,6 +37,7 @@ use crate as starlark;
 use crate::typing::Ty;
 use crate::util::refcell::unleak_borrow;
 use crate::values::AllocValue;
+use crate::values::EmptyList;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
@@ -320,23 +321,20 @@ impl<'v> StarlarkType<'v> for StarlarkSet<'v> {
         special_builtin_function = SpecialBuiltinFunction::Set,
     )]
     fn set(
-        #[starlark(require = pos)] arg: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
+        #[starlark(require = pos, default = EmptyList)] arg: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<SetData<'v>> {
-        let set = match arg {
-            Some(pos) => match StarlarkSet::from_value(pos.to_value()) {
-                Some(set) => (set.borrowed().aref).clone(),
-                None => {
-                    let it = pos.to_value().iterate(heap)?;
-                    let mut data = SetData::default();
-                    for el in it {
-                        let el = el.get_hashed()?;
-                        data.content.insert_hashed(el);
-                    }
-                    data
+        let set = match StarlarkSet::from_value(arg.to_value()) {
+            Some(set) => (set.borrowed().aref).clone(),
+            None => {
+                let it = arg.to_value().iterate(heap)?;
+                let mut data = SetData::default();
+                for el in it {
+                    let el = el.get_hashed()?;
+                    data.content.insert_hashed(el);
                 }
-            },
-            None => SetData::default(),
+                data
+            }
         };
         Ok(set)
     }

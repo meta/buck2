@@ -25,6 +25,7 @@ use starlark_syntax::internal_error;
 
 use crate as starlark;
 use crate::environment::MethodsBuilder;
+use crate::values::EmptyDict;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
@@ -112,10 +113,10 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn get<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] key: Value<'v>,
-        #[starlark(require = pos)] default: Option<Value<'v>>,
+        #[starlark(require = pos, default = NoneType)] default: Value<'v>,
     ) -> starlark::Result<Value<'v>> {
         match this_dict(this)?.get(key)? {
-            None => Ok(default.unwrap_or_else(Value::new_none)),
+            None => Ok(default),
             Some(x) => Ok(x),
         }
     }
@@ -290,14 +291,13 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn setdefault<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] key: Value<'v>,
-        #[starlark(require = pos)] default: Option<Value<'v>>,
+        #[starlark(require = pos, default = NoneType)] default: Value<'v>,
     ) -> starlark::Result<Value<'v>> {
         let mut this = DictMut::from_value(this)?;
         let key = key.get_hashed()?;
         match this.aref.content.entry_hashed(key) {
             starlark_map::small_map::Entry::Occupied(e) => Ok(*e.get()),
             starlark_map::small_map::Entry::Vacant(e) => {
-                let default = default.unwrap_or_else(Value::new_none);
                 e.insert(default);
                 Ok(default)
             }
@@ -335,19 +335,21 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     /// ```
     fn update<'v>(
         this: Value<'v>,
-        #[starlark(require = pos)] pairs: Option<
-            ValueOf<'v, Either<StarlarkDict<'v>, StarlarkIter<(Value<'v>, Value<'v>)>>>,
+        #[starlark(require = pos, default = EmptyDict)] pairs: ValueOf<
+            'v,
+            Either<StarlarkDict<'v>, StarlarkIter<(Value<'v>, Value<'v>)>>,
         >,
         #[starlark(kwargs)] kwargs: StarlarkDict<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<NoneType> {
-        let pairs = if pairs.map(|x| x.to_value().ptr_eq(this)) == Some(true) {
+        let pairs = pairs.to_value();
+        let pairs = if pairs.ptr_eq(this) {
             // someone has done `x.update(x)` - that isn't illegal, but we will have issues
             // with trying to iterate over x while holding x for mutation, and it doesn't do
-            // anything useful, so just change pairs back to None
+            // anything useful, so there are no pairs
             None
         } else {
-            pairs.map(|x| x.to_value())
+            Some(pairs)
         };
 
         let mut this = DictMut::from_value(this)?;

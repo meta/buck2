@@ -41,6 +41,7 @@ use crate::hint::unlikely;
 use crate::private::Private;
 use crate::static_starlark_value;
 use crate::typing::Ty;
+use crate::values::EmptyList;
 use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
@@ -464,18 +465,14 @@ impl<'v> StarlarkType<'v> for StarlarkList<'v> {
         ty_custom_function = ListFunctionTy,
     )]
     fn list(
-        #[starlark(require = pos)] a: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
+        #[starlark(require = pos, default = EmptyList)] a: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkList<'v>>> {
-        Ok(if let Some(a) = a {
-            if let Some(xs) = StarlarkList::from_value(a.to_value()) {
-                heap.alloc_list(xs.content())
-            } else {
-                let it = a.to_value().iterate(heap)?;
-                heap.alloc(AllocList(it))
-            }
+        Ok(if let Some(xs) = StarlarkList::from_value(a.to_value()) {
+            heap.alloc_list(xs.content())
         } else {
-            heap.alloc(AllocList::EMPTY)
+            let it = a.to_value().iterate(heap)?;
+            heap.alloc(AllocList(it))
         })
     }
 

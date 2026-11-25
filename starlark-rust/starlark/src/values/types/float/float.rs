@@ -306,12 +306,8 @@ impl<'v> StarlarkValue<'v> for StarlarkFloat {
     /// ```
     #[starlark(constructor, speculative_exec_safe)]
     fn float(
-        #[starlark(require = pos)] a: Option<Either<Either<NumRef, bool>, &str>>,
+        #[starlark(require = pos, default = 0)] a: Either<Either<NumRef, bool>, &str>,
     ) -> anyhow::Result<f64> {
-        if a.is_none() {
-            return Ok(0.0);
-        }
-        let a = a.unwrap();
         match a {
             Either::Left(Either::Left(f)) => f.as_finite_float(),
             Either::Left(Either::Right(b)) => Ok(if b { 1.0 } else { 0.0 }),

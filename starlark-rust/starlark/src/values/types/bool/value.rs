@@ -94,11 +94,8 @@ impl<'v> StarlarkType<'v> for bool {
     /// # "#);
     /// ```
     #[starlark(constructor, speculative_exec_safe)]
-    fn bool(#[starlark(require = pos)] x: Option<Value>) -> anyhow::Result<bool> {
-        match x {
-            None => Ok(false),
-            Some(x) => Ok(x.to_bool()),
-        }
+    fn bool(#[starlark(require = pos, default = false)] x: Value) -> anyhow::Result<bool> {
+        Ok(x.to_bool())
     }
 
     fn collect_repr(this: Self, s: &mut String) {

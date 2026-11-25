@@ -34,6 +34,7 @@ use crate::collections::StarlarkHasher;
 use crate::private::Private;
 use crate::static_starlark_value;
 use crate::typing::Ty;
+use crate::values::EmptyList;
 use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
@@ -45,7 +46,6 @@ use crate::values::function::SpecialBuiltinFunction;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::layout::avalue::TrailingValues;
-use crate::values::tuple::AllocTuple;
 use crate::values::tuple::StarlarkTuple;
 use crate::values::typing::StarlarkIter;
 
@@ -174,19 +174,15 @@ impl<'v> StarlarkType<'v> for StarlarkTuple<'v> {
         special_builtin_function = SpecialBuiltinFunction::Tuple,
     )]
     fn tuple(
-        #[starlark(require = pos)] a: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
+        #[starlark(require = pos, default = EmptyList)] a: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTuple<'v>>> {
-        if let Some(a) = a {
-            if let Some(tuple) = ValueOf::new(a.to_value()) {
-                return Ok(tuple);
-            }
-
-            let it = a.to_value().iterate(heap)?;
-            Ok(heap.alloc_tuple_iter(it.map(ValueOf::from)))
-        } else {
-            Ok(heap.alloc(AllocTuple::EMPTY))
+        if let Some(tuple) = ValueOf::new(a.to_value()) {
+            return Ok(tuple);
         }
+
+        let it = a.to_value().iterate(heap)?;
+        Ok(heap.alloc_tuple_iter(it.map(ValueOf::from)))
     }
 
     fn to_bool(this: Self) -> bool {

@@ -807,54 +807,46 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// `S.replace(old, new[, count])` returns a copy of string S with all
     /// occurrences of substring `old` replaced by `new`. If the optional
     /// argument `count`, which must be an `int`, is non-negative, it
-    /// specifies a maximum number of occurrences to replace.
+    /// specifies a maximum number of occurrences to replace. A negative
+    /// `count`, which is what leaving it out is, sets no maximum.
     ///
     /// ```
     /// # starlark::assert::all_true(r#"
     /// "banana".replace("a", "o") == "bonono"
     /// "banana".replace("a", "o", 2) == "bonona"
+    /// "banana".replace("a", "o", 0) == "banana"
+    /// "banana".replace("a", "o", -2) == "bonono"
     /// "banana".replace("z", "x") == "banana"
     /// "banana".replace("", "x") == "xbxaxnxaxnxax"
     /// "banana".replace("", "x", 2) == "xbxanana"
     /// "".replace("", "x") == "x"
     /// # "# );
-    /// # starlark::assert::fail(r#"
-    /// "banana".replace("a", "o", -2)  # error: argument was negative
-    /// # "#, "argument was negative");
     /// ```
     #[starlark(speculative_exec_safe)]
     fn replace<'v>(
         this: StringValue<'v>,
         #[starlark(require = pos)] old: &str,
         #[starlark(require = pos)] new: &str,
-        #[starlark(require = pos, default = Absent)] count: Option<i32>,
+        #[starlark(require = pos, default = -1)] count: i32,
         heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
-        match count {
-            Some(count) if count >= 0 => {
-                Ok(heap.alloc_str(&this.replacen(old, new, count as usize)))
+        if count >= 0 {
+            Ok(heap.alloc_str(&this.replacen(old, new, count as usize)))
+        } else {
+            // Optimise `replace` using the Rust standard library definition,
+            // but avoiding redundant allocation in the last step
+            let x = this.as_str();
+            let mut result = String::new();
+            let mut last_end = 0;
+            for (start, part) in x.match_indices(old) {
+                result.push_str(unsafe { x.get_unchecked(last_end..start) });
+                result.push_str(new);
+                last_end = start + part.len();
             }
-            Some(count) => Err(anyhow::anyhow!(
-                "Replace final argument was negative '{}'",
-                count
-            )),
-            None => {
-                // Optimise `replace` using the Rust standard library definition,
-                // but avoiding redundant allocation in the last step
-                let x = this.as_str();
-                let mut result = String::new();
-                let mut last_end = 0;
-                for (start, part) in x.match_indices(old) {
-                    result.push_str(unsafe { x.get_unchecked(last_end..start) });
-                    result.push_str(new);
-                    last_end = start + part.len();
-                }
-                if result.is_empty() && last_end == 0 {
-                    Ok(this)
-                } else {
-                    Ok(heap
-                        .alloc_str_concat(&result, unsafe { x.get_unchecked(last_end..x.len()) }))
-                }
+            if result.is_empty() && last_end == 0 {
+                Ok(this)
+            } else {
+                Ok(heap.alloc_str_concat(&result, unsafe { x.get_unchecked(last_end..x.len()) }))
             }
         }
     }
@@ -1367,7 +1359,6 @@ mod tests {
     #[test]
     fn test_error_codes() {
         assert::fail(r#""bonbon".index("on", 2, 5)"#, "not found in");
-        assert::fail(r#"("banana".replace("a", "o", -2))"#, "negative");
         assert::fail(r#""bonbon".rindex("on", 2, 5)"#, "not found in");
     }
 

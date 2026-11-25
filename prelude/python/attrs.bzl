@@ -214,7 +214,13 @@ def python_executable_attrs() -> dict[str, Attr]:
             ),
             "executable_name": attrs.option(attrs.string(), default = None),
             "inplace_build_args": attrs.list(attrs.arg(), default = []),
-            "interpreter_args": attrs.list(attrs.string(), default = []),
+            "interpreter_args": attrs.list(
+                attrs.string(),
+                default = [],
+                doc = """
+                Options to pass to the Python interpreter when the executable starts, for example `-O`.
+            """,
+            ),
             "lazy_imports_analyzer": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
             "link_group": attrs.option(attrs.string(), default = None),
             "link_group_map": LINK_GROUP_MAP_ATTR,
@@ -263,11 +269,30 @@ def python_executable_attrs() -> dict[str, Attr]:
             "optimize_for_action_throughput": attrs.bool(default = False),
             "package_split_dwarf_dwp": attrs.bool(default = False),
             "par_style": attrs.option(attrs.string(), default = None),
-            "resources": attrs.named_set(attrs.one_of(attrs.dep(), attrs.source(allow_directory = True)), sorted = True, default = []),
+            "resources": attrs.named_set(
+                attrs.one_of(attrs.dep(), attrs.source(allow_directory = True)),
+                sorted = True,
+                default = [],
+                doc = """
+                Static files to package with the executable, next to the resources of the libraries it depends
+                on. Each entry is a file or a target whose output is used. It is placed under `base_module`,
+                which defaults to the directory of the package, at its path relative to the package, or for a
+                target at the path of its output. To choose the part after `base_module`, use a dictionary
+                from that path to the file. The files can be read at runtime with the
+                [importlib.resources](https://docs.python.org/3/library/importlib.resources.html) module.
+            """,
+            ),
             "run_with_inplace": attrs.bool(default = False),
             "runtime_bundle": attrs.option(attrs.dep(providers = [PythonRuntimeBundleInfo]), default = None),
             "runtime_bundle_full": attrs.bool(default = False),
-            "runtime_env": attrs.option(attrs.dict(key = attrs.string(), value = attrs.string()), default = None),
+            "runtime_env": attrs.option(
+                attrs.dict(key = attrs.string(), value = attrs.string()),
+                default = None,
+                doc = """
+                Environment variables to set when the executable starts, as a dictionary from the name of a
+                variable to its value.
+            """,
+            ),
             "runtime_libs": attrs.dict(
                 key = attrs.string(),
                 value = attrs.dep(),

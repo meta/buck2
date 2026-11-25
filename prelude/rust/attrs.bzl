@@ -272,10 +272,37 @@ def rust_common_attributes(is_binary: bool):
             "coverage": attrs.bool(default = False),
             "default_platform": attrs.option(attrs.string(), default = None),
             "flagged_deps": attrs.list(attrs.tuple(rust_target_dep(is_binary), attrs.list(attrs.string())), default = []),
-            "incremental_enabled": attrs.bool(default = False),
+            "incremental_enabled": attrs.bool(
+                default = False,
+                doc = """
+                If `True`, the crate is compiled with the incremental compilation of `rustc`
+                (`-C incremental`). The compilation then always runs locally, and its outputs are not uploaded
+                to a cache.
+            """,
+            ),
             "multi_arch_toolchain": multi_arch_toolchain_attr(),
-            "resources": attrs.named_set(attrs.one_of(attrs.dep(), attrs.source()), sorted = True, default = []),
-            "rustdoc_flags": attrs.list(attrs.arg(), default = []),
+            "resources": attrs.named_set(
+                attrs.one_of(attrs.dep(), attrs.source()),
+                sorted = True,
+                default = [],
+                doc = """
+                Files that the crate needs at runtime. Each entry is a file or a target whose output is used.
+                An executable built by `rust_binary` or `rust_test` that has resources, of its own or of the
+                libraries it depends on, gets a JSON file `<executable>.resources.json` next to it. The file
+                maps the name of each resource to its path relative to the executable. A resource is named by
+                the package path followed by its path relative to the package, or for a target by the path
+                of its output. Use a dictionary to give the part after the package path yourself.
+            """,
+            ),
+            "rustdoc_flags": attrs.list(
+                attrs.arg(),
+                default = [],
+                doc = """
+                Flags to pass to `rustdoc` for this crate, after the `rustdoc_flags` of the Rust toolchain.
+                They are used when building the documentation (the `doc` subtarget), and for a
+                `rust_library` also when running its documentation tests.
+            """,
+            ),
             "separate_debug_info": attrs.bool(default = False),
             "use_content_based_paths": attrs.bool(default = True),
             "uses_restricted_rustc_flags": attrs.bool(default = False),

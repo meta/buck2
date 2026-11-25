@@ -1029,9 +1029,24 @@ python_binary = prelude_rule(
         | native_common.link_group_public_deps_label()
         | {
             "build_args": attrs.list(attrs.arg(), default = []),
-            "compile": attrs.option(attrs.bool(), default = None),
+            "compile": attrs.option(
+                attrs.bool(),
+                default = None,
+                doc = """
+                If `True`, the Python sources in the executable are compiled to bytecode when it is built, and
+                the bytecode files are packaged next to them. Has no effect with the `inplace` package style,
+                or with a Python toolchain that turns bytecode compilation off.
+            """,
+            ),
             "dummy_omnibus": attrs.option(attrs.dep(), default = None),
-            "extension": attrs.option(attrs.string(), default = None),
+            "extension": attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The file extension of the executable, with its leading dot, for example `.par`. Defaults to the
+                extension that the Python toolchain sets.
+            """,
+            ),
             "prefer_stripped_native_objects": attrs.bool(default = False),
             "repl_main": attrs.option(attrs.string(), default = None),
             "repl_only_deps": attrs.list(attrs.dep(), default = []),

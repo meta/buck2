@@ -111,8 +111,26 @@ http_archive = prelude_rule(
         | remote_common.sha256_arg()
         | remote_common.unarchive_args()
         | {
-            "sha1": attrs.option(attrs.string(), default = None),
-            "size_bytes": attrs.option(attrs.int(), default = None),
+            "sha1": attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The [`SHA-1`](//wikipedia.org/wiki/SHA-1) hash of the file at the URL, in hexadecimal. The
+                download fails if the file has another hash. At least one of `sha1` and `sha256` must be
+                set, and both are checked if both are set.
+            """,
+            ),
+            "size_bytes": attrs.option(
+                attrs.int(),
+                default = None,
+                doc = """
+                The size in bytes of the file at the URL. It is checked only when Buck2 can use a checksum
+                of this rule as the digest of the file: `sha1` if the `digest.algorithms` Buck setting
+                includes SHA-1, otherwise `sha256` if it includes SHA-256. Unset, the setting is SHA-256 in
+                open-source builds and SHA-1 in Meta-internal builds. The download then fails if the file
+                has another size, and Buck2 does not ask the server for the size.
+            """,
+            ),
         }
         | buck.has_content_based_path_attr()
         | buck.licenses_arg()

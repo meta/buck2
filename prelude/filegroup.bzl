@@ -99,7 +99,13 @@ filegroup = prelude_rule(
                 The set of files to include in this rule.
             """,
             ),
-            "copy": attrs.bool(default = True),
+            "copy": attrs.bool(
+                default = True,
+                doc = """
+                Whether the output directory holds copies of the files (`True`) or symbolic links to them
+                (`False`).
+            """,
+            ),
             "executable_bit_override": attrs.option(
                 attrs.bool(),
                 default = None,

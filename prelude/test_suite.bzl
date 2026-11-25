@@ -102,7 +102,15 @@ test_suite = prelude_rule(
             # While buck2's behavior makes more sense, we want to preserve buck1 behavior on test_suite for now to make TD behavior match between buck1 and buck2.
             # This diff makes the behaviors match by adding a test_deps attribute to test_suite on buck2 that is used as a deps attribute. In the macro layer, we set test_deps = tests if we are using buck2.
             # For more context: https://fb.prod.workplace.com/groups/603286664133355/posts/682567096205311/?comment_id=682623719532982&reply_comment_id=682650609530293
-            "test_deps": attrs.list(attrs.dep(), default = []),
+            "test_deps": attrs.list(
+                attrs.dep(),
+                default = [],
+                doc = """
+                Targets to build when this `test_suite` is built: their outputs are outputs of the
+                `test_suite`. This does not make `buck2 test` run them. The tests of a `test_suite` are the
+                targets in `tests`.
+            """,
+            ),
         }
         | buck.licenses_arg()
         | buck.labels_arg()

@@ -1163,7 +1163,16 @@ rust_binary = prelude_rule(
         | rust_common.features_arg()
         | rust_common.rustc_flags_arg()
         | rust_common.miri_flags_arg()
-        | rust_common.crate(crate_type = attrs.option(attrs.string(), default = None))
+        | rust_common.crate(
+            crate_type = attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The name of the crate, which is also the file name of the executable. Defaults to the name of
+                the target. Hyphens are replaced with underscores.
+            """,
+            ),
+        )
         | rust_common.crate_root()
         | rust_common.env_arg()
         | miri_interpreted_attr()
@@ -1243,7 +1252,16 @@ rust_test = prelude_rule(
         | rust_common.features_arg()
         | rust_common.rustc_flags_arg()
         | rust_common.miri_flags_arg()
-        | rust_common.crate(crate_type = attrs.option(attrs.string(), default = None))
+        | rust_common.crate(
+            crate_type = attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The name of the crate that the test is compiled as, which is also the file name of the test
+                executable. Defaults to the name of the target. Hyphens are replaced with underscores.
+            """,
+            ),
+        )
         | rust_common.crate_root()
         | rust_common.default_roots_arg()
         | rust_common.run_env_arg()

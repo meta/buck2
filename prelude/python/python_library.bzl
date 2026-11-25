@@ -615,7 +615,15 @@ python_library = prelude_rule(
                  from the Python standard library.
             """,
             ),
-            "type_stubs": attrs.named_set(attrs.source(), sorted = True, default = []),
+            "type_stubs": attrs.named_set(
+                attrs.source(),
+                sorted = True,
+                default = [],
+                doc = """
+                Type stub files (`.pyi`) for the modules of this library. For type checking, a stub replaces the
+                `.py` source that it is named after. Stubs are not packaged into executables.
+            """,
+            ),
             "use_lifeguard_incremental": attrs.bool(default = False),
             "versioned_resources": attrs.option(attrs.versioned(attrs.named_set(attrs.source(), sorted = True)), default = None),
             "versioned_srcs": attrs.option(attrs.versioned(attrs.named_set(attrs.source(), sorted = True)), default = None),

@@ -1400,21 +1400,64 @@ rust_library = prelude_rule(
         rust_common.linker_flags_arg()
         | rust_common.exported_linker_flags_arg()
         | rust_common.env_arg()
-        | rust_common.crate(crate_type = attrs.option(attrs.string(), default = None))
+        | rust_common.crate(
+            crate_type = attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The name of the crate, which is the name that other crates use to refer to this library.
+                Defaults to the name of the target. Hyphens are replaced with underscores.
+            """,
+            ),
+        )
         | rust_common.crate_root()
         | native_common.preferred_linkage(preferred_linkage_type = attrs.enum(Linkage.values(), default = "any"))
         | native_common.soname()
         | native_common.link_style()
-        | native_common.link_whole(link_whole_type = attrs.option(attrs.bool(), default = None))
+        | native_common.link_whole(
+            link_whole_type = attrs.option(
+                attrs.bool(),
+                default = None,
+                doc = """
+                If `True`, a native link that takes this library as a static library, such as the link of a
+                `cxx_binary`, takes every object file in it, including the object files that nothing refers
+                to (for example with `--whole-archive`). By default the linker only takes the object files
+                that it needs.
+            """,
+            ),
+        )
         | rust_common_attributes(is_binary = False)
         | rust_analyzer_target_kind("lib")
         | {
-            "crate_dynamic": attrs.option(attrs.dep(), default = None),
+            "crate_dynamic": attrs.option(
+                attrs.dep(),
+                default = None,
+                doc = """
+                The label of a target whose output is a file that contains the name of the crate, for a crate
+                whose name is only known once the build runs. Other crates refer to this library by the name in
+                that file. The output files of the library are still named after `crate` or the name of its
+                target.
+            """,
+            ),
             "doc_env": rust_common.env_arg()["env"],
             "doc_supports_test_execution_caching": attrs.bool(default = True),
-            "doctests": attrs.option(attrs.bool(), default = None),
+            "doctests": attrs.option(
+                attrs.bool(),
+                default = None,
+                doc = """
+                Whether the documentation tests of this library are run as a test of this target. Defaults to
+                the `doctests` setting of the Rust toolchain. Documentation tests are not run when
+                cross-compiling, or with a Rust toolchain that does not set `nightly_features`.
+            """,
+            ),
             "include_in_android_merge_map_output": attrs.bool(default = True),
-            "proc_macro": attrs.bool(default = False),
+            "proc_macro": attrs.bool(
+                default = False,
+                doc = """
+                If `True`, this library is a procedural macro crate. It is compiled with
+                `--crate-type=proc-macro`, and the crates that depend on it can use the macros that it defines.
+            """,
+            ),
             "supports_python_dlopen": attrs.option(attrs.bool(), default = None),
         }
         | rust_binary_attrs_group(prefix = "doc_")

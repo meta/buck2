@@ -236,7 +236,13 @@ sh_binary = prelude_rule(
                 that copies are made instead.
             """,
             ),
-            "deps": attrs.list(attrs.dep(), default = []),
+            "deps": attrs.list(
+                attrs.dep(),
+                default = [],
+                doc = """
+                Not supported. The build fails if this list is not empty.
+            """,
+            ),
             "_target_os_type": buck.target_os_type_arg(),
             "has_content_based_path": attrs.bool(default = True),
         }

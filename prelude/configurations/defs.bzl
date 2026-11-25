@@ -212,7 +212,15 @@ config_setting = prelude_rule(
     attrs = (
         # @unsorted-dict-items
         {
-            "constraint_values": attrs.list(attrs.configuration_label(), default = []),
+            "constraint_values": attrs.list(
+                attrs.configuration_label(),
+                default = [],
+                doc = """
+                The constraint values that a configuration must have for this `config_setting` to match.
+                Each is the label of a constraint value, for example `//config:os[linux]` for a value of a
+                `constraint()`, or the label of a `constraint_value()` target.
+            """,
+            ),
             "values": attrs.dict(
                 key = attrs.string(),
                 value = attrs.string(),

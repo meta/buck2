@@ -473,7 +473,15 @@ command_alias_rule = prelude_rule(
                  required by the platform).
             """,
             ),
-            "resources": attrs.list(attrs.source(), default = []),
+            "resources": attrs.list(
+                attrs.source(),
+                default = [],
+                doc = """
+                Files that the command needs when it runs, as paths or as targets whose outputs are used.
+                They are built along with the command alias and are available whenever it is run, but they
+                are not added to its command line.
+            """,
+            ),
             "run_using_single_arg": attrs.bool(
                 default = False,
                 doc = """

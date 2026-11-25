@@ -154,7 +154,15 @@ sh_test = prelude_rule(
                 , for example, to give the location of a generated binary to the test script.
             """,
             ),
-            "deps": attrs.list(attrs.dep(), default = []),
+            "deps": attrs.list(
+                attrs.dep(),
+                default = [],
+                doc = """
+                Targets to build before the test runs. Their outputs are available to the test but are not
+                passed to it: `args` or `env` with a `$(location ...)` macro tell the script where an
+                output is.
+            """,
+            ),
             "env": attrs.dict(
                 key = attrs.string(),
                 value = attrs.arg(),
@@ -167,11 +175,44 @@ sh_test = prelude_rule(
                 such as the location of a generated binary to be used by the test script.
             """,
             ),
-            "list_args": attrs.option(attrs.list(attrs.string()), default = None),
-            "list_env": attrs.option(attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False), default = None),
-            "resources": attrs.list(attrs.source(), default = []),
-            "run_args": attrs.list(attrs.string(), default = []),
-            "run_env": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
+            "list_args": attrs.option(
+                attrs.list(attrs.string()),
+                default = None,
+                doc = """
+                Not supported. The build fails if this is not empty.
+            """,
+            ),
+            "list_env": attrs.option(
+                attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False),
+                default = None,
+                doc = """
+                Not supported. The build fails if this is not empty.
+            """,
+            ),
+            "resources": attrs.list(
+                attrs.source(),
+                default = [],
+                doc = """
+                Files that the test needs when it runs, as paths or as targets whose outputs are used. They
+                are available to the test but are not passed to it.
+            """,
+            ),
+            "run_args": attrs.list(
+                attrs.string(),
+                default = [],
+                doc = """
+                Not supported. The build fails if this is not empty.
+            """,
+            ),
+            "run_env": attrs.dict(
+                key = attrs.string(),
+                value = attrs.string(),
+                sorted = False,
+                default = {},
+                doc = """
+                Not supported. The build fails if this is not empty.
+            """,
+            ),
             "run_test_separately": attrs.bool(default = False),
             "supports_test_execution_caching": attrs.bool(default = True),
             "test": attrs.option(

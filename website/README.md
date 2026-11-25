@@ -1,93 +1,35 @@
 # Website
 
-This website is built using [Docusaurus 2](https://docusaurus.io/), a modern
-static website generator.
+This website is built using [Docusaurus](https://docusaurus.io/), a modern
+static website generator. Its pages are the Markdown files in `../docs`, plus
+the pages that `gen_docs.py` generates from a `buck2` binary: the rule
+reference, the API reference and the command reference.
 
-## Mac Setup
+## Previewing a change
 
-`yarn` and `node` are installed by default on devservers, but not on Macs. To
-work on this site on Macs, add `fbsource/xplat/third-party/node/bin` and
-`fbsource/third-party/yarn` to your `PATH`.
-
-## Installation
-
-The very first time:
+You need [Node.js](https://nodejs.org/) (version 22 is known to work), `yarn`,
+Python 3, and a `buck2` on your `PATH` (a
+[release](https://github.com/meta/buck2/releases) binary will do).
 
 ```shell
-$ yarn global add node-gyp
-```
-
-And if on Eden:
-
-```shell
-$ eden redirect add $PWD/node_modules bind
-$ eden redirect add $PWD/build bind
-```
-
-Also on your first time, and potentially after each large rebase:
-
-```shell
+$ cd website
 $ yarn install
-```
-
-## Building Generated Content
-
-Again, on your first time:
-
-```shell
 $ yarn generate
-```
-
-You will need to re-run this each time you want to see changes to generated
-content, primarily the API docs. You can alternatively `yarn generate_local` to
-update generated content using a built-from-source buck2.
-
-## Local Development
-
-```shell
-$ yarn start-fb
-```
-
-This command starts a local development server, and if on Mac, opens up a local
-browser window.
-
-On a devserver, the window does not open for you, but you can head to
-https://devvmXX.foo.com:9094 in your browser. This requires lighthouse or VPN.
-
-To get your changes reflected on the local server:
-
-1.  For non-generated markdown content in the `docs/` directory, reload the
-    page.
-2.  For generated markdown content, re-run `yarn generate` as above and reload
-    the page.
-3.  For other changes to the site configuration, Ctrl+C and restart
-    `yarn start`. Then, hard-reload the page (Ctrl+Shift+R).
-
-## OSS Variants
-
-To see the external versions of the page, do:
-
-```shell
 $ yarn start
 ```
 
-If on a devserver, this will require manually setting up an SSH tunnel by
-running the following **from your mac**:
+`yarn generate` writes the generated pages into `../docs`, where git ignores
+them. `yarn start` serves the site at http://localhost:3000 and reloads a page
+when its Markdown file changes.
 
-```shell
-ssh -L 3000:localhost:3000 $DEVSERVER
-```
+The generated pages show the doc comments and the prelude that the `buck2`
+binary was built from. To preview a change to either, generate the pages with
+`./gen_docs.py --cargo`, which builds `buck2` from your checkout with `cargo`.
 
-In all cases, you'll need to be either on lighthouse or VPN for this to work.
-
-## Prod Build
-
-You can perform a production build via `yarn build` or `yarn build-fb`. This
-generates a static site into `build/`. This site can be served via any static
-site viewer - docusaurus has one built in that you can run via `yarn serve`. As
-of Oct 2024 this only works on Macs, not on devservers.
-
-Iterating on the prod build is slower than on the local `yarn start` server.
+Before sending a pull request, run `yarn docusaurus_build`. It builds the site
+into `build/` and fails on a link to a page that does not exist. A new page
+shows up in the navigation once it is listed in `sidebars.ts`, or if it is in a
+directory that `sidebars.ts` lists as a whole.
 
 ## Deployment
 

@@ -15,6 +15,7 @@ pub mod cmd;
 pub mod file_watcher;
 pub mod file_watcher_dir_tests;
 pub mod file_watcher_file_tests;
+pub mod file_watcher_replace_tests;
 pub mod file_watcher_scm_tests;
 pub mod file_watcher_symlink_tests;
 pub mod file_watcher_tests;

@@ -41,6 +41,7 @@ use crate::dice::data::HasIoProvider;
 use crate::file_ops::baseline::HasFileSystemBaseline;
 use crate::file_ops::metadata::FileType;
 use crate::file_ops::metadata::RawPathMetadata;
+use crate::file_ops::path_check::HasDirectoryGenerations;
 use crate::file_ops::path_check::PathCheck;
 use crate::file_ops::path_check::PathCheckKey;
 use crate::file_ops::path_check::check_ignored_path;
@@ -188,6 +189,10 @@ fn without_ignored(
 ///
 /// Reading through this rather than `IoReadDirKey` records no dependency on the listing; callers
 /// that use it must be invalidated by the file watcher themselves.
+///
+/// A caller computes the check of `path` first, in the same transaction, or for a path below an
+/// ignored one the check of the directory that one is in. `DirectoryGenerations` relies on it:
+/// no listing from before a directory was replaced goes with the check from after.
 pub(super) async fn read_dir_cached(
     ctx: &mut DiceComputations<'_>,
     path: IProjectRelativePath,
@@ -402,6 +407,7 @@ pub struct FileChangeTracker {
     checks_to_dirty: BuckMutSet<PathCheckKey>,
 
     maybe_modified_dirs: BuckMutSet<IProjectRelativePath>,
+    dir_trees_added_or_removed: BuckMutSet<IProjectRelativePath>,
 }
 
 impl FileChangeTracker {
@@ -412,6 +418,7 @@ impl FileChangeTracker {
             paths_to_dirty: Default::default(),
             maybe_modified_dirs: Default::default(),
             checks_to_dirty: Default::default(),
+            dir_trees_added_or_removed: Default::default(),
         }
     }
 
@@ -425,6 +432,11 @@ impl FileChangeTracker {
             }
         }
 
+        if !self.dir_trees_added_or_removed.is_empty() {
+            ctx.global_data()
+                .get_directory_generations()
+                .added_or_removed(self.dir_trees_added_or_removed);
+        }
         ctx.changed(self.files_to_dirty)?;
         ctx.changed(self.dirs_to_dirty)?;
         ctx.changed(self.paths_to_dirty)?;
@@ -452,8 +464,28 @@ impl FileChangeTracker {
         self.entry_added_or_removed(path);
     }
 
+    /// A directory added or removed at `path` by a change that reports every entry it adds or
+    /// removes with the directory as well: a file watcher that walks the directory, or source
+    /// control for a change of commit. What was read below the path and is not reported stays
+    /// as read.
+    ///
+    /// A file watcher that reports the rename of a directory and nothing for what is in it must
+    /// use `dir_tree_added_or_removed`: otherwise what was read below the path stays as read
+    /// when another directory is renamed onto it.
     pub fn dir_added_or_removed(&mut self, path: IProjectRelativePath) {
         self.entry_added_or_removed(path);
+    }
+
+    /// A directory added or removed at `path` together with what is in it, none of which is
+    /// reported: a renamed directory, for the file watchers that report the rename only. A
+    /// directory added like that is taken for another than any buck2 read at the path before, so
+    /// that everything read below the path is read again.
+    ///
+    /// Not for a directory whose entries or attributes changed: every read below it would be
+    /// repeated each time.
+    pub fn dir_tree_added_or_removed(&mut self, path: IProjectRelativePath) {
+        self.entry_added_or_removed(path);
+        self.dir_trees_added_or_removed.insert(path);
     }
 
     /// Also covers the file having been replaced by something of another type, which watchers do

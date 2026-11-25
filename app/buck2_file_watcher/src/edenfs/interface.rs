@@ -309,6 +309,8 @@ impl EdenFsFileWatcher {
                     if replaced.fileType == Dtype::DIR {
                         // The only case when it could happen is if newname exists and
                         // is an empty directory, it is removed, and oldname is renamed to newname.
+                        // EdenFS reports nothing for what is in the directory, as for any other
+                        // directory rename.
                         self.process_file_watcher_event(
                             tracker,
                             stats,
@@ -388,9 +390,9 @@ impl EdenFsFileWatcher {
                         &directory_renamed.from,
                         processed_changes,
                     )?;
-                    // NOTE: even though a directory rename is a large change,
-                    // we handle by reporting two small changes to DICE.
-                    // Return Processed here indicating no large change.
+                    // EdenFS reports nothing for what is in the directory, which is why this is
+                    // a large change. The two paths are enough: see
+                    // `FileChangeTracker::dir_tree_added_or_removed`.
                     ProcessChangeStatus::Processed
                 }
                 LargeChangeNotification::commitTransition(commit_transition) => {
@@ -467,6 +469,33 @@ impl EdenFsFileWatcher {
         path: &[u8],
         processed_changes: &mut BuckMutSet<EdenFsEvent>,
     ) -> buck2_error::Result<()> {
+        self.process_event(tracker, stats, kind, event, path, processed_changes, false)
+    }
+
+    /// A directory that a change of commit adds to the manifest or removes from it. Every file
+    /// the change adds or removes is reported as well.
+    fn process_source_control_dir_event(
+        &self,
+        tracker: &mut FileChangeTracker,
+        stats: &mut FileWatcherStats,
+        event: Type,
+        path: &[u8],
+        processed_changes: &mut BuckMutSet<EdenFsEvent>,
+    ) -> buck2_error::Result<()> {
+        let kind = Kind::Directory;
+        self.process_event(tracker, stats, kind, event, path, processed_changes, true)
+    }
+
+    fn process_event(
+        &self,
+        tracker: &mut FileChangeTracker,
+        stats: &mut FileWatcherStats,
+        kind: Kind,
+        event: Type,
+        path: &[u8],
+        processed_changes: &mut BuckMutSet<EdenFsEvent>,
+        entries_reported: bool,
+    ) -> buck2_error::Result<()> {
         let eden_rel_path = PathBuf::from(str::from_utf8(path)?);
 
         // If the path is invalid, then walk up all the way until you find a valid dir to
@@ -509,25 +538,35 @@ impl EdenFsFileWatcher {
 
         if ignore {
             stats.add_ignored(1);
-        } else if processed_changes.insert(EdenFsEvent {
+            return Ok(());
+        }
+
+        let first_report = processed_changes.insert(EdenFsEvent {
             event_type: event,
             event_kind: kind,
             path: project_rel_path.to_string(),
-        }) {
+        });
+        if first_report {
             stats.add(project_rel_path, event, kind);
-
-            match (event, kind) {
-                (Type::Create, Kind::Directory) => tracker.dir_added_or_removed(project_rel_path),
-                (Type::Create, _) => tracker.file_added_or_removed(project_rel_path),
-                (Type::Modify, Kind::Directory) => {
-                    // FIXME(JakobDegen): This should not be needed
-                    tracker.dir_entries_changed_force_invalidate(project_rel_path)
-                }
-                (Type::Modify, _) => tracker.file_contents_changed(project_rel_path),
-                (Type::Delete, Kind::Directory) => tracker.dir_added_or_removed(project_rel_path),
-                (Type::Delete, _) => tracker.file_added_or_removed(project_rel_path),
-            };
         }
+        match (event, kind) {
+            // Also when source control reported the directory earlier in the sync: that
+            // report says nothing of what a rename brought with the directory.
+            (Type::Create | Type::Delete, Kind::Directory) if !entries_reported => {
+                tracker.dir_tree_added_or_removed(project_rel_path)
+            }
+            _ if !first_report => {}
+            (Type::Create | Type::Delete, Kind::Directory) => {
+                tracker.dir_added_or_removed(project_rel_path)
+            }
+            (Type::Create, _) => tracker.file_added_or_removed(project_rel_path),
+            (Type::Modify, Kind::Directory) => {
+                // FIXME(JakobDegen): This should not be needed
+                tracker.dir_entries_changed_force_invalidate(project_rel_path)
+            }
+            (Type::Modify, _) => tracker.file_contents_changed(project_rel_path),
+            (Type::Delete, _) => tracker.file_added_or_removed(project_rel_path),
+        };
 
         Ok(())
     }
@@ -642,10 +681,9 @@ impl EdenFsFileWatcher {
                         SaplingStatus::Added
                         | SaplingStatus::NotTracked
                         | SaplingStatus::Copied
-                        | SaplingStatus::Ignored => self.process_file_watcher_event(
+                        | SaplingStatus::Ignored => self.process_source_control_dir_event(
                             tracker,
                             stats,
-                            Kind::Directory,
                             Type::Create,
                             path.as_bytes(),
                             processed_changes,
@@ -659,10 +697,9 @@ impl EdenFsFileWatcher {
                             processed_changes,
                         ),
                         SaplingStatus::Removed | SaplingStatus::Missing | SaplingStatus::Clean => {
-                            self.process_file_watcher_event(
+                            self.process_source_control_dir_event(
                                 tracker,
                                 stats,
-                                Kind::Directory,
                                 Type::Delete,
                                 path.as_bytes(),
                                 processed_changes,
@@ -729,8 +766,8 @@ impl EdenFsFileWatcher {
         // invalid because we have no way of knowing which files were changed.
         //
         // In the case of a directory rename, we handle this earlier by reporting two
-        // small changes to DICE - delete and add. It may be needed to enumerate all
-        // of the related files, in which case we will need to use Sapling to obtain.
+        // small changes to DICE - delete and add, which is enough: see
+        // `FileChangeTracker::dir_tree_added_or_removed`.
         //
 
         // The dep files are cleared here. DICE is not: the fresh instance reported below has the

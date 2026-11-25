@@ -79,6 +79,12 @@ impl DiceTransactionUpdater {
         self.0.changed_to(changed)
     }
 
+    /// The untracked data of the branch this updater commits to. What is written to it stays
+    /// there: `retarget` to a branch with other data does not move it.
+    pub fn global_data(&self) -> &DiceData {
+        self.0.global_data()
+    }
+
     /// Commit the changes registered via 'changed' and 'changed_to' to the current newest version.
     pub fn commit(self) -> impl Future<Output = DiceTransaction> {
         self.0.commit().map(DiceTransaction)

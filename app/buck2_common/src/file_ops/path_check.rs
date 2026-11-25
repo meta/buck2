@@ -8,20 +8,24 @@
  * above-listed licenses.
  */
 
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::fs::i_project_rel_path::IProjectRelativePath;
 use buck2_core::soft_error;
 use buck2_error::BuckErrorContext;
+use buck2_hash::BuckDashMap;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
+use dice::DiceData;
 use dice::EqualityBehavior;
 use dice::Key;
 use dice::OkPagableValueSerialize;
 use dice::ValueSerialize;
 use dupe::Dupe;
-use dupe::ResultDupedErrExt;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
@@ -62,7 +66,132 @@ pub async fn check_path(
     ctx: &mut DiceComputations<'_>,
     path: IProjectRelativePath,
 ) -> buck2_error::Result<PathCheck> {
+    Ok(checked(ctx, path).await?.check())
+}
+
+async fn checked(
+    ctx: &mut DiceComputations<'_>,
+    path: IProjectRelativePath,
+) -> buck2_error::Result<Checked> {
     ctx.compute(&PathCheckKey(path)).await?.dupe()
+}
+
+/// A [`PathCheck`] as DICE holds it: with the generation of what is at a present path, so that
+/// the check of a path whose directory was replaced by another compares unequal to the one
+/// before, and what was read at the path is read again.
+///
+/// Spelled out rather than a `PathCheck` beside a generation, which would be half as large again
+/// for every path buck2 looks at.
+#[derive(Copy, Clone, Dupe, Debug, PartialEq, Eq, Allocative, Pagable)]
+pub(super) enum Checked {
+    /// With the latest generation among the directories the path is in, and the path itself if
+    /// it is a directory.
+    Present(FileType, u64),
+    Missing {
+        at: IProjectRelativePath,
+    },
+    Ignored {
+        at: IProjectRelativePath,
+    },
+    ParentSymlink {
+        at: IProjectRelativePath,
+    },
+    ParentNotDirectory {
+        at: IProjectRelativePath,
+        file_type: FileType,
+    },
+}
+
+impl Checked {
+    fn check(self) -> PathCheck {
+        match self {
+            Checked::Present(file_type, _generation) => PathCheck::Present(file_type),
+            Checked::Missing { at } => PathCheck::Missing { at },
+            Checked::Ignored { at } => PathCheck::Ignored { at },
+            Checked::ParentSymlink { at } => PathCheck::ParentSymlink { at },
+            Checked::ParentNotDirectory { at, file_type } => {
+                PathCheck::ParentNotDirectory { at, file_type }
+            }
+        }
+    }
+}
+
+/// The generation of each path the file watcher has reported as a directory added or removed
+/// with what is in it (`FileChangeTracker::dir_tree_added_or_removed`): a number that no path had
+/// before, given at each report. A directory never reported has generation zero.
+///
+/// A directory reported as added may be another directory than the one last read at its path,
+/// different all the way down: a directory renamed onto the path of another is one event, for the
+/// directory, with none for the entries that came with it. The generation is what tells the two
+/// apart. It goes into the check of the directory and of everything present below it, see
+/// [`Checked`], so that what was read below the path is read again.
+///
+/// The generations are kept beside the graph rather than as keys in it: a key per directory would
+/// be a node and an edge for each of the millions of directories that are never reported. They
+/// are bounded by the paths the file watcher reports, which are interned and never freed anyway.
+///
+/// Checks read them without DICE tracking the read. What makes that sound is how they are
+/// written: only by `FileChangeTracker::write_to_dice`, which dirties the check of the path in
+/// the same call and is called after the change is on disk, and only with a number larger than
+/// any given before in the process. So a check that has the new number, and what was computed
+/// from it, was computed after the change, and the check of nothing present at or below the
+/// path comes out as it was before. No value outlives the process whose numbers it has.
+///
+/// A transaction that started before the report can compute a check with the new number too.
+/// What it then reads below the path is what is there after the change, because a directory is
+/// listed only after its check is computed in the same transaction (see `read_dir_cached`): a
+/// listing taken before the change came with a check that has the number from before.
+///
+/// A root that starts over shares these with the root it replaces, and is told of no change:
+/// see [`DirectoryGenerations::start_over`].
+#[derive(Default)]
+pub struct DirectoryGenerations(BuckDashMap<IProjectRelativePath, u64>);
+
+impl DirectoryGenerations {
+    pub(super) fn added_or_removed(&self, dirs: impl IntoIterator<Item = IProjectRelativePath>) {
+        let generation = Self::next();
+        for dir in dirs {
+            // Two reports at once get their numbers in one order and may write them in the other.
+            self.0
+                .entry(dir)
+                .and_modify(|latest| *latest = generation.max(*latest))
+                .or_insert(generation);
+        }
+    }
+
+    /// Gives every reported directory another generation. For when the file watcher lost track
+    /// of what changed and the daemon starts over on a fresh root: that root computes the check
+    /// of a reported directory itself, and with the generation the old root had it would take
+    /// what the old root read below the directory for what is there now.
+    pub fn start_over(&self) {
+        let generation = Self::next();
+        for mut latest in self.0.iter_mut() {
+            *latest = generation.max(*latest);
+        }
+    }
+
+    /// Unique in the process, like a `FileSystemBaseline`: two projects that share a daemon, and
+    /// what they read under equal baselines, must not take a directory replaced in one for the
+    /// directory replaced in the other.
+    fn next() -> u64 {
+        static LATEST: AtomicU64 = AtomicU64::new(0);
+        LATEST.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    fn of(&self, dir: IProjectRelativePath) -> u64 {
+        self.0.get(&dir).map_or(0, |generation| *generation)
+    }
+}
+
+pub trait HasDirectoryGenerations {
+    fn get_directory_generations(&self) -> &DirectoryGenerations;
+}
+
+impl HasDirectoryGenerations for DiceData {
+    fn get_directory_generations(&self) -> &DirectoryGenerations {
+        self.get::<DirectoryGenerations>()
+            .expect("directory generations should be set with the io provider")
+    }
 }
 
 /// What a read wanted the path to be; decides the wording of a [`PathCheckError`].
@@ -196,7 +325,8 @@ impl ToleratedRead {
 
 /// What the check of `path` finds once `at`, the path or a prefix of it that the check found
 /// ignored, is looked at anyway. The ignore set is not consulted below `at`, and nothing found
-/// there depends on the file watcher, which reports no changes to ignored paths.
+/// there depends on the file watcher, which reports no changes to ignored paths: only on the
+/// check of the directory that `at` is in.
 pub(super) async fn check_ignored_path(
     ctx: &mut DiceComputations<'_>,
     path: IProjectRelativePath,
@@ -206,6 +336,11 @@ pub(super) async fn check_ignored_path(
         .strip_prefix(at)
         .internal_error("the check reported a prefix")?
         .iter();
+    // The check of `path` is the same whatever directory `at` is in. That of the directory
+    // tells one from another that was renamed onto its path, which the file watcher does report.
+    if let Some(parent) = at.parent() {
+        checked(ctx, parent.to_owned()).await?;
+    }
     let mut prefix = at;
     loop {
         let file_type = match prefix.split_last() {
@@ -256,12 +391,14 @@ pub(super) fn read_ignored_path(
 
 /// Checks are invalidated by the file watcher through the `FileChangeTracker`, for exactly the
 /// paths it reports. A change to a directory's entries reaches the checks of the paths under them
-/// through the dependency of each check on its parent's.
+/// through the dependency of each check on its parent's, and so does a directory that the file
+/// watcher reports as added with what is in it where there was one before: its check comes out
+/// with another generation, and so does the check of everything present below it.
 ///
 /// The listing of the parent is read through the per-transaction directory cache rather than
 /// `IoReadDirKey`, so that checking a path records no dependency on its parent's listing. Were it
 /// to, adding a file to a directory would invalidate every read under each of its siblings;
-/// `tests/core/fs/invalidations/test_root_directory.py` guards against this.
+/// `tests/core/fs/invalidations/test_root_directory.rs` guards against this.
 #[derive(
     Clone, Dupe, Copy, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable
 )]
@@ -270,7 +407,7 @@ pub(super) struct PathCheckKey(pub(super) IProjectRelativePath);
 
 #[async_trait]
 impl Key for PathCheckKey {
-    type Value = buck2_error::Result<PathCheck>;
+    type Value = buck2_error::Result<Checked>;
 
     async fn compute(
         &self,
@@ -278,36 +415,37 @@ impl Key for PathCheckKey {
         _cancellations: &CancellationContext,
     ) -> Self::Value {
         ctx.get_file_system_baseline().await?;
+        let own_generation =
+            |ctx: &DiceComputations| ctx.global_data().get_directory_generations().of(self.0);
         let Some((parent, name)) = self.0.split_last() else {
-            return Ok(PathCheck::Present(FileType::Directory));
+            return Ok(Checked::Present(FileType::Directory, own_generation(ctx)));
         };
-        match *ctx
-            .compute(&PathCheckKey(parent))
-            .await?
-            .as_ref()
-            .duped_err()?
-        {
-            PathCheck::Present(FileType::Directory) => {}
-            PathCheck::Present(FileType::Symlink) => {
-                return Ok(PathCheck::ParentSymlink { at: parent });
+        let parent_generation = match checked(ctx, parent).await? {
+            Checked::Present(FileType::Directory, generation) => generation,
+            Checked::Present(FileType::Symlink, _) => {
+                return Ok(Checked::ParentSymlink { at: parent });
             }
-            PathCheck::Present(file_type) => {
-                return Ok(PathCheck::ParentNotDirectory {
+            Checked::Present(file_type, _) => {
+                return Ok(Checked::ParentNotDirectory {
                     at: parent,
                     file_type,
                 });
             }
-            inherited @ (PathCheck::Missing { .. }
-            | PathCheck::Ignored { .. }
-            | PathCheck::ParentSymlink { .. }
-            | PathCheck::ParentNotDirectory { .. }) => return Ok(inherited),
-        }
+            inherited @ (Checked::Missing { .. }
+            | Checked::Ignored { .. }
+            | Checked::ParentSymlink { .. }
+            | Checked::ParentNotDirectory { .. }) => return Ok(inherited),
+        };
         if ctx.global_data().get_ignore_set().is_match(&self.0) {
-            return Ok(PathCheck::Ignored { at: self.0 });
+            return Ok(Checked::Ignored { at: self.0 });
         }
         Ok(match read_dir_cached(ctx, parent).await?.lookup(name) {
-            Some(file_type) => PathCheck::Present(file_type),
-            None => PathCheck::Missing { at: self.0 },
+            Some(FileType::Directory) => Checked::Present(
+                FileType::Directory,
+                parent_generation.max(own_generation(ctx)),
+            ),
+            Some(file_type) => Checked::Present(file_type, parent_generation),
+            None => Checked::Missing { at: self.0 },
         })
     }
 
@@ -329,7 +467,9 @@ impl Key for PathCheckKey {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::sync::Arc;
+    use std::sync::Mutex;
 
     use assert_matches::assert_matches;
     use buck2_core::cells::CellResolver;
@@ -340,9 +480,13 @@ mod tests {
     use buck2_core::fs::project_rel_path::ProjectRelativePath;
     use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
     use buck2_fs::fs_util;
+    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
     use dice::DetectCycles;
     use dice::Dice;
+    use dice::DiceEvent;
+    use dice::DiceEventListener;
     use dice::DiceTransaction;
+    use dice::PagableValueSerialize;
     use dice::UserComputationData;
 
     use super::*;
@@ -427,6 +571,17 @@ mod tests {
             updater.set_file_system_baseline(self.baseline.dupe())?;
             changes.write_to_dice(&mut updater)?;
             Ok(updater.commit().await)
+        }
+
+        /// What the daemon does when the file watcher lost track of what changed: the
+        /// transactions that follow are on a fresh root, under the same baseline.
+        async fn start_over(&mut self) {
+            let updater = self.dice.updater(self.root);
+            updater
+                .global_data()
+                .get_directory_generations()
+                .start_over();
+            self.root = self.dice.new_root_from(self.root).await;
         }
 
         /// Writes the target verbatim; `fs_util::symlink` makes it absolute on Windows, and
@@ -1178,6 +1333,583 @@ mod tests {
         assert_eq!(
             read("root//a").await,
             Err("`a` is a directory, not a file".to_owned())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_check_with_a_generation_is_no_larger_than_one_without() {
+        assert_eq!(
+            size_of::<buck2_error::Result<Checked>>(),
+            size_of::<buck2_error::Result<PathCheck>>()
+        );
+    }
+
+    fn resolve(f: &Fixture, path: &str) -> AbsNormPathBuf {
+        f.fs.path().resolve(ProjectRelativePath::new(path).unwrap())
+    }
+
+    fn rename(f: &Fixture, from: &str, to: &str) {
+        std::fs::rename(resolve(f, from), resolve(f, to)).unwrap();
+    }
+
+    /// What a file watcher that names only the directory reports for its rename, as the EdenFS
+    /// one does.
+    fn renamed(changes: &mut FileChangeTracker, from: &str, to: &str) {
+        changes.dir_tree_added_or_removed(p(to));
+        changes.dir_tree_added_or_removed(p(from));
+    }
+
+    async fn read_file(ctx: &DiceTransaction, path: &str) -> Option<String> {
+        DiceFileComputations::read_file_if_exists(&mut ctx.ctx(), cp(path))
+            .await
+            .unwrap()
+    }
+
+    /// What a key that read the file has of it. `read_file` reads the file each time it is
+    /// asked, and so does not tell whether DICE has what depends on the file computed again.
+    async fn contents(ctx: &DiceTransaction, path: &str) -> String {
+        ctx.ctx().compute(&Contents(p(path))).await.unwrap().clone()
+    }
+
+    /// A directory `d` that has been read throughout, then replaced by the directory `incoming`,
+    /// with nothing reported but the two renames.
+    async fn replaced_directory() -> buck2_error::Result<(Fixture, DiceTransaction)> {
+        let f = Fixture::new("").await?;
+        f.fs.write_file("d/old", "");
+        f.fs.write_file("d/same", "old");
+        f.fs.write_file("d/gone", "gone");
+        f.fs.write_file("d/sub/x", "");
+        f.fs.write_file("d/was_file", "");
+        f.fs.write_file("incoming/new", "");
+        f.fs.write_file("incoming/same", "new");
+        f.fs.write_file("incoming/appeared", "appeared");
+        f.fs.write_file("incoming/sub/y", "");
+        f.fs.write_file("incoming/was_file/in", "");
+        f.fs.write_file("incoming/was_missing/in", "");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(
+            read_dir(&ctx, "root//d").await,
+            names(&["gone", "old", "same", "sub", "was_file"])
+        );
+        assert_eq!(read_dir(&ctx, "root//d/sub").await, names(&["x"]));
+        assert_eq!(contents(&ctx, "d/same").await, "old");
+        assert_eq!(
+            read_file(&ctx, "root//d/gone").await.as_deref(),
+            Some("gone")
+        );
+        assert_eq!(read_file(&ctx, "root//d/appeared").await, None);
+        assert_matches!(
+            metadata(&ctx, "root//d/same").await,
+            Some(RawPathMetadata::File(_))
+        );
+        assert_eq!(
+            check(&ctx, "d/was_file").await,
+            PathCheck::Present(FileType::File)
+        );
+        fails_with(
+            read_dir(&ctx, "root//d/was_missing").await,
+            "Directory `d/was_missing` does not exist",
+        );
+        drop(ctx);
+
+        rename(&f, "d", "old");
+        rename(&f, "incoming", "d");
+        let mut changes = FileChangeTracker::new();
+        renamed(&mut changes, "d", "old");
+        renamed(&mut changes, "incoming", "d");
+        let ctx = f.transaction(changes).await?;
+        Ok((f, ctx))
+    }
+
+    /// A directory renamed onto the path of another is reported as a directory that was added:
+    /// nothing is reported for what is in it, and the path checks out as it did before, a
+    /// directory. Its listing is read again all the same.
+    #[tokio::test]
+    async fn a_directory_replaced_by_another_is_listed_again() -> buck2_error::Result<()> {
+        let (_f, ctx) = replaced_directory().await?;
+        assert_eq!(
+            read_dir(&ctx, "root//d").await,
+            names(&["appeared", "new", "same", "sub", "was_file", "was_missing"])
+        );
+        assert_eq!(
+            read_dir(&ctx, "root//old").await,
+            names(&["gone", "old", "same", "sub", "was_file"])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_directory_below_a_replaced_one_is_listed_again() -> buck2_error::Result<()> {
+        let (_f, ctx) = replaced_directory().await?;
+        assert_eq!(read_dir(&ctx, "root//d/sub").await, names(&["y"]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_entry_that_left_with_a_replaced_directory_is_gone() -> buck2_error::Result<()> {
+        let (_f, ctx) = replaced_directory().await?;
+        assert_eq!(
+            check(&ctx, "d/gone").await,
+            PathCheck::Missing { at: p("d/gone") }
+        );
+        assert_eq!(read_file(&ctx, "root//d/gone").await, None);
+        assert_eq!(metadata(&ctx, "root//d/gone").await, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_file_of_the_same_name_in_a_replaced_directory_is_read_again()
+    -> buck2_error::Result<()> {
+        let f = Fixture::new("").await?;
+        f.fs.write_file("d/same", "old");
+        f.fs.write_file("incoming/same", "new, and longer");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(contents(&ctx, "d/same").await, "old");
+        let before = metadata(&ctx, "root//d/same").await;
+        drop(ctx);
+
+        rename(&f, "d", "old");
+        rename(&f, "incoming", "d");
+        let mut changes = FileChangeTracker::new();
+        renamed(&mut changes, "d", "old");
+        renamed(&mut changes, "incoming", "d");
+        let ctx = f.transaction(changes).await?;
+        assert_eq!(contents(&ctx, "d/same").await, "new, and longer");
+        let after = metadata(&ctx, "root//d/same").await;
+        assert_matches!(after, Some(RawPathMetadata::File(_)));
+        assert_ne!(after, before);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_entry_that_came_with_a_replaced_directory_is_found() -> buck2_error::Result<()> {
+        let (_f, ctx) = replaced_directory().await?;
+        assert_eq!(
+            read_file(&ctx, "root//d/appeared").await.as_deref(),
+            Some("appeared")
+        );
+        Ok(())
+    }
+
+    /// An ignored file is read with a warning, and what was read is kept: the file watcher
+    /// reports no changes to it. A replaced directory above it is reported.
+    #[tokio::test]
+    async fn an_ignored_file_in_a_replaced_directory_is_read_again() -> buck2_error::Result<()> {
+        let f = Fixture::new("**/*.pyc").await?;
+        f.fs.write_file("d/x.pyc", "old");
+        f.fs.write_file("incoming/x.pyc", "new, and longer");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        let before = metadata(&ctx, "root//d/x.pyc").await;
+        assert_matches!(before, Some(RawPathMetadata::File(_)));
+        drop(ctx);
+
+        rename(&f, "d", "old");
+        rename(&f, "incoming", "d");
+        let mut changes = FileChangeTracker::new();
+        renamed(&mut changes, "d", "old");
+        renamed(&mut changes, "incoming", "d");
+        let ctx = f.transaction(changes).await?;
+        let after = metadata(&ctx, "root//d/x.pyc").await;
+        assert_matches!(after, Some(RawPathMetadata::File(_)));
+        assert_ne!(after, before);
+        Ok(())
+    }
+
+    /// What was a file, or missing, in the directory that was there before is listed as the
+    /// directory it is now.
+    #[tokio::test]
+    async fn a_directory_that_came_with_a_replaced_directory_is_listed() -> buck2_error::Result<()>
+    {
+        let (_f, ctx) = replaced_directory().await?;
+        assert_eq!(read_dir(&ctx, "root//d/was_file").await, names(&["in"]));
+        assert_eq!(read_dir(&ctx, "root//d/was_missing").await, names(&["in"]));
+        Ok(())
+    }
+
+    /// POSIX renames a directory onto an empty one, and EdenFS reports it as it does any other
+    /// rename of a directory.
+    #[tokio::test]
+    async fn a_directory_renamed_onto_an_empty_one_is_read_again() -> buck2_error::Result<()> {
+        let f = Fixture::new("").await?;
+        fs_util::create_dir_all(resolve(&f, "d")).unwrap();
+        f.fs.write_file("incoming/appeared", "appeared");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(read_dir(&ctx, "root//d").await, names(&[]));
+        assert_eq!(read_file(&ctx, "root//d/appeared").await, None);
+        drop(ctx);
+
+        rename(&f, "incoming", "d");
+        let mut changes = FileChangeTracker::new();
+        renamed(&mut changes, "incoming", "d");
+        let ctx = f.transaction(changes).await?;
+        assert_eq!(read_dir(&ctx, "root//d").await, names(&["appeared"]));
+        assert_eq!(
+            read_file(&ctx, "root//d/appeared").await.as_deref(),
+            Some("appeared")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn swapped_directories_are_read_again() -> buck2_error::Result<()> {
+        let f = Fixture::new("").await?;
+        f.fs.write_file("a/f", "a");
+        f.fs.write_file("a/only_a", "");
+        f.fs.write_file("b/f", "b");
+        f.fs.write_file("b/only_b", "");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(read_dir(&ctx, "root//a").await, names(&["f", "only_a"]));
+        assert_eq!(read_dir(&ctx, "root//b").await, names(&["f", "only_b"]));
+        assert_eq!(contents(&ctx, "a/f").await, "a");
+        assert_eq!(contents(&ctx, "b/f").await, "b");
+        drop(ctx);
+
+        let mut changes = FileChangeTracker::new();
+        for (from, to) in [("a", "tmp"), ("b", "a"), ("tmp", "b")] {
+            rename(&f, from, to);
+            renamed(&mut changes, from, to);
+        }
+        let ctx = f.transaction(changes).await?;
+        assert_eq!(read_dir(&ctx, "root//a").await, names(&["f", "only_b"]));
+        assert_eq!(read_dir(&ctx, "root//b").await, names(&["f", "only_a"]));
+        assert_eq!(contents(&ctx, "a/f").await, "b");
+        assert_eq!(contents(&ctx, "b/f").await, "a");
+        Ok(())
+    }
+
+    /// A change to a file while its directory has another name is reported under that name, and
+    /// is found under the one the directory ends up with.
+    #[tokio::test]
+    async fn a_directory_renamed_away_and_back_is_read_again() -> buck2_error::Result<()> {
+        let f = Fixture::new("").await?;
+        f.fs.write_file("d/f", "before");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(contents(&ctx, "d/f").await, "before");
+        assert_eq!(read_file(&ctx, "root//d/g").await, None);
+        drop(ctx);
+
+        let mut changes = FileChangeTracker::new();
+        rename(&f, "d", "elsewhere");
+        renamed(&mut changes, "d", "elsewhere");
+        f.fs.write_file("elsewhere/f", "after");
+        changes.file_contents_changed(p("elsewhere/f"));
+        f.fs.write_file("elsewhere/g", "new");
+        changes.file_added_or_removed(p("elsewhere/g"));
+        rename(&f, "elsewhere", "d");
+        renamed(&mut changes, "elsewhere", "d");
+        let ctx = f.transaction(changes).await?;
+        assert_eq!(contents(&ctx, "d/f").await, "after");
+        assert_eq!(read_file(&ctx, "root//d/g").await.as_deref(), Some("new"));
+        Ok(())
+    }
+
+    /// A replaced directory that no command reads is still read again by the first that does.
+    #[tokio::test]
+    async fn a_replaced_directory_is_read_again_by_a_later_transaction() -> buck2_error::Result<()>
+    {
+        let (f, ctx) = replaced_directory().await?;
+        drop(ctx);
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(read_dir(&ctx, "root//d/sub").await, names(&["y"]));
+        assert_eq!(contents(&ctx, "d/same").await, "new");
+        Ok(())
+    }
+
+    /// Each replacement is told from the one before it.
+    #[tokio::test]
+    async fn a_directory_replaced_twice_is_read_again_each_time() -> buck2_error::Result<()> {
+        let f = Fixture::new("").await?;
+        f.fs.write_file("d/f", "first");
+        f.fs.write_file("second/f", "second");
+        f.fs.write_file("third/f", "third");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(contents(&ctx, "d/f").await, "first");
+        drop(ctx);
+
+        for (incoming, kept) in [("second", "kept_first"), ("third", "kept_second")] {
+            rename(&f, "d", kept);
+            rename(&f, incoming, "d");
+            let mut changes = FileChangeTracker::new();
+            renamed(&mut changes, "d", kept);
+            renamed(&mut changes, incoming, "d");
+            let ctx = f.transaction(changes).await?;
+            assert_eq!(contents(&ctx, "d/f").await, incoming);
+        }
+        Ok(())
+    }
+
+    /// A directory replaced after one below it was: what is below both is read again.
+    #[tokio::test]
+    async fn a_directory_above_a_replaced_one_is_read_again_when_replaced()
+    -> buck2_error::Result<()> {
+        let f = Fixture::new("").await?;
+        f.fs.write_file("d/sub/f", "first");
+        f.fs.write_file("incoming_sub/f", "second");
+        f.fs.write_file("incoming/sub/f", "third");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(contents(&ctx, "d/sub/f").await, "first");
+        drop(ctx);
+
+        rename(&f, "d/sub", "old_sub");
+        rename(&f, "incoming_sub", "d/sub");
+        let mut changes = FileChangeTracker::new();
+        renamed(&mut changes, "d/sub", "old_sub");
+        renamed(&mut changes, "incoming_sub", "d/sub");
+        let ctx = f.transaction(changes).await?;
+        assert_eq!(contents(&ctx, "d/sub/f").await, "second");
+        drop(ctx);
+
+        rename(&f, "d", "old");
+        rename(&f, "incoming", "d");
+        let mut changes = FileChangeTracker::new();
+        renamed(&mut changes, "d", "old");
+        renamed(&mut changes, "incoming", "d");
+        let ctx = f.transaction(changes).await?;
+        assert_eq!(contents(&ctx, "d/sub/f").await, "third");
+        Ok(())
+    }
+
+    /// The file watcher loses track of what changed after a directory was replaced, and by then
+    /// the directory that was there first is back. The daemon starts over on a fresh root,
+    /// which is told of no change, and must not take what the old root read below the
+    /// replacing directory for what is there.
+    #[tokio::test]
+    async fn a_root_that_starts_over_reads_below_a_replaced_directory_again()
+    -> buck2_error::Result<()> {
+        let mut f = Fixture::new("").await?;
+        f.fs.write_file("d/f", "before");
+        f.fs.write_file("incoming/f", "after");
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(contents(&ctx, "d/f").await, "before");
+        drop(ctx);
+
+        rename(&f, "d", "old");
+        rename(&f, "incoming", "d");
+        let mut changes = FileChangeTracker::new();
+        renamed(&mut changes, "d", "old");
+        renamed(&mut changes, "incoming", "d");
+        let ctx = f.transaction(changes).await?;
+        assert_eq!(contents(&ctx, "d/f").await, "after");
+        drop(ctx);
+
+        rename(&f, "d", "incoming");
+        rename(&f, "old", "d");
+        f.start_over().await;
+        let ctx = f.transaction(FileChangeTracker::new()).await?;
+        assert_eq!(contents(&ctx, "d/f").await, "before");
+        Ok(())
+    }
+
+    /// The contents of a file, as a key of its own: recomputed only when DICE finds the read of
+    /// the file changed.
+    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+    #[display("{:?}", self)]
+    #[pagable_typetag(dice::DiceKeyDyn)]
+    struct Contents(IProjectRelativePath);
+
+    #[async_trait]
+    impl Key for Contents {
+        type Value = String;
+
+        async fn compute(
+            &self,
+            ctx: &mut DiceComputations,
+            _cancellations: &CancellationContext,
+        ) -> Self::Value {
+            let path = CellPath::testing_new(&format!("root//{}", self.0));
+            DiceFileComputations::read_file_if_exists(ctx, path)
+                .await
+                .unwrap()
+                .unwrap()
+        }
+
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| x == y)
+        }
+
+        fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+            PagableValueSerialize::<Self::Value>::new()
+        }
+    }
+
+    /// The computations DICE runs, by key type.
+    #[derive(Default, Allocative)]
+    struct Computations(#[allocative(skip)] Mutex<BTreeMap<&'static str, usize>>);
+
+    impl DiceEventListener for Computations {
+        fn event(&self, ev: DiceEvent) {
+            if let DiceEvent::ComputeStarted { key_type } = ev {
+                *self.0.lock().unwrap().entry(key_type).or_default() += 1;
+            }
+        }
+    }
+
+    /// `dirs` directories, each with one file more than the one before it so that no two read
+    /// alike, and what reading all of it after `changes` has DICE compute.
+    struct Tree {
+        f: Fixture,
+        dirs: usize,
+    }
+
+    impl Tree {
+        async fn new(dirs: usize) -> buck2_error::Result<Self> {
+            let f = Fixture::new("").await?;
+            let tree = Self { f, dirs };
+            for d in 0..dirs {
+                for file in 0..tree.files_in(d) {
+                    tree.f.fs.write_file(&format!("tree/d{d}/sub/f{file}"), "");
+                }
+            }
+            tree.read(FileChangeTracker::new()).await?;
+            Ok(tree)
+        }
+
+        /// Lists every directory, and reads every file and its metadata.
+        async fn read(
+            &self,
+            changes: FileChangeTracker,
+        ) -> buck2_error::Result<BTreeMap<&'static str, usize>> {
+            let computations = Arc::new(Computations::default());
+            let mut data = UserComputationData::new();
+            initialize_read_dir_cache(&mut data);
+            data.tracker = computations.dupe();
+            let mut updater = self.f.dice.updater_with_data(self.f.root, data);
+            updater.set_cell_resolver(self.f.cells.dupe())?;
+            updater.set_file_system_baseline(self.f.baseline.dupe())?;
+            changes.write_to_dice(&mut updater)?;
+            let ctx = updater.commit().await;
+            read_dir(&ctx, "root//tree").await.unwrap();
+            for d in 0..self.dirs {
+                read_dir(&ctx, &format!("root//tree/d{d}")).await.unwrap();
+                let listed = read_dir(&ctx, &format!("root//tree/d{d}/sub")).await;
+                for file in listed.unwrap() {
+                    let path = format!("root//tree/d{d}/sub/{file}");
+                    read_file(&ctx, &path).await;
+                    metadata(&ctx, &path).await;
+                }
+            }
+            drop(ctx);
+            let computations = computations.0.lock().unwrap().clone();
+            Ok(computations)
+        }
+
+        fn files_in(&self, d: usize) -> usize {
+            d + 1
+        }
+    }
+
+    fn computed(counts: &[(&'static str, usize)]) -> BTreeMap<&'static str, usize> {
+        counts.iter().copied().collect()
+    }
+
+    /// Reading a tree again when nothing was reported computes nothing.
+    #[tokio::test]
+    async fn nothing_reported_computes_nothing() -> buck2_error::Result<()> {
+        let tree = Tree::new(10).await?;
+        assert_eq!(tree.read(FileChangeTracker::new()).await?, computed(&[]));
+        Ok(())
+    }
+
+    /// A file created, modified or deleted has its own reads computed, and the listing of its
+    /// directory: nothing of its siblings, and nothing of the directories above it.
+    #[tokio::test]
+    async fn a_reported_file_computes_its_own_reads() -> buck2_error::Result<()> {
+        let tree = Tree::new(10).await?;
+
+        tree.f.fs.write_file("tree/d3/sub/created", "");
+        let mut changes = FileChangeTracker::new();
+        changes.file_added_or_removed(p("tree/d3/sub/created"));
+        // Watchman also reports the directory the file is in as modified, and so does EdenFS
+        // for a change of commit.
+        changes.dir_entries_changed_force_invalidate(p("tree/d3/sub"));
+        changes.dir_entries_changed_for_watchman_bug(p("tree/d3/sub"));
+        assert_eq!(
+            tree.read(changes).await?,
+            computed(&[
+                ("IoPathMetadataKey", 1),
+                ("IoReadDirKey", 1),
+                ("IoReadFileKey", 1),
+                ("PathCheckKey", 1),
+            ])
+        );
+
+        tree.f.fs.write_file("tree/d3/sub/f0", "modified");
+        let mut changes = FileChangeTracker::new();
+        changes.file_contents_changed(p("tree/d3/sub/f0"));
+        assert_eq!(
+            tree.read(changes).await?,
+            computed(&[
+                ("IoPathMetadataKey", 1),
+                ("IoReadFileKey", 1),
+                ("PathCheckKey", 1),
+            ])
+        );
+
+        fs_util::remove_file(resolve(&tree.f, "tree/d3/sub/f0")).unwrap();
+        let mut changes = FileChangeTracker::new();
+        changes.file_added_or_removed(p("tree/d3/sub/f0"));
+        changes.dir_entries_changed_force_invalidate(p("tree/d3/sub"));
+        changes.dir_entries_changed_for_watchman_bug(p("tree/d3/sub"));
+        // The file is not listed any more, so only the listing is asked for again.
+        assert_eq!(tree.read(changes).await?, computed(&[("IoReadDirKey", 1)]));
+        Ok(())
+    }
+
+    /// A directory reported as added or removed has what is below it computed again, and
+    /// nothing else.
+    #[tokio::test]
+    async fn a_reported_directory_computes_what_is_below_it() -> buck2_error::Result<()> {
+        let tree = Tree::new(10).await?;
+        let files = tree.files_in(3);
+
+        let mut changes = FileChangeTracker::new();
+        changes.dir_tree_added_or_removed(p("tree/d3"));
+        assert_eq!(
+            tree.read(changes).await?,
+            computed(&[
+                ("IoPathMetadataKey", files),
+                // Of `tree`, which the tracker dirties, of `tree/d3` and of `tree/d3/sub`.
+                ("IoReadDirKey", 3),
+                ("IoReadFileKey", files),
+                // Of `tree/d3`, of `tree/d3/sub` and of the files.
+                ("PathCheckKey", 2 + files),
+            ])
+        );
+        Ok(())
+    }
+
+    /// A directory that source control adds to the commit or removes from it, while it stays on
+    /// disk with what is in it.
+    #[tokio::test]
+    async fn a_directory_reported_with_its_entries_computes_nothing_below_it()
+    -> buck2_error::Result<()> {
+        let tree = Tree::new(10).await?;
+
+        let mut changes = FileChangeTracker::new();
+        changes.dir_added_or_removed(p("tree/d3"));
+        assert_eq!(
+            tree.read(changes).await?,
+            // Of `tree`, which the tracker dirties, and the check.
+            computed(&[("IoReadDirKey", 1), ("PathCheckKey", 1)])
+        );
+        Ok(())
+    }
+
+    /// Something reported at the path of a directory, without the directory being reported as
+    /// added or removed, leaves what is below it alone. File watchers do that for a directory
+    /// whose attributes or entries changed.
+    #[tokio::test]
+    async fn a_directory_reported_as_a_file_computes_nothing_below_it() -> buck2_error::Result<()> {
+        let tree = Tree::new(10).await?;
+
+        let mut changes = FileChangeTracker::new();
+        changes.file_added_or_removed(p("tree/d3"));
+        changes.file_contents_changed(p("tree/d3/sub"));
+        assert_eq!(
+            tree.read(changes).await?,
+            // Of `tree`, which the tracker dirties, and the two checks.
+            computed(&[("IoReadDirKey", 1), ("PathCheckKey", 2)])
         );
         Ok(())
     }

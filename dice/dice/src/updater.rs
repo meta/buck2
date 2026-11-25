@@ -69,6 +69,10 @@ impl TransactionUpdater {
         self.global_data = self.dice.data_for_branch(branch);
     }
 
+    pub(crate) fn global_data(&self) -> &DiceData {
+        &self.global_data
+    }
+
     /// Records a set of `Key`s as changed so that they, and any dependents will
     /// be recomputed on the next set of requests at the next version.
     pub(crate) fn changed<K, I>(&mut self, changed: I) -> DiceResult<()>

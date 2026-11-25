@@ -30,6 +30,7 @@ use pagable::Pagable;
 use pagable::pagable_typetag;
 
 use crate::cas_digest::CasDigestConfig;
+use crate::file_ops::path_check::DirectoryGenerations;
 use crate::io::IoProvider;
 
 pub trait HasIoProvider {
@@ -37,6 +38,8 @@ pub trait HasIoProvider {
 }
 
 pub trait SetIoProvider {
+    /// Also starts the `DirectoryGenerations` that what is read through `fs` is checked against,
+    /// so this is for data that no computation has used yet.
     fn set_io_provider(&mut self, fs: Arc<dyn IoProvider>);
 }
 
@@ -50,13 +53,15 @@ impl HasIoProvider for DiceData {
 
 impl SetIoProvider for DiceDataBuilder {
     fn set_io_provider(&mut self, fs: Arc<dyn IoProvider>) {
-        self.set(fs)
+        self.set(fs);
+        self.set(DirectoryGenerations::default());
     }
 }
 
 impl SetIoProvider for DiceData {
     fn set_io_provider(&mut self, fs: Arc<dyn IoProvider>) {
-        self.set(fs)
+        self.set(fs);
+        self.set(DirectoryGenerations::default());
     }
 }
 

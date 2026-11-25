@@ -54,6 +54,7 @@ use buck2_common::dice::data::SetIsolationDir;
 use buck2_common::file_ops::baseline::FileSystemBaseline;
 use buck2_common::file_ops::baseline::SetFileSystemBaseline;
 use buck2_common::file_ops::io::initialize_read_dir_cache;
+use buck2_common::file_ops::path_check::HasDirectoryGenerations;
 use buck2_common::http::SetHttpClient;
 use buck2_common::ignores::ignore_set::IgnoreSet;
 use buck2_common::io::trace::TracingIoProvider;
@@ -1004,6 +1005,9 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             }
         };
         early_timings.end_known_span();
+        if outcome == SyncOutcome::FreshInstance {
+            ctx.global_data().get_directory_generations().start_over();
+        }
 
         let mut user_data = self.make_user_computation_data(&cells_and_configs.root_config)?;
         user_data.set_mergebase(mergebase);

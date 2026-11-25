@@ -12,10 +12,12 @@ def _system_csharp_toolchain_impl(ctx):
     if not host_info().os.is_windows:
         fail("csharp toolchain only supported on windows for now")
 
+    csc = ctx.attrs.csc
+
     return [
         DefaultInfo(),
         CSharpToolchainInfo(
-            csc = RunInfo(args = ctx.attrs.csc),
+            csc = RunInfo(args = csc) if isinstance(csc, str) else csc[RunInfo],
             framework_dirs = {
                 "net35": "C:\\Program Files (x86)\\Reference Assemblies\\Microsoft\\Framework\\.NETFramework\\v3.5\\Profile\\Client",
                 "net40": "C:\\Program Files (x86)\\Reference Assemblies\\Microsoft\\Framework\\.NETFramework\\v4.0",
@@ -27,7 +29,8 @@ def _system_csharp_toolchain_impl(ctx):
 
 system_csharp_toolchain = rule(
     impl = _system_csharp_toolchain_impl,
-    doc = """A C# toolchain that invokes the system C# compiler `csc.exe` using the current environment path.
+    doc = """A C# toolchain that invokes the C# compiler `csc.exe` of the local Visual Studio installation, or the one
+    that `csc` names.
     This toolchain requires the Microsoft provided .NET Framework SDKs (3.5, 4.0, 4.5, 4.6). By default these
     Framework SDKs should be installed at their default location, however this can be customized by changing
     the parameters passed to `system_chsarp_toolchain`.
@@ -42,7 +45,13 @@ system_csharp_toolchain = rule(
       visibility = ["PUBLIC"],
   )""",
     attrs = {
-        "csc": attrs.string(default = "csc.exe", doc = "Executable name or a path to the C# compiler frequently referred to as csc.exe"),
+        "csc": attrs.one_of(
+            attrs.exec_dep(providers = [RunInfo]),
+            attrs.string(),
+            # `roslyn_tools` is only compatible with Windows, and this toolchain only supports a Windows host.
+            default = "prelude//toolchains/msvc:roslyn_tools[csc.exe]" if host_info().os.is_windows else "csc.exe",
+            doc = "The C# compiler, frequently referred to as csc.exe: a target to run, or an executable name or path. The default is the Roslyn compiler that `vswhere` finds in the local Visual Studio installation.",
+        ),
         "framework_dirs": attrs.dict(
             key = attrs.string(),
             value = attrs.one_of(attrs.source(), attrs.string()),

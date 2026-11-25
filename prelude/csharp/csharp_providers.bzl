@@ -12,6 +12,8 @@ DllReference = record(
     # `str` -> Path to a .NET framework DLL on the local machine.
     # `Artifact` -> Buck target dependency.
     reference = field([Artifact, str]),
+    # The target that provides the `Artifact`.
+    label = field([Label, None], default = None),
 )
 
 def _args_for_dll_reference(dllref: DllReference) -> cmd_args:

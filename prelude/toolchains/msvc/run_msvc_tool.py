@@ -26,6 +26,8 @@ class Tool(NamedTuple):
 
 
 def prepend_env(env, key, entries):
+    if not entries:
+        return
     entries = ";".join(entries)
     if key in env:
         env[key] = entries + ";" + env[key]

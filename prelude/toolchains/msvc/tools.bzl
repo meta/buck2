@@ -177,13 +177,53 @@ def _windows_linker_wrapper(ctx: AnalysisContext, linker: [cmd_args, str]) -> cm
         language = ScriptLanguage("bat"),
     )
 
+def _find_roslyn_tools_impl(ctx: AnalysisContext) -> list[Provider]:
+    csc_exe_json = ctx.actions.declare_output("csc.exe.json", has_content_based_path = False)
+
+    cmd = [
+        ctx.attrs.vswhere[RunInfo],
+        cmd_args(csc_exe_json.as_output(), format = "--csc={}"),
+    ]
+
+    ctx.actions.run(
+        cmd,
+        category = "vswhere",
+        local_only = True,
+    )
+
+    return [
+        # Supports `buck2 run prelude//toolchains/msvc:roslyn_tools[csc.exe]`
+        # and `buck2 build prelude//toolchains/msvc:roslyn_tools[csc.exe][json]`
+        DefaultInfo(
+            sub_targets = {
+                "csc.exe": [
+                    RunInfo(args = [ctx.attrs.run_msvc_tool[RunInfo], csc_exe_json]),
+                    DefaultInfo(
+                        sub_targets = {
+                            "json": [DefaultInfo(default_output = csc_exe_json)],
+                        }
+                    ),
+                ],
+            }
+        ),
+    ]
+
+_MSVC_TOOL_ATTRIBUTES = {
+    "run_msvc_tool": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:run_msvc_tool")),
+    "vswhere": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:vswhere")),
+}
+
 find_msvc_tools = rule(
     impl = _find_msvc_tools_impl,
     attrs = {
         "linker_wrapper": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//cxx/tools:linker_wrapper")),
-        "run_msvc_tool": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:run_msvc_tool")),
         "use_path_compilers": attrs.bool(default = False),
         "use_path_linkers": attrs.bool(default = False),
-        "vswhere": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//toolchains/msvc:vswhere")),
-    },
+    }
+    | _MSVC_TOOL_ATTRIBUTES,
+)
+
+find_roslyn_tools = rule(
+    impl = _find_roslyn_tools_impl,
+    attrs = _MSVC_TOOL_ATTRIBUTES,
 )

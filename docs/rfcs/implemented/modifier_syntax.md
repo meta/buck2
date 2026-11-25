@@ -6,7 +6,7 @@
 
 ## Basic syntax
 
-The following is copied from the command-line modifiers section of the original [modifiers RFC](https://docs.google.com/document/d/1yfb2mwnsphGiz9FhftkIGwMorK8is1qq3f_gYOEmkMA/edit?tab=t.0).
+The following is copied from the command-line modifiers section of the original [modifiers RFC](./modifiers.md).
 
 Modifiers from `?` syntax are specified as `buck2 build <target pattern>?<modifiers separated by plus signs>`.
 

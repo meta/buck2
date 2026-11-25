@@ -1,5 +1,7 @@
 # @configuration syntax
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 ## What
 
 Command
@@ -16,9 +18,10 @@ buck2 build //foo:bar --target-platforms=//platform:linux-x86_64
 
 ## Why
 
-Might be convenient if we define global (or per-target, as proposed in
-[target configuration discovery RFC](https://www.internalfb.com/diff/D35135886))
-alias. For example, if there's an alias
+Might be convenient if we define global (or per-target, as proposed in the
+target configuration discovery
+RFC<FbInternalOnly> ([D35135886](https://www.internalfb.com/diff/D35135886))</FbInternalOnly>) alias.
+For example, if there's an alias
 
 ```
 release=//config:linux-x86_64-release
@@ -30,8 +33,8 @@ The command above can be expressed as:
 buck2 build //foo:bar@release
 ```
 
-Additionally, if we have
-[configuration expression RFC](https://www.internalfb.com/diff/D35135496)
+Additionally, if we have the configuration expression
+RFC<FbInternalOnly> ([D35135496](https://www.internalfb.com/diff/D35135496))</FbInternalOnly>
 implemented, we can do something like:
 
 ```shell

@@ -35,7 +35,7 @@ Existing solutions fall short in several ways (documented in [this tab](problems
 
 ## Basic API
 
-This RFC introduces conditional attrs to the [unified constraint rule](https://docs.google.com/document/d/1AydiiQWBhB_VTl07jPZmyApPkjgxbs4-OQU_nC2Pt9M/edit?tab=t.n2ag5qjff01f#heading=h.f1h19vugfrcm). These attrs let users define how a constraint's value should resolve based on the values of other constraints via a `select`.
+This RFC introduces conditional attrs to the [unified constraint rule](../../implemented/unified_constraint_rule.md). These attrs let users define how a constraint's value should resolve based on the values of other constraints via a `select`.
 
 There are three such attrs:
 

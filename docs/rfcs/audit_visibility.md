@@ -1,5 +1,7 @@
 # `buck2 audit visibility` command
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 ## Context
 
 Buck has a concept of Visibility for every target. It allows users to define,
@@ -7,22 +9,24 @@ for each target, the targets it can depend on and targets that can depend on it.
 Visibility is specified as an allowlist of targets/target patterns, and any
 target used that falls outside of the allowlist fails visibility checking.
 Visibility pattern can be specified on `visibility` and `within_view` attributes
-in buildfiles and
-[PACKAGE files](https://www.internalfb.com/intern/wiki/Buck-users/Key_Concepts/Package_Files/).
+in buildfiles and [PACKAGE files](../concepts/package_files.md).
 
 Visibility is important to lots of codebase maintainers because it can be used
 to keep projects from pulling in unwanted dependencies. As some examples, App
-Core teams are using Buck visibility as a
-[replacement to current supermodules for protecting app modularity](https://fb.prod.workplace.com/groups/2292177024436518/permalink/3112235492430663/).
-Instagram's using visibility to
-[protect modularity and define Link Groups used for build speed optimizations](https://fb.prod.workplace.com/groups/devx.build.bffs/posts/5169450219756775/?comment_id=5169500636418400).
+Core teams are using Buck visibility as a replacement to current supermodules
+for protecting app
+modularity<FbInternalOnly> ([post](https://fb.prod.workplace.com/groups/2292177024436518/permalink/3112235492430663/))</FbInternalOnly>.
+Instagram's using visibility to protect modularity and define Link Groups used
+for build speed
+optimizations<FbInternalOnly> ([post](https://fb.prod.workplace.com/groups/devx.build.bffs/posts/5169450219756775/?comment_id=5169500636418400))</FbInternalOnly>.
 There's interest from various DevX teams in using Buck visibility on
-[PACKAGE files](https://www.internalfb.com/intern/wiki/Buck-users/Key_Concepts/Package_Files/)
-to
-[enforce repo boundaries, which will allow target determinators to migrate off of sparse profiles and onto Eden](https://fb.prod.workplace.com/groups/devx.build.bffs/posts/5169450219756775/),
+[PACKAGE files](../concepts/package_files.md) to enforce repo boundaries, which
+will allow target determinators to migrate off of sparse profiles and onto
+Eden<FbInternalOnly> ([post](https://fb.prod.workplace.com/groups/devx.build.bffs/posts/5169450219756775/))</FbInternalOnly>,
 although visibility in its current form is likely not fit for enforcing such
-repo boundaries. Visibility has also been used to enforce
-[requirements that only certain targets are allowed to depend on targets in fbcode/scripts](https://fb.workplace.com/groups/buckeng/permalink/4392940254087889/).
+repo boundaries. Visibility has also been used to enforce requirements that only
+certain targets are allowed to depend on targets in
+fbcode/scripts<FbInternalOnly> ([post](https://fb.workplace.com/groups/buckeng/permalink/4392940254087889/))</FbInternalOnly>.
 
 For perf reasons, buck2 doesn't always enforce visibility. Instead, it only
 enforces visibility on construction of the configured target graph. Visibility

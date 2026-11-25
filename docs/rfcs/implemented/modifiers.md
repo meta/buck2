@@ -2,6 +2,8 @@
 
 # [RFC] Modifiers
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 This document proposes a new configuration feature in Buck called modifiers. The goal is to address problems with the current methods of customizations in Buck by providing a unified, composable way to specify build settings on a project level, on individual targets, and on the command line.
 
 ## Context
@@ -124,7 +126,7 @@ line. This provides the flexibility needed to customize targets on a project,
 
 target, or cli level.
 
-*Note:* Conditional modifier design may change significantly because of [[RFC] Unified Constraint Rule with Defaults](https://docs.google.com/document/d/1AydiiQWBhB_VTl07jPZmyApPkjgxbs4-OQU_nC2Pt9M/edit#heading=h.f1h19vugfrcm).
+*Note:* Conditional modifier design may change significantly because of [[RFC] Unified Constraint Rule with Defaults](./unified_constraint_rule.md).
 
 ### Per-PACKAGE Modifier
 
@@ -323,4 +325,8 @@ For now, we recommend using transitions for any configuration that needs to be a
 1. *Python version* should be modeled as a transition and not a modifier. Suppose we have `python_binary` A nested as a resource of another `python_binary` B. A should not inherit the python version from B, so a transition is needed to change A's python version when depended on by B.
 2. *Library targets* should use modifiers and not transitions. A C++ library target should always inherit the configuration of its parent C++ binary when it is used as a dep, but a top-level C++ library target can still have its configuration changed via modifiers when requested from the command line.
 
+<FbInternalOnly>
+
 Link to google doc: [[RFC] Modifiers](https://docs.google.com/document/d/1yfb2mwnsphGiz9FhftkIGwMorK8is1qq3f_gYOEmkMA/edit?usp=sharing)
+
+</FbInternalOnly>

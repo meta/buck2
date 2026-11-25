@@ -2,6 +2,8 @@
 
 # [RFC] Unified Constraint Rule with Defaults
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 ## Unified Constraint Rule
 
 ### Problem
@@ -324,4 +326,8 @@ Instead of mutable methods, make `ConfigurationInfo` immutable where `.insert()`
 - **User confusion**: Users expect `.insert()` to mutate in-place based on Python dict experience
 - **Verbose**: Would require reassignment everywhere: `config = config.insert(value)`
 
+<FbInternalOnly>
+
 Link to google doc: [[RFC] Unified Constraint Rule with Defaults](https://docs.google.com/document/d/1AydiiQWBhB_VTl07jPZmyApPkjgxbs4-OQU_nC2Pt9M/edit?usp=sharing)
+
+</FbInternalOnly>

@@ -1,5 +1,7 @@
 # Package-local values
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 This RFC proposes to extend buck2 Starlark with package-local values.
 
 ## Why
@@ -15,11 +17,11 @@ DevX people provided instructions and infrastructure for that.
 
 Currently, in fbcode, we have `get_modes` mechanism.
 
-`get_modes` symbol is registered in per-package implicit symbols,
-[here](https://fburl.com/code/7ud7e3ci).
+`get_modes` symbol is registered in per-package implicit
+symbols<FbInternalOnly> ([code](https://fburl.com/code/7ud7e3ci))</FbInternalOnly>.
 
-This symbol can be accessed from macros using
-[implicit_package_symbol](https://fburl.com/code/u5coj9s7) function.
+This symbol can be accessed from macros using the `implicit_package_symbol`
+function<FbInternalOnly> ([code](https://fburl.com/code/u5coj9s7))</FbInternalOnly>.
 
 `get_modes` functions are package-local, but all `BUILD_MODE.bzl` files need to
 be registered in global buckconfig, which is not ideal.

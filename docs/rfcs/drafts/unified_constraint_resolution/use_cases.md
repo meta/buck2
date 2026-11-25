@@ -1,5 +1,7 @@
 # Use Cases
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 ## Additional use cases of sub-constraints
 
 ### Replacing selects in transition attrs
@@ -261,6 +263,10 @@ cuda_library(
 )
 ```
 
+<FbInternalOnly>
+
 ## Internal-only use cases
 
 See [Use cases (FB-Internal)](https://docs.google.com/document/d/1peCMKrjUphmdXYfCT_vkdfGY948Xqeyz_G5Xg56737M/edit).
+
+</FbInternalOnly>

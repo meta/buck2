@@ -64,7 +64,7 @@ conditional_modifier(
 # Now you can set asan_on_linux modifier on a target and it would not affect how it gets used as an exec dep.
 ```
 
-In the future, we expect most of these to be defined directly on constraints via some type of [select on default API](https://docs.google.com/document/d/1AydiiQWBhB_VTl07jPZmyApPkjgxbs4-OQU_nC2Pt9M/edit?tab=t.0#bookmark=id.29ksul4o76j6), once that’s available.
+In the future, we expect most of these to be defined directly on constraints via some type of [select on default API](./unified_constraint_rule.md), once that’s available.
 
 ## Constraint Opt-in Mechanism
 

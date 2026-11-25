@@ -76,7 +76,7 @@ defining custom transition, and using custom transition rule.
 
 But having `configured_alias` is a convenient stopgap to unblock people.
 
-### Use `@configuration` syntax from [another RFC](https://www.internalfb.com/diff/D35136639).
+### Use `@configuration` syntax from [another RFC](drafts/configuration-at-syntax.md).
 
 Instead of passing `confiured_target_label(x, y)` pass `x + "@" + y`.
 

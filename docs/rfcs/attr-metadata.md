@@ -1,5 +1,7 @@
 # RFC: labels -> metadata attribute
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 This RFC proposes to add new builtin per target attribute: `metadata`, as
 replacement for `labels`.
 
@@ -21,8 +23,8 @@ serializable as JSON.
 There are several spaces where we use or need metadata to be stored in buck2
 target graph.
 
-- fbcode uses per-package values to switch code to new clang
-  ([example](https://www.internalfb.com/code/fbsource/[ef740e6f2610c64621f7547a3b46d54d32af8600]/fbcode/ownership/code_metadata/PACKAGE?lines=3))
+- fbcode uses per-package values to switch code to new
+  clang<FbInternalOnly> ([example](https://www.internalfb.com/code/fbsource/[ef740e6f2610c64621f7547a3b46d54d32af8600]/fbcode/ownership/code_metadata/PACKAGE?lines=3))</FbInternalOnly>
 - testinfra wants to use `PACKAGE` values to mark a set of folders to a logical
   larger project
 - it is likely that per-target `metadata` attribute should be used in

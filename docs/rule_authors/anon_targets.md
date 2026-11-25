@@ -23,7 +23,8 @@ This solves two distinct problems:
 
 Dynamic dependencies, in their full generality, enable users to do a thing, look
 at the result, then ask for fresh things. However, this full generality is not
-provided as it breaks processes, like query, that power the Target Determinator.
+provided as it breaks processes, like query, that are used to work out which
+targets a change affects.
 
 In Buck2, dynamic dependencies are implemented using `dynamic_output`, which
 provides users with the ability to create new actions, after running actions,
@@ -42,9 +43,9 @@ is part of the hash. If that is too restrictive, pass
 `exec_group` to `anon_target()` to use the platform of one of the calling
 rule's [execution groups](execution_groups.md).
 
-# Creating anon targets
+## Creating anon targets
 
-## Anon rule
+### Anon rule
 
 An anonymous rule is defined using `rule` or `anon_rule`.
 
@@ -66,15 +67,15 @@ my_anon_rule = anon_rule(
 ```
 
 For `rule`, these are normal rules, with the difference that they are not in a
-configuration, so `ctx.actions.label` won't show configuration information, but
-just `unspecified`.
+configuration, so `ctx.label` won't show configuration information, but just
+`<unspecified>`.
 
 For `anon_rule`, the configuration restrictions also apply, and there is an
 `artifact_promise_mappings` field which you can specify a dict of artifact
 promise names to the map function, which would be applied to the anon target's
 promise during rule resolution.
 
-## Anon target
+### Anon target
 
 An anonymous rule is used via `ctx.actions.anon_target` or
 `ctx.actions.anon_targets`, passing in the rule and the attributes for the rule.
@@ -103,7 +104,7 @@ anon_target = ctx.actions.anon_target(my_anon_rule1, {})
 anon_targets = ctx.actions.anon_targets([(my_anon_rule1, {}), (my_anon_rule2, {})])
 ```
 
-### `AnonTarget` and `AnonTargets`
+#### `AnonTarget` and `AnonTargets`
 
 `AnonTarget` has a `promise` attribute, and `artifact()` and `artifacts()`
 functions. `AnonTargets` has a `promise` attribute and `anon_targets` attribute.
@@ -117,7 +118,8 @@ target. The `promise` type has a few special behaviors.
 - All promises will eventually resolve to a list of providers
 
 For `AnonTarget`, the `artifact()` and `artifacts()` functions only return
-something if using `anon_rule`. `artifact()` takes in an artifact name, which
+something if using `anon_rule`: with `rule`, `artifacts()` returns an empty dict
+and `artifact()` fails. `artifact()` takes in an artifact name, which
 should be found in the `artifact_promise_mappings` dict, and returns the
 artifact promise. `artifacts()` returns the dict of all promise artifact names
 to the artifact promise itself, as defined in `artifact_promise_mappings`. See
@@ -174,7 +176,7 @@ hello = all_targets.anon_targets[0].artifact("hello")
 goodbye = all_targets.anon_targets[1].artifact("goodbye")
 ```
 
-# Attributes
+## Attributes
 
 Anon targets only support a subset of attributes that normal rules support.
 
@@ -188,10 +190,10 @@ Supported attributes:
   - `deps` attributes do not take strings, but dependencies, already in a
     configuration
   - `exec_deps` are available if the passed in `dep`'s execution platform
-    matches
-  - Default `attr.deps` (as used for toolchains) are not permitted, as the
+    matches that of the anon target's caller
+  - Default `attrs.dep` (as used for toolchains) are not permitted, as the
     default can't express a dependency. They must be passed forward from the
-    caller. that of the anon target's caller
+    caller.
 - `source`
   - Accepts bound artifacts or promise artifacts
 - `arg`
@@ -207,6 +209,16 @@ Supported attributes:
 You can use these attributes like you would in normal rules:
 
 ```python
+def _my_anon_impl(ctx: AnalysisContext) -> list[Provider]:
+    my_int = ctx.attrs.my_int
+    my_string_with_default = ctx.attrs.my_string_with_default
+    my_optional_source = ctx.attrs.my_optional_source
+    my_list_of_labels = ctx.attrs.my_list_of_labels
+
+    # do something with the attributes...
+
+    return [DefaultInfo()]
+
 my_anon_rule = anon_rule(
     impl = _my_anon_impl,
     attrs = {
@@ -217,19 +229,9 @@ my_anon_rule = anon_rule(
     },
     artifact_promise_mappings = {}
 )
-
-def _my_anon_impl(ctx: AnalysisContext) -> list[Provider]:
-    my_int = ctx.attrs.my_int
-    my_string_with_default = ctx.attrs.my_string_with_default
-    my_optional_source = ctx.attrs.my_optional_source
-    my_list_of_labels = ctx.attrs.my_list_of_labels
-
-    # do something with the attributes...
-
-    return [DefaultInfo()]
 ```
 
-## Attribute resolution
+### Attribute resolution
 
 Attribute resolution is handled differently from normal code:
 
@@ -240,7 +242,7 @@ Attribute resolution is handled differently from normal code:
   refer to a cell/package that does not exist. If not present, buck2 will
   generate a name for the target automatically.
 
-### `name` attribute example
+#### `name` attribute example
 
 ```python
 # Rule definition for anon target
@@ -253,7 +255,7 @@ my_rule = rule(
 )
 
 # Anon target instantiation, elsewhere
- ctx.actions.anon_target(
+ctx.actions.anon_target(
     my_rule,
     {
         # you can optionally pass `name` into the attributes even though it's
@@ -266,19 +268,19 @@ my_rule = rule(
 To access the `name` attribute from an analysis context, you can use
 `ctx.label.name`.
 
-# Examples
+## Examples
 
-## Simple Example
+### Simple Example
 
 ```python
 # Define an anonymous rule
 UpperInfo = provider(fields = ["message"])
 
 def _impl_upper(ctx):
-    return [UpperInfo(message = ctx.attrs.message.upper()]
+    return [DefaultInfo(), UpperInfo(message = ctx.attrs.message.upper())]
 
 upper = rule(
-    attrs = {"message", attrs.string()},
+    attrs = {"message": attrs.string()},
     impl = _impl_upper
 )
 
@@ -289,23 +291,22 @@ def impl(ctx):
         # These are the providers this target returns
         return [DefaultInfo()]
     return ctx.actions.anon_target(upper, {
-        name: "my//:greeting",
-        message: "Hello World",
-    })
-    .promise
-    .map(k)
+        "name": "my//:greeting",
+        "message": "Hello World",
+    }).promise.map(k)
 ```
 
-## Longer example
+### Longer example
 
 The following code represents a scenario for a compile-and-link language where,
 if two targets end up compiling the same file (for example, they are in the same
 package and both list it, or it gets export_file'd), then that file is compiled
-just once:
+just once. `toolchains//:silly` is a toolchain that returns
+`SillyToolchainInfo`, with the commands to run in `compiler` and `linker`:
 
 ```python
 ## BUCK ##############
-@load(":silly.bzl", "silly_binary")
+load(":silly.bzl", "silly_binary")
 
 silly_binary(
     name = "hello",
@@ -314,22 +315,24 @@ silly_binary(
 
 ## silly.bzl ############
 
+SillyToolchainInfo = provider(fields = ["compiler", "linker"])
+
 _SillyCompilation = provider(fields = ["compiled"])
 
 def _silly_compilation_impl(ctx):
     out = ctx.actions.declare_output("output.o")
     ctx.actions.run(cmd_args(
-        ctx.attrs.toolchain.compiler,
+        ctx.attrs.toolchain[SillyToolchainInfo].compiler,
         ctx.attrs.src,
         "-o",
         out.as_output(),
-    ))
+    ), category = "silly_compile")
     return [DefaultInfo(), _SillyCompilation(compiled = out)]
 
 _silly_compilation = rule(
     impl = _silly_compilation_impl,
     attrs = {
-        "src": attrs.src(),
+        "src": attrs.source(),
         "toolchain": attrs.dep(),
     },
 )
@@ -340,11 +343,11 @@ def _silly_binary_impl(ctx):
         out = ctx.actions.declare_output("out.exe")
         objs = [p[_SillyCompilation].compiled for p in providers]
         ctx.actions.run(cmd_args(
-            ctx.attrs._silly_toolchain.linker,
+            ctx.attrs._silly_toolchain[SillyToolchainInfo].linker,
             objs,
             "-o",
             out.as_output(),
-        ))
+        ), category = "silly_link")
         return [
             DefaultInfo(default_output = out),
             RunInfo(args = out),
@@ -356,18 +359,18 @@ def _silly_binary_impl(ctx):
             "src": src,
             "toolchain": ctx.attrs._silly_toolchain
         }) for src in ctx.attrs.srcs]
-    ).map(k)
+    ).promise.map(k)
 
 silly_binary = rule(
     impl = _silly_binary_impl,
     attrs = {
-        "srcs": attr.list(attr.src()),
-        "_silly_toolchain": attr.dep(default = "toolchains//:silly"),
+        "srcs": attrs.list(attrs.source()),
+        "_silly_toolchain": attrs.toolchain_dep(default = "toolchains//:silly"),
     },
 )
 ```
 
-## Convert promise to artifact
+### Convert promise to artifact
 
 It can be challenging to pass around the promises from anon_target and structure
 functions to support that. If you only need an artifact (or multiple artifacts)
@@ -377,14 +380,17 @@ that expect artifacts, but until it is resolved (at the end of the current
 analysis) it can't be inspected with artifact functions like `.extension`, etc.
 `.short_path` is supported if `ctx.actions.assert_short_path()` was called,
 which produces an artifact type. The promise must resolve to a build (not
-source) artifact with no associated artifacts.
+source) artifact with no associated artifacts. Outputs use
+[content-based paths](content_based_paths.md) by default, and a promise artifact
+that resolves to such an output must be passed through
+`ctx.actions.assert_has_content_based_path()`.
 
 Example:
 
 ```python
 HelloInfo = provider(fields = ["hello", "world"])
 
-def _anon_impl(ctx: AnalysisContext) -> ["provider"]:
+def _anon_impl(ctx: AnalysisContext) -> list[Provider]:
     hello = ctx.actions.write("hello.out", "hello")
     world = ctx.actions.write("world.out", "world")
     return [DefaultInfo(), HelloInfo(hello = hello, world = world)]
@@ -398,14 +404,14 @@ _anon = anon_rule(
     }
 )
 
-def _use_impl(ctx: AnalysisContext) -> ["provider"]:
+def _use_impl(ctx: AnalysisContext) -> list[Provider]:
     anon = ctx.actions.anon_target(_anon, {})
-    hello_artifact = anon.artifact("hello")
-    world_artifact = anon.artifact("world")
+    hello_artifact = ctx.actions.assert_has_content_based_path(anon.artifact("hello"))
+    world_artifact = ctx.actions.assert_has_content_based_path(anon.artifact("world"))
 
     out = ctx.actions.declare_output("output")
     ctx.actions.run([
-            ctx.attrs.some_tool,
+            ctx.attrs.some_tool[RunInfo],
             hello_artifact,
             world_artifact,
             out.as_output()
@@ -413,6 +419,6 @@ def _use_impl(ctx: AnalysisContext) -> ["provider"]:
     return [DefaultInfo(default_output = out)]
 
 use_promise_artifact = rule(impl = _use_impl, attrs = {
-    "some_tool": attr.exec_dep(),
+    "some_tool": attrs.exec_dep(),
 })
 ```

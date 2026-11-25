@@ -17,16 +17,16 @@ example of what such a function might look like:
 ```python
 def _transition_impl_with_refs(platform: PlatformInfo) -> PlatformInfo:
     # Not bound in this function, see below for where these come from
-    os = os[ConstraintSettingInfo]
-    watchos = watchos[ConstraintValueInfo]
+    os_setting = os[ConstraintSettingInfo]
+    watchos_value = watchos[ConstraintValueInfo]
     # Remove operating system constraint from input platform.
     constraints = {
         s: v
         for (s, v) in platform.configuration.constraints.items()
-        if s != os.label
+        if s != os_setting.label
     }
     # Add watchos constraint value.
-    constraints[watchos.setting.label] = watchos
+    constraints[watchos_value.setting.label] = watchos_value
     # Construct configuration structure.
     new_cfg = ConfigurationInfo(
         # Updated constraints.
@@ -45,9 +45,11 @@ def _transition_impl_with_refs(platform: PlatformInfo) -> PlatformInfo:
 
 Much like constraints and platforms, transitions make their way into the graph
 by means of a target that returns a built-in provider - specifically, the
-`TransitionInfo` provider. The `TransitionInfo` provider accepts only one
-parameter, `impl` a callable with signature `PlatformInfo -> PlatformInfo`. With
-that in mind, we can a transition rule:
+`TransitionInfo` provider. The `TransitionInfo` provider accepts `impl`, a
+callable with signature `PlatformInfo -> PlatformInfo`, and optionally `attrs`,
+a list of attribute names (see
+[below](#access-rule-attributes-in-transition-function-implementation)). With
+that in mind, we can write a transition rule:
 
 ```python
 def _transition_to_watchos_impl(_ctx: AnalysisContext) -> list[Provider]:
@@ -55,8 +57,8 @@ def _transition_to_watchos_impl(_ctx: AnalysisContext) -> list[Provider]:
     # From above
     def _transition_impl_with_refs(platform: PlatformInfo) -> PlatformInfo:
         # Not bound in this function, see below for where these come from
-        os = os[ConstraintSettingInfo]
-        watchos = watchos[ConstraintValueInfo]
+        os_setting = os[ConstraintSettingInfo]
+        watchos_value = watchos[ConstraintValueInfo]
         ...
 
     return [
@@ -91,8 +93,8 @@ def _transition_to_watchos_impl(ctx: AnalysisContext) -> list[Provider]:
     # From above
     def _transition_impl_with_refs(platform: PlatformInfo) -> PlatformInfo:
         # These values are captured into the `def` from above
-        os = os[ConstraintSettingInfo]
-        watchos = watchos[ConstraintValueInfo]
+        os_setting = os[ConstraintSettingInfo]
+        watchos_value = watchos[ConstraintValueInfo]
         ...
 
     return [
@@ -136,7 +138,7 @@ transition_to_watchos(
 
 my_binary(
     name = "watchos_binary",
-    deps = ...
+    deps = ...,
     incoming_transition = ":transition_to_watchos",
 )
 ```
@@ -148,8 +150,9 @@ must declare that they support them by setting
 ## Outgoing edge transitions
 
 Outgoing edge transitions are declared via use of
-`attrs.transition_dep(cfg = ":transition_target")`. Such attributes act much
-like an `attrs.dep()`, except that the transition is applied.
+`attrs.transition_dep(cfg = "//path/to:transition_target")`. The label of the
+transition target must be absolute. Such attributes act much like an
+`attrs.dep()`, except that the transition is applied.
 
 ## Access rule attributes in transition function implementation
 
@@ -168,6 +171,7 @@ def _tr(platform, attrs):
     # - Only primitive values for now (providers are not resolved)
     # - Only unconfigured attributes for now
     attrs.my_list_attribute # == [12345, 67890]
+    return platform
 
 
 def _transition_target_impl(ctx):
@@ -175,21 +179,20 @@ def _transition_target_impl(ctx):
         DefaultInfo(),
         TransitionInfo(
             impl = _tr,
-            attrs = {
-                "my_list_attribute": attr.list(...),
-            },
+            attrs = ["my_list_attribute"],
         ),
     ]
-_transition_target = rule(
+transition_target = rule(
     impl = _transition_target_impl,
+    attrs = {},
     is_configuration_rule = True,
 )
 
-_transition_target(
+transition_target(
     name = "my_transition_target",
 )
 
-my_rule = rule(..., supports_incoming_transition)
+my_rule = rule(..., supports_incoming_transition = True)
 
 my_rule(
     ...,

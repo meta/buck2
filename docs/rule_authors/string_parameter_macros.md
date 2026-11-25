@@ -104,7 +104,6 @@ sh_test(
     # `my_test.sh` takes a single argument, which is the path to an executable
     # to test.
     test = "my_test.sh",
-    visibility = ["//risk/tap_enricher/..."],
 )
 ```
 
@@ -162,10 +161,13 @@ my_rule(
 
 Expands to the transitive classpath of the specified build rule, provided that
 the rule has a Java classpath. If the rule does not have (or contribute to) a
-classpath, then an exception is thrown and the build breaks. It takes an
-optional second argument to limit the depth of the traversal, but only a depth
-of 1 is currently supported. Its behavior is similar to the corresponding
-operation in the `buck audit` command.
+classpath, then an exception is thrown and the build breaks.
+
+`classpath` is not built into Buck2. A macro that is not built in is resolved by
+the target it names, which must return a
+[`TemplatePlaceholderInfo`](../../api/build/TemplatePlaceholderInfo/) that
+defines it. The prelude's Java rules define `classpath` and
+`first_order_classpath`.
 
 ## `$(location //path/to:target[output])`
 
@@ -185,13 +187,13 @@ the macro with the path to that file _while keeping the `@` prefix_. For
 example:
 
 ```sh
-$(@query_targets_and_outputs //...)
+$(@query_targets_and_outputs deps(:my_target))
 ```
 
 expands to something similar to:
 
 ```sh
-@/tmp/tempfile
+@../__macros/790c6b01daf15cb9e65c86650ce5852836542f85/0.macro
 ```
 
 Many applications recognize the `@` prefix to mean: _read the contents of this
@@ -215,7 +217,7 @@ syntax for subshells is the same as the syntax for string parameter macros:
 genrule(
   name = 'gen',
   out  = 'out.txt',
-  cmd  = 'cp $SRCS \$(dirname $OUT)',
+  cmd  = 'cp $SRCS \$(dirname $OUT) && cat $SRCS > $OUT',
   srcs = [
     'test1.txt',
     'test2.txt',
@@ -225,8 +227,8 @@ genrule(
 
 ## Query functions
 
-The `query_*` macros accept a quoted query expression which supports the
-following query functions:
+The `query_*` macros accept a query expression that evaluates to a set of
+targets. It can use query functions such as:
 
 - `attrfilter`
 - `attrregexfilter`

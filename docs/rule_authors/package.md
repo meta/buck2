@@ -44,8 +44,10 @@ regardless of whether they are loaded from `PACKAGE` or `BUCK` file.
 
 ```python
 def write_package_value(
-    name: str,
-    value: "",
+    key: str,
+    value: typing.Any,
+    /,
+    *,
     overwrite: bool = False,
 ): ...
 ```
@@ -53,11 +55,11 @@ def write_package_value(
 This global API is only available in `PACKAGE` files, or `bzl` files included in
 `PACKAGE` files.
 
-`name` is a string which must contain exactly one dot symbol (just to enforce
+`key` is a string which must contain exactly one dot symbol (just to enforce
 code style).
 
 `value` is an arbitrary Starlark value, for example, an integer, a list of
-integer, a struct or a function. The value must be serializable into JSON.
+integer or a struct. The value must be serializable into JSON.
 
 When `overwrite` is `False` (default), attempt to overwrite per-`PACKAGE` value
 defined in parent `PACKAGE` file will fail.
@@ -66,7 +68,7 @@ Written values are frozen when `PACKAGE` file evaluation is finished.
 
 Note `write_package_value` symbol exists in `bzl` globals, and it can be called
 from `bzl` file in context of `PACKAGE` evaluation, but calling
-`write_package_file` is an error on context of `BUCK` evaluation.
+`write_package_value` is an error on context of `BUCK` evaluation.
 
 Modifying `PACKAGE` file logically invalidates the `BUCK` file of this
 directory, and all `PACKAGE` and `BUCK` files of sub-`PACKAGE`s. However, `BUCK`
@@ -89,7 +91,7 @@ This function returns the `PACKAGE` value defined in a parent `PACKAGE` file, or
 `None` is such value does not exist.
 
 This function is available in `PACKAGE` files, but attempt to call this function
-in context of `bzl` file evaluation results in an error.
+in context of `BUCK` file evaluation results in an error.
 
 #### [`package`](../../api/build#package)
 
@@ -120,10 +122,10 @@ explicit, reviewable exemptions while a boundary is enforced:
 
 ```python
 package(
-    visibility = ["fbcode//etc/allowed/..."],
+    visibility = ["//etc/allowed/..."],
     visibility_exempt_targets = [
-        "fbcode//etc/legacy/client:",
-        "fbcode//etc/generated/...",
+        "//etc/legacy/client:",
+        "//etc/generated/...",
     ],
 )
 ```

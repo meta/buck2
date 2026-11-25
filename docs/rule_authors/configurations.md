@@ -3,6 +3,9 @@ id: configurations
 title: Configurations
 ---
 
+import { FbInternalOnly, OssOnly } from
+'docusaurus-plugin-internaldocs-fb/internal';
+
 This page mostly focuses on how configurations and related features are
 implemented. A good understanding of the high-level
 [concepts](../concepts/configurations.md) is therefore required.
@@ -46,10 +49,14 @@ are still conceptually useful).
 
 ## Execution platforms
 
+<FbInternalOnly>
+
 > To Buck, both execution platforms and the list of them are based on
 > `ExecutionPlatformInfo` and `ExecutionPlatformRegistrationInfo`, but
 > we’ll talk in
 > terms of the `execution_platform` and `execution_platforms` rules.
+
+</FbInternalOnly>
 
 There are three main concepts to understand about execution platforms:
 
@@ -112,6 +119,66 @@ The process for fully specifying your own execution platforms is:
     execution_platforms = platforms//:my_exec_platforms
     ```
 
+<OssOnly>
+
+Here’s an example definition of execution platforms. The rule is defined in
+`platforms/defs.bzl`:
+
+```python
+def _execution_platforms_impl(ctx: AnalysisContext) -> list[Provider]:
+    platform = ExecutionPlatformInfo(
+        label = ctx.label.raw_target(),
+        configuration = ctx.attrs.platform[PlatformInfo].configuration,
+        executor_config = CommandExecutorConfig(
+            local_enabled = True,
+            remote_enabled = False,
+        ),
+    )
+    return [
+        DefaultInfo(),
+        ExecutionPlatformRegistrationInfo(platforms = [platform]),
+    ]
+
+execution_platforms = rule(
+    impl = _execution_platforms_impl,
+    attrs = {
+        "platform": attrs.dep(providers = [PlatformInfo]),
+    },
+)
+```
+
+And the targets are defined in `platforms/BUCK`:
+
+```python
+load(":defs.bzl", "execution_platforms")
+
+platform(
+    name = "linux-x86_64",
+    constraint_values = [
+        "prelude//os/constraints:linux",
+        "prelude//cpu/constraints:x86_64",
+    ],
+)
+
+execution_platforms(
+    name = "my_exec_platforms",
+    platform = ":linux-x86_64",
+)
+```
+
+With `execution_platforms = root//platforms:my_exec_platforms` in the `[build]`
+section of `.buckconfig`, this sets us up with one execution platform, which
+runs actions on the local machine. To
+run actions with remote execution, set `remote_enabled = True` and the
+`remote_execution_*` parameters of
+[`CommandExecutorConfig`](../../api/build/CommandExecutorConfig/). The
+[examples/remote_execution](https://github.com/meta/buck2/tree/main/examples/remote_execution)
+directory has complete projects for several remote execution services.
+
+</OssOnly>
+
+<FbInternalOnly>
+
 Here’s an example definition of execution platforms.
 
 ```python
@@ -156,6 +223,8 @@ macOS, and Linux. We choose a more optimized configuration for that
 platform (i.e. `opt` instead of `dev`). Generally for build tools we
 recommend using an optimized form, as most of the time the build will be
 executing the prebuilt tools rather than building them.
+
+</FbInternalOnly>
 
 In simple cases you will only have one execution platform, and the story
 ends there.
@@ -325,7 +394,7 @@ as `:A` (as target platform gets inherited by `attrs.toolchain_dep()`s).
 
 ![Example graph with dependencies](/img/configurations/graph_with_deps.png)
 
-### Splitting //:lib3
+### Splitting `//:lib3`
 
 As we work out the configurations here, `//:lib3` will end up being in two
 different configurations, so gonna be easiest to split it now.

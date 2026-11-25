@@ -24,9 +24,12 @@ There are three `buck2` profiling commands:
 For example:
 
 ```shell
-buck2 profile loading --mode=heap-summary-allocated -o heap-summary.csv //some/package:
-buck2 profile analysis --mode=heap-summary-allocated -o heap-summary.csv //some/package:target
+buck2 profile loading --mode=heap-summary-allocated -o heap-summary //some/package:
+buck2 profile analysis --mode=heap-summary-allocated -o heap-summary //some/package:target
 ```
+
+The output path is a directory. It contains `targets.txt` and the profile, in
+`profile.csv` or in `flame.src` and `flame.svg`, depending on the mode.
 
 Possible values for profiling modes are as follows:
 
@@ -36,6 +39,8 @@ Possible values for profiling modes are as follows:
   garbage-collection. This profiling mode is the recommended one.
 - heap-summary-retained: Like heap summary, but information about retained
   memory after module is frozen.
+- heap-allocated: heap-summary-allocated and heap-flame-allocated together.
+- heap-retained: heap-summary-retained and heap-flame-retained together.
 - time-flame: Provide output compatible with
   [flamegraph.pl](https://github.com/brendangregg/FlameGraph/blob/master/flamegraph.pl).
 - heap-flame-allocated: Like heap profile, but writes output comparible with
@@ -45,10 +50,11 @@ Possible values for profiling modes are as follows:
 - [statement](#statement-profiling): The statement profile mode provides
   information about time spent in each statement.
 - bytecode: The bytecode profile mode provides information about bytecode
-  instruction pairs.
+  instructions.
 - bytecode-pairs: The bytecode profile mode provides information about bytecode
   instruction pairs.
 - typecheck: Profile runtime typechecking.
+- coverage: Code coverage.
 - none: Do no profiling.
 
 ### Summary profiling
@@ -56,8 +62,8 @@ Possible values for profiling modes are as follows:
 The first profiling mode (`heap-summary-allocated`) provides the time spent
 within a function and the allocations that are performed.
 
-As an example, running over a folly BUCK file, produces a CSV file whose
-top-left corner is:
+As an example, running over a folly BUCK file, produces a `profile.csv` file
+whose top-left corner is:
 
 ```text
 Function         Time(s)  TimeRec(s)    Calls   Allocs
@@ -105,7 +111,7 @@ prelude.bzl               28:9-29:20         0.07     1004
 ```
 
 This profile shows how much time is spent in each statement. Looking at the
-relevant portion of `fbode_allowed_list.bzl`:
+relevant portion of `fbcode_allowed_list.bzl`:
 
 ```python
 for _package in _recursive_allowlist:

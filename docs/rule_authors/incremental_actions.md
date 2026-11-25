@@ -37,8 +37,8 @@ action metadata if it's needed, as shown in the following JSON example:
   "version": 1,
   "digests": [
     {
-      "path": "buck-out/v2/gen/cell/configuration_hash/path/to/target/__target_name__/generated_file",
-      "digest": "da39a3ee5e6b4b0d3255bfef95601890afd80709:10"
+      "path": "buck-out/v2/art/cell/path/to/target/__target_name__/2cf24dba5fb0a30e/generated_file",
+      "digest": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824:5"
     },
     ...
   ]

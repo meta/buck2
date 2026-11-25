@@ -33,7 +33,7 @@ that artifacts produced under different configurations land in different
 locations:
 
 ```
-buck-out/v2/art/<configuration-hash>/<cell>/__<target>__/<output>
+buck-out/v2/art/<cell>/<configuration-hash>/<package>/__<target>__/<output>
 ```
 
 The output paths of an action are part of the command line and therefore
@@ -54,8 +54,8 @@ the digest.
 
 Here are two content-based path renderings:
 
-1. `buck-out/v2/art/cell/output_artifacts/__target__/libfoo.o` (**placeholder**)
-2. `buck-out/v2/art/cell/97752af0dd8a8d17/__target__/libfoo.o` (**real content-based path**)
+1. `buck-out/v2/art/cell/__target__/output_artifacts/libfoo.o` (**placeholder**)
+2. `buck-out/v2/art/cell/__target__/97752af0dd8a8d17/libfoo.o` (**real content-based path**)
 
 In a given `actions.run()`, all inputs have a **real** content-based path, and
 all outputs have **placeholder** paths. You won't see the same artifact
@@ -125,7 +125,7 @@ sequenceDiagram
     participant CAS as Content Addressed Storage
     participant RE as Remote Executor
     Note right of B: Inputs resolved with REAL content hash<br/>(already known from upstream artifacts)<br/>Output resolved with placeholder<br/>"output_artifacts"
-    Note right of B: Action<br/>gcc foo.c -o buck-out/v2/art/cell/output_artifacts/__target__/libfoo.o
+    Note right of B: Action<br/>gcc foo.c -o buck-out/v2/art/cell/__target__/output_artifacts/libfoo.o
     alt
         rect rgb(247 230 234)
         Note left of AC: Cache MISS
@@ -134,14 +134,14 @@ sequenceDiagram
         B->>RE: Execute action
         Note left of RE: Executor writes libfoo.o to path<br/>containing "output_artifacts"
         RE-->>CAS: Store(D -> <libfoo.o contents>)
-        RE-->>AC: Action Result<br/>{name:"buck-out/v2/art/cell/output_artifacts/__target__/libfoo.o", digest: D}
-        RE-->>B: ExecuteResponse: Action Result<br/>{name:"buck-out/v2/art/cell/output_artifacts/__target__/libfoo.o", digest: D}
+        RE-->>AC: Action Result<br/>{name:"buck-out/v2/art/cell/__target__/output_artifacts/libfoo.o", digest: D}
+        RE-->>B: ExecuteResponse: Action Result<br/>{name:"buck-out/v2/art/cell/__target__/output_artifacts/libfoo.o", digest: D}
         end
     else
         rect rgb(230 247 239)
         Note left of AC: Cache HIT
         B->>AC: Lookup(Action)
-        AC-->>B: Action Result<br/>{name:"buck-out/v2/art/cell/output_artifacts/__target__/libfoo.o", digest: D}
+        AC-->>B: Action Result<br/>{name:"buck-out/v2/art/cell/__target__/output_artifacts/libfoo.o", digest: D}
         end
     end
     rect rgb(241 235 255)
@@ -149,7 +149,7 @@ sequenceDiagram
     B->>CAS: Get(D)
     CAS-->>B: <libfoo.o contents>
     Note right of B: real_hash = hex(first 8 bytes of digest D) = 97752af0dd8a8d17
-    Note right of B: Materialize libfoo.o at resolved path:<br/>buck-out/v2/art/cell/97752af0dd8a8d17/__target__/libfoo.o
+    Note right of B: Materialize libfoo.o at resolved path:<br/>buck-out/v2/art/cell/__target__/97752af0dd8a8d17/libfoo.o
     end
 ```
 
@@ -207,33 +207,33 @@ flowchart LR
     style C fill:transparent,stroke:transparent
 ```
 
-## Enabling content-based paths
-
-### On individual actions
-
-Pass `has_content_based_path = True` when declaring outputs:
-
-```python
-# A single output.
-out = ctx.actions.declare_output("out.txt", has_content_based_path = True)
-
-# All inbuilt action types support it.
-ctx.actions.write("header.h", "int x = 1;", has_content_based_path = True)
-ctx.actions.run(
-    cmd_args,
-    category = "compile",
-    outputs = [out.as_output()],
-    has_content_based_path = True,
-)
-ctx.actions.copy_file(out, src, has_content_based_path = True)
-ctx.actions.download_file(out, url, sha256 = "...", has_content_based_path = True)
-```
+## Controlling content-based paths {#enabling-content-based-paths}
 
 ### Default behavior
 
 Outputs use content-based paths by default, whether declared explicitly with
 `declare_output` or implicitly by passing a string name to an action. Individual
 calls can opt out by passing `has_content_based_path = False`.
+
+### On individual actions
+
+`has_content_based_path` is a parameter of the calls that declare outputs:
+
+```python
+# A single output.
+out = ctx.actions.declare_output("out.txt", has_content_based_path = True)
+
+# The outputs of `run` are declared with `declare_output`.
+ctx.actions.run(
+    cmd_args("touch", out.as_output()),
+    category = "compile",
+)
+
+# The actions that can declare their own output support it.
+ctx.actions.write("header.h", "int x = 1;", has_content_based_path = True)
+ctx.actions.copy_file("copy.txt", src, has_content_based_path = True)
+ctx.actions.download_file("file.txt", url, sha256 = "...", has_content_based_path = True)
+```
 
 ### In prelude rules
 
@@ -275,8 +275,6 @@ eligible for deduplication, and produce a clear error if it is not:
 ctx.actions.run(
     cmd_args(...),
     category = "compile",
-    outputs = [out.as_output()],
-    has_content_based_path = True,
     expect_eligible_for_dedupe = True,
 )
 ```
@@ -322,8 +320,8 @@ them awkward for anything that needs to refer to a build output by path.
 
 For this reason, the paths Buck2 reports to the outside world are still
 *configuration-hash* paths, of the form
-`buck-out/v2/art/<configuration-hash>/<cell>/__<target>__/<output>`. These are
-what you get from:
+`buck-out/v2/art/<cell>/<configuration-hash>/<package>/__<target>__/<output>`.
+These are what you get from:
 
 - `buck2 build --show-output` (and `--show-full-output`, `--build-report`)
 - `buck2 targets --show-output`

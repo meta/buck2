@@ -4,7 +4,7 @@ title: Alias
 ---
 
 The `alias` rule creates another name by which an existing rule can be referred
-to. There two variants: [versioned_alias](#versioned_alias) and
+to. There are two variants: [versioned_alias](#versioned_alias) and
 [configured_alias](#configured_alias), which are detailed below.
 
 ## alias
@@ -38,7 +38,17 @@ The `versioned_alias` rule has the following relevant attributes:
 
 Under the hood, any versioned parameters from the `versioned_alias`'s underlying
 `actual` are translated into their `select`-based equivalents, which rely on
-constraint settings added to the target platform.
+constraint settings added to the target platform. The `select` keys are the
+constraint values `ovr_config//third-party/<project>/constraints:<version>`,
+where `<project>` is the name of the directory that contains the build file.
+
+<OssOnly>
+
+The open-source prelude does not have these constraint targets, and in a project
+made with `buck2 init` the `ovr_config` cell is the bundled prelude. So
+`versioned_alias` cannot be used in such a project.
+
+</OssOnly>
 
 **Example**
 
@@ -61,17 +71,19 @@ versioned_alias(
 The `configured_alias` rule has the following relevant attributes:
 
 - `name` - (required) what the `actual`'s label should be aliased as.
-- `configured_actual` - a configured label (mapped to a configured dep under the
-  hood so the providers can be simply forwarded).
-- `fallback_actual` - if `configured_actual` is not set, then fallback to this
-  value, which is an unconfigured dep. If `configured_actual` is not set, then
-  `fallback_actual` must be set.
-- `platform` - the platform to build the aliased target with.
+- `actual` - (required) a target label.
+- `platform` - (required) the platform to build the aliased target with.
+- `fallback_to_unconfigured_alias` - if `True` and `platform` is `None`, the
+  alias behaves like `alias`. Defaults to `False`.
 
 :::note
 
-The `actual` field is available for `configured_alias` but it is not used under
-the hood (to keep compatibility of output format with Buck1 queries).
+`configured_alias` is a macro. It sets the `configured_actual` attribute of the
+underlying rule to the pair of `actual` and `platform` (mapped to a configured
+dep under the hood so the providers can be simply forwarded), or sets
+`fallback_actual`, an unconfigured dep, when it falls back to an unconfigured
+alias. The `actual` attribute of the underlying rule is not used under the hood
+(to keep compatibility of output format with Buck1 queries).
 
 :::
 

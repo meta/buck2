@@ -24,6 +24,12 @@ relative to a base directory.
 
 ## Syntax
 
+`subdir_glob()` is defined in the prelude and must be loaded before use:
+
+```python
+load("@prelude//utils:glob_defs.bzl", "subdir_glob")
+```
+
 ```python
 subdir_glob(
     glob_specs,
@@ -67,11 +73,14 @@ will fail with an error.
 ### Basic C++ Header Mapping
 
 ```python
+load("@prelude//utils:glob_defs.bzl", "subdir_glob")
+
 cxx_library(
     name = "mylib",
     exported_headers = subdir_glob([
         ("include", "**/*.h"),
     ]),
+    header_namespace = "",
 )
 ```
 
@@ -96,7 +105,9 @@ This creates a mapping:
 }
 ```
 
-Consumers can include headers as: `#include "math/vector.h"`
+Consumers can include headers as: `#include "math/vector.h"`. Without
+`header_namespace = ""`, the headers are under the package path:
+`#include "path/to/package/math/vector.h"`.
 
 ### Multiple Subdirectories with Prefix
 

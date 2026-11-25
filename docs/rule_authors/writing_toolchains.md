@@ -3,6 +3,8 @@ id: writing_toolchains
 title: Writing Toolchains
 ---
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 Toolchains are regular rules that:
 
 - Have `is_toolchain_rule = True` passed to the `rule` call.
@@ -52,6 +54,7 @@ in C++23, with warnings as errors and optimizations enabled:
 
 ```python
 load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
 
 system_cxx_toolchain(
     name = "cxx",
@@ -63,6 +66,11 @@ system_cxx_toolchain(
         "-Werror",
         "-O3",
     ],
+    visibility = ["PUBLIC"],
+)
+
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
     visibility = ["PUBLIC"],
 )
 ```
@@ -127,20 +135,29 @@ foo_toolchain = rule(
 )
 ```
 
-This toolchain can then be instantiated in `toolchains//TARGETS`:
+With the rule in `foo/defs.bzl`, this toolchain can then be instantiated in
+`toolchains//BUCK`. Labels in that file are relative to the `toolchains` cell,
+so the rule and the tools are named with their own cell, which is `root` in a
+project made with `buck2 init`:
 
 ```python
+load("@root//foo:defs.bzl", "foo_toolchain")
+
 foo_toolchain(
     name = "foo",
-    compiler = "//tools:foo_compiler",
-    linter = "//tools:foo_linter",
+    compiler = "root//tools:foo_compiler",
+    linter = "root//tools:foo_linter",
     compiler_flags = ["-O2", "-Wall"],
     visibility = ["PUBLIC"],
 )
 ```
 
+<FbInternalOnly>
+
 A working example of this pattern can be found in
 `tests/targets/toolchain_deps/` in the Buck2 repository.
+
+</FbInternalOnly>
 
 The [Accessing a toolchain in a build rule
 implementation](#accessing-a-toolchain-in-a-build-rule-implementation) section

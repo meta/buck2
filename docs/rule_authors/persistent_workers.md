@@ -3,6 +3,9 @@ id: persistent_workers
 title: Persistent Workers
 ---
 
+import { FbInternalOnly, OssOnly } from
+'docusaurus-plugin-internaldocs-fb/internal';
+
 Persistent workers are long-lived processes that Buck2 spawns once and reuses
 across multiple build actions, avoiding the overhead of repeatedly starting
 heavy processes like compilers. This is particularly useful for JVM-based tools
@@ -179,6 +182,24 @@ For remote workers, command-line arguments must be passed via an argument file
 
 ## Configuration
 
+<FbInternalOnly>
+
 Workers can be enabled or disabled at the execution platform level via the
 `use_persistent_workers` attribute on `CommandExecutorConfig`, or globally via
 the `build.use_persistent_workers` buckconfig (defaults to `True`).
+
+</FbInternalOnly>
+
+<OssOnly>
+
+Workers are enabled at the execution platform level via the
+`use_persistent_workers` attribute on `CommandExecutorConfig`, which defaults to
+`False`. The execution platform that `buck2 init` configures,
+`prelude//platforms:default`, does not set it, so there every action runs the
+fallback `exe` of its `WorkerRunInfo`. To use workers, define an execution
+platform that sets `use_persistent_workers = True`, as `platforms/BUCK` does in
+[examples/persistent_worker](https://github.com/meta/buck2/tree/main/examples/persistent_worker).
+A project that configures no execution platforms at all, such as one made with
+`buck2 init --no-prelude`, runs its actions with workers enabled.
+
+</OssOnly>

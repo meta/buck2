@@ -4,7 +4,8 @@ title: load()
 ---
 
 The `load()` function is used to include definitions (functions, macros, rules,
-and constants) from another `.bzl` file.
+and constants) from another `.bzl` file. It can also load data from `.json` and
+`.toml` files: see [Loading Data in Starlark](../users/loading_data.md).
 
 In Buck2, `load()` executes a `.bzl` file and imports the specified symbols into
 the current file's namespace. This allows you to share code across multiple
@@ -99,13 +100,16 @@ If `//build_defs:macros.bzl` contains:
 
 ```python
 def custom_library(name, srcs, **kwargs):
-    cxx_library(
+    native.cxx_library(
         name = name,
         srcs = srcs,
         compiler_flags = ["-std=c++17"],
         **kwargs
     )
 ```
+
+Prelude rules such as `cxx_library` are globals only in build files. In a `.bzl`
+file, call them as `native.<rule>(...)`.
 
 You can load and use the macro:
 
@@ -158,10 +162,8 @@ load(
 
 ### Visibility
 
-- `.bzl` files are automatically visible to any target that can see the package
-  they're in
-- Use [package visibility](./package.md) to control access to `.bzl` files
-- Keep `load()` statements at the top of files for clarity
+- `load()` is not subject to `visibility`: any file can load any `.bzl` file it
+  can name
 
 ### Performance
 

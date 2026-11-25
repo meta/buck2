@@ -13,12 +13,12 @@ Test execution in Buck2 is a collaboration with a separate test runner process.
 In its open-source build, Buck2 ships with a built-in simplistic test runner.
 
 This test runner receives the commands defined by `ExternalRunnerTestInfo` and
-simply executes them. Exit code zero means the test passed, and one means it
-failed.
+simply executes them. Exit code zero means the test passed, and any other exit
+code means it failed.
 
 Users can of course develop their own test runners. Look at
-`fbcode/buck2/app/buck2_test_runner` as a sample. For comparison, here's how
-it's used at Meta:
+[`app/buck2_test_runner`](https://github.com/meta/buck2/tree/main/app/buck2_test_runner)
+as a sample. For comparison, here's how it's used at Meta:
 
 </OssOnly>
 
@@ -149,7 +149,7 @@ opaque handles, and simple string arguments are passed as-is to the test runner.
 This means that the test runner would see the command described above as:
 
 ```python
-[ArgHandle(index = 0), Verbatim("foobar")]
+[ArgHandle(index = 0), Verbatim("run-tests")]
 ```
 
 When requesting execution from Buck2, the test runner can use the `ArgHandle`

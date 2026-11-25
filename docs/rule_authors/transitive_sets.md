@@ -42,7 +42,7 @@ defines how to turn individual values found in the set into command line
 arguments.
 
 To define a projection, you write a function that takes a value of your set and
-returns a command-line like object (`cmd_args`, `string`, `attr.arg()`
+returns a command-line like object (`cmd_args`, `string`, `attrs.arg()`
 attributes, `artifact`, and so on) or a list of them in whichever way makes
 sense for your use case.
 
@@ -199,7 +199,7 @@ Transitive set iteration uses a pre-order traversal by default, and ignores
 nodes that have already been visited. This order is reflected in projections as
 well.
 
-A few different traversal orders are supported with the `ordering` attribute:
+A few different traversal orders are supported with the `ordering` parameter:
 
 | Ordering             | Description                                                                                                                                                                                                                                                    |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

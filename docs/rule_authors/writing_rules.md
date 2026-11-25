@@ -3,13 +3,15 @@ id: writing_rules
 title: Writing Rules
 ---
 
-import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+import { FbInternalOnly, OssOnly } from
+'docusaurus-plugin-internaldocs-fb/internal';
 
-This page describes how to write rules for Buck2 and explains the flow for
-implementing rules that are already defined in Buck1.
+This page describes how to write rules for Buck2.
 
 For a list of the API functions available, see the
 [Build APIs](../../api/build).
+
+<FbInternalOnly>
 
 :::note
 
@@ -20,34 +22,57 @@ Buck1 and should be written in the same way.
 
 :::
 
+</FbInternalOnly>
+
 ## Workflow by example
 
 The built-in Buck2 rules are stored in the `prelude` folder in the buck2 repo.
-To add a rule for a language, say `pascal`:
+Your own rules live in `.bzl` files in your project. To add a rule for a
+language, say `pascal`, to a project made with `buck2 init`:
 
-1. Look at
-   [prelude/decls](https://github.com/facebook/buck2/blob/main/prelude/decls/)
-   to see the attributes that are supported in Buck1 and are mirrored into
-   Buck2. If `pascal` was an existing rule, you would see what attributes it
-   takes (often it will be `pascal_library` and `pascal_binary`).
-
-2. Create a file `pascal.bzl` that will contain your rule implementations. The
-   details are explained later, but a dummy rule looks like the following:
+1. Create a file `pascal/defs.bzl` that will contain your rule implementations.
+   The details are explained later, but a dummy rule looks like the following:
 
    ```python
    def pascal_binary_impl(_ctx: AnalysisContext) -> list[Provider]:
        return [DefaultInfo()]
+
+   pascal_binary = rule(impl = pascal_binary_impl, attrs = {})
    ```
 
-3. Create a directory in `fbcode/buck2/tests/targets/rules/pascal` with
+2. Create `pascal/BUCK`, which loads the rule and declares a target, and add
+   whatever source files and test targets you need to test your project:
+
+   ```python
+   load(":defs.bzl", "pascal_binary")
+
+   pascal_binary(name = "my_binary")
+   ```
+
+3. Test your code with `buck2 build //pascal:`. It should succeed with no
+   actual output produced.
+
+4. Now implement the rules (see the rest of this page).
+
+<FbInternalOnly>
+
+To implement a rule that is already defined in Buck1:
+
+1. Look at
+   [prelude/decls](https://github.com/meta/buck2/blob/main/prelude/decls/)
+   to see the attributes that are supported in Buck1 and are mirrored into
+   Buck2. If `pascal` was an existing rule, you would see what attributes it
+   takes (often it will be `pascal_library` and `pascal_binary`).
+
+2. Create a directory in `fbcode/buck2/tests/targets/rules/pascal` with
    `TARGETS` and whatever source files and test targets you need to test your
    project. Note, Apple tests are currently located at
    `xplat/buck2/tests/apple/...`.
 
-4. Test your code with `buck2 build fbcode//buck2/tests/targets/rules/pascal:`.
+3. Test your code with `buck2 build fbcode//buck2/tests/targets/rules/pascal:`.
    They should succeed with no actual output produced.
 
-5. Now implement the rules (see the rest of this page).
+</FbInternalOnly>
 
 :::note
 
@@ -56,6 +81,8 @@ you don't want to set up Buck2 for local development, test it in CI).
 <FbInternalOnly>If you do set it up locally, see the `README.md` in the root of
 `fbcode/buck2`. `buck2 starlark lint <files>` will confirm your Starlark code is
 warning free.</FbInternalOnly>
+<OssOnly>`buck2 starlark lint <files>` confirms that your Starlark code is
+warning free.</OssOnly>
 
 :::
 
@@ -68,16 +95,18 @@ For example, given:
 
 ```python
 def pascal_binary_impl(ctx: AnalysisContext) -> list[Provider]:
-    ...
     binary = ctx.actions.declare_output(ctx.attrs.out)
-    ctx.actions.run(["pascalc", ctx.attrs.srcs, "-o", binary.as_output()])
+    ctx.actions.run(
+        ["pascalc", ctx.attrs.srcs, "-o", binary.as_output()],
+        category = "pascal_compile",
+    )
     return [
         DefaultInfo(default_output = binary),
     ]
 
 pascal_binary = rule(impl = pascal_binary_impl, attrs = {
-  "out": attrs.string(),
-  ...
+    "out": attrs.string(),
+    "srcs": attrs.list(attrs.source()),
 })
 ```
 
@@ -85,14 +114,13 @@ In the above snippet:
 
 - **Rule** is `pascal_binary`, which is implemented by `pascal_binary_impl`. The
   rule says how to build things.
-- **Target** will be something like
-  `fbcode//buck2/tests/targets/rules/pascal:my_binary`. The rule implementation
-  `pascal_binary_impl` will be called once per target.
+- **Target** will be something like `//pascal:my_binary`. The rule
+  implementation `pascal_binary_impl` will be called once per target.
 - **Attributes** are the fields on the target (for example, you might have
   `out`, which can be accessed via `ctx.attrs.out`).
 - **Actions** are declared by the rule with things like `ctx.actions.run`, which
-  takes a command line. Note that the actions are not run by the rule, but
-  declared, so that Buck2 can run them later.
+  takes a command line and a `category`. Note that the actions are not run by
+  the rule, but declared, so that Buck2 can run them later.
 - **Artifacts** represent files on disk, which could be source or build outputs
   (`binary` in the above example).
   - For build outputs, the artifact is produced by an action, and the existence
@@ -171,17 +199,18 @@ document in GitHub) and the `flatten/dedupe` functions, defining it as:
 ```python
 PascalLibraryInfo = provider(fields=["links"]) # a list of LinkData
 
-LinkData = record(name = str, object = "artifact")
+LinkData = record(name = str, object = Artifact)
 ```
 
-And then consuming it:
+And then consuming it (`dedupe` is a global, `flatten` is loaded with
+`load("@prelude//utils:utils.bzl", "flatten")`):
 
 ```python
 my_links = dedupe(flatten([x[PascalLibraryInfo].links for x in ctx.attrs.deps]))
 my_info = PascalLibraryInfo(links = my_links)
 ```
 
-However, this `flatten`/`dupe` pattern can get expensive, especially when you
+However, this `flatten`/`dedupe` pattern can get expensive, especially when you
 have a deep dependency graph. To fix that it's recommended to use
 [transitive sets](transitive_sets.md).
 
@@ -206,8 +235,12 @@ cmd.add("another-arg")
 cmd.add(ctx.attrs.src) # An input artifact
 out = ctx.actions.declare_output("an output")
 cmd.add(out.as_output())
-ctx.actions.run(cmd)
+ctx.actions.run(cmd, category = "example")
 ```
+
+The `category` is required. It is a snake case name for the kind of action,
+shown in the console and in `buck2 log what-ran`. A target that runs several
+actions of the same category must also give each one a distinct `identifier`.
 
 The action `declare_output` creates a new artifact which is not bound to
 anything. You can call `.as_output()` on it when adding it to a command line to
@@ -224,7 +257,7 @@ As another example:
 
 ```python
 cmd = cmd_args(["cp", input, output.as_output()])
-ctx.actions.run(cmd)
+ctx.actions.run(cmd, category = "copy")
 ```
 
 A command provides both a string (what to write when used) and a list of
@@ -233,9 +266,12 @@ the artifacts that are used correspond to those on the command line. But imagine
 the rule is changed to write the command to a shell script first:
 
 ```python
-sh = ctx.actions.write("test.sh", ["cp", input, output])
+sh = ctx.actions.write(
+    "test.sh",
+    cmd_args(["cp", input, output.as_output()], delimiter = " ", quote = "shell"),
+)
 cmd = cmd_args(["sh",sh],hidden=[input, output.as_output()])
-ctx.actions.run(cmd)
+ctx.actions.run(cmd, category = "copy")
 ```
 
 The command has been written to a shell script, which is now run. Beforehand,
@@ -257,22 +293,33 @@ isolation, outside of Buck2.
 ## Debugging
 
 The functions `fail`, `print` and `pprint` are your friends. To get started, a
-`buck2 build fbcode//buck2/tests/targets/rules/pascal:` builds everything or
-`buck2 run fbcode//buck2/tests/targets/rules/pascal:my_binary` runs a specific
-binary that returns a `RunInfo`.
+`buck2 build //pascal:` builds everything or `buck2 run //pascal:my_binary`
+runs a specific binary that returns a `RunInfo`.
 
 ## Testing Rules
 
 A common way to test is to use `genrule` to cause the produced binary to run and
-assert some properties from it. If your rule is in Buck1 and Buck2, use a
-`TARGETS` file so you can test with both. If your tests are incompatible with
-Buck1 (such as if it is a new rule), use `TARGETS.v2`, which will only be seen
-by Buck2 and won't cause errors with Buck1.
+assert some properties from it. <FbInternalOnly>If your rule is in Buck1 and
+Buck2, use a `TARGETS` file so you can test with both. If your tests are
+incompatible with Buck1 (such as if it is a new rule), use `TARGETS.v2`, which
+will only be seen by Buck2 and won't cause errors with
+Buck1.</FbInternalOnly>
 
 ## New rules
 
+<FbInternalOnly>
+
 If your rule is **not** already in Buck1, then you can define it wherever you
 like, with a preference for it not being in `fbcode/buck2/prelude`.
+
+</FbInternalOnly>
+
+<OssOnly>
+
+You can define your rule wherever you like in your project. It does not have to
+be in the `prelude`.
+
+</OssOnly>
 
 The only advantage of the `prelude` is that rules can be used without a
 corresponding `load`, which is generally considered a misfeature. The attributes

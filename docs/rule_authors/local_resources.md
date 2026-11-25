@@ -3,6 +3,8 @@ id: local_resources
 title: Local Resources For Tests Execution
 ---
 
+import { OssOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 Executing a test might require an external resource which is expensive to
 create. For example running an iOS UI test requires an iOS simulator and it
 takes relatively long time to setup it prior to test execution. When tests are
@@ -52,6 +54,39 @@ JSON keys:
 
 ## Test Execution
 
+For a general context on how tests are executed, see
+[Test Execution](test_execution.md).
+
+A decision whether certain local resource is required for specific test is made
+by a test runner. List of required resources is then passed to Buck2 in
+`required_local_resources` field of `ExecuteRequest2` test API protobuf message.
+
+A rule can also request a resource itself, by passing
+`required_local_resources = [RequiredTestLocalResource("ios_simulator")]` to
+`ExternalRunnerTestInfo`. <OssOnly>The test runner that is built into
+open-source Buck2 does not request resources, so there this is the only way to
+request one.</OssOnly>
+
+If resource is required for a certain test execution and test could potentially
+be executed locally, `local_resources` field in test's `ExternalRunnerTestInfo`
+provider is used to select appropriate `LocalResourceInfo` provider.
+
+`ExternalRunnerTestInfo.local_resources` is a key-value mapping
+`{str: ["label", None]}`. Keys represent resource types that match the values
+passed from the test runner, and values are labels that should point to a target
+exposing the `LocalResourceInfo` provider to be used for the initialization of
+the resource of that type. If the value is `None`, it indicates that a resource
+of that type will not be provided, even if the test runner requests it.
+
+Before running a test, `setup` command from selected provider is executed and
+its output is used to create a pool of resource instances. This pool is shared
+across all tests pointing to the same configured target label containing
+`LocalResourceInfo` provider (normally that means pool is shared for tests
+requiring same resource type). A resource is acquired (with potential queuing)
+from that pool prior single test is executed and is returned back to the pool
+when test finished execution. After `buck2 test` command is finished, cleanup is
+performed when SIGTERM is sent to each process holding a pool of resources.
+
 ### Cleanup registration protocol (Linux, opt in)
 
 `[buck2] local_resource_cleanup_registration = true` enables a local ownership
@@ -96,33 +131,6 @@ Channel ownership cannot recover unknown backend allocation IDs or survive hard
 loss of the cleanup process, enclosing cgroup or host. Providers remain responsible
 for reporting their backend cleanup/retry limits.
 
-For a general context on how tests are executed, see
-[Test Execution](test_execution.md).
-
-A decision whether certain local resource is required for specific test is made
-by a test runner. List of required resources is then passed to Buck2 in
-`required_local_resources` field of `ExecuteRequest2` test API protobuf message.
-
-If resource is required for a certain test execution and test could potentially
-be executed locally, `local_resources` field in test's `ExternalRunnerTestInfo`
-provider is used to select appropriate `LocalResourceInfo` provider.
-
-`ExternalRunnerTestInfo.local_resources` is a key-value mapping
-`{str: ["label", None]}`. Keys represent resource types that match the values
-passed from the test runner, and values are labels that should point to a target
-exposing the `LocalResourceInfo` provider to be used for the initialization of
-the resource of that type. If the value is `None`, it indicates that a resource
-of that type will not be provided, even if the test runner requests it.
-
-Before running a test, `setup` command from selected provider is executed and
-its output is used to create a pool of resource instances. This pool is shared
-across all tests pointing to the same configured target label containing
-`LocalResourceInfo` provider (normally that means pool is shared for tests
-requiring same resource type). A resource is acquired (with potential queuing)
-from that pool prior single test is executed and is returned back to the pool
-when test finished execution. After `buck2 test` command is finished, cleanup is
-performed when SIGTERM is sent to each process holding a pool of resources.
-
 ## Example Usage
 
 Define a target which has `LocalResourceInfo` provider:
@@ -139,7 +147,7 @@ where `broker` points to a runnable handling actual simulators.
 Implementation of `simulator` rule would be:
 
 ```python
-def _impl(ctx: AnalysisContext) -> ["provider"]:
+def _impl(ctx: AnalysisContext) -> list[Provider]:
   return [
     DefaultInfo(),
     LocalResourceInfo(
@@ -176,24 +184,32 @@ apple_test = rule(
     impl = apple_test_impl,
     attrs = {
         ...
-        "_ios_simulator": attrs.default_only(attrs.dep(default = ":my_resource", providers = [LocalResourceInfo])),
+        "_ios_simulator": attrs.default_only(attrs.dep(default = "//path/to:my_resource", providers = [LocalResourceInfo])),
         ...
     },
 )
 ```
 
-Actually map "ios_simulator" resource type to `:broker` target containing
+Actually map "ios_simulator" resource type to `:my_resource` target containing
 `LocalResourceInfo` provider:
 
 ```python
-def apple_test_impl(ctx: AnalysisContext) -> ["provider"]:
+def apple_test_impl(ctx: AnalysisContext) -> list[Provider]:
     ...
     return [
         ...
         ExternalRunnerTestInfo(
             ...
             local_resources = {
-                "ios_simulator": ctx.attrs._ios_simulator,
+                "ios_simulator": ctx.attrs._ios_simulator.label,
             },
             ...
 ```
+
+<OssOnly>
+
+With the test runner that is built into open-source Buck2, the rule also passes
+`required_local_resources = [RequiredTestLocalResource("ios_simulator")]` to
+`ExternalRunnerTestInfo`, because that runner does not ask for the resource.
+
+</OssOnly>

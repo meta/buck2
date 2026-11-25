@@ -17,11 +17,13 @@ creating build targets. Such functions are called _macros_.
 ## How to define a macro {#defining}
 
 We require that you define and maintain your macros in files that are external
-to your build files. These files must have an extension; we recommend that you
-use the extension, `.bzl`.
+to your build files. These files must have the extension `.bzl`.
 
 To make your macros accessible to a build file, import them using the `load()`
 function.
+
+Prelude rules such as `java_library` are globals only in build files. In a
+`.bzl` file, call them as `native.<rule>(...)`.
 
 In the following example, the macro `java_library_using_guava`, defined in the
 file `java_macros.bzl`, invokes a macro named `java_library` that depends on the
@@ -36,7 +38,7 @@ def java_library_using_guava(
     resources=[],
     deps=[],
     visibility=[]):
-  java_library(
+  native.java_library(
     name = name,
     srcs = srcs,
     resources = resources,
@@ -100,7 +102,7 @@ def create_apks(
     else:
       keystore = release_keystore
 
-    android_binary(
+    native.android_binary(
       # Note how we must parameterize the name of the
       # target so that we avoid creating two build
       # targets with the same name.
@@ -147,20 +149,19 @@ Note, though, that in this scenario, the following is **NOT** a target:
 //apps/messenger:messenger              # MACRO, NOT A TARGET
 ```
 
-Therefore, the following commands do not work, which could be confusing for
+Therefore, the following command does not work, which could be confusing for
 developers who don't realize that `messenger` is a macro rather than a target.
 
 ```
-buck build //apps/messenger:messenger    # FAILS
-buck targets --type create_apks          # FAILS
+buck2 build //apps/messenger:messenger    # FAILS
 ```
 
 ## How to view expanded macros {#viewing}
 
-Use `buck targets` to view the resulting targets after expanding all macros. The
-following invocation of `buck targets` show the resulting targets from the
-preceding example, but not the macro that created them.
+Use `buck2 targets` to view the resulting targets after expanding all macros.
+The following invocation of `buck2 targets` shows the resulting targets from
+the preceding example, but not the macro that created them.
 
 ```
-buck targets fbsource//fbandroid/apps/messenger/...
+buck2 targets //apps/messenger/...
 ```

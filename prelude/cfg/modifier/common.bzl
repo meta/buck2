@@ -7,6 +7,7 @@
 # above-listed licenses.
 
 load("@prelude//:asserts.bzl", "asserts")
+load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//utils:graph_utils.bzl", "post_order_traversal")
 load(":asserts.bzl", "verify_normalized_modifier")
 load(":name.bzl", "cfg_name")
@@ -242,6 +243,8 @@ def _json_to_location(j: dict[str, str]) -> ModifierLocation:
         return ModifierTargetLocation()
     fail("Internal error: cannot deserialize location `{}`".format(j))
 
+_ALIASES_LOCATION = "buck2/cfg/experimental/alias.bzl" if is_full_meta_repo() else "the `aliases` of the `set_cfg_constructor` call in the root `PACKAGE` file"
+
 def resolve_alias(modifier: Modifier, aliases: struct) -> list[Modifier]:
     if isinstance(modifier, ModifiersMatchInfo):
         fail("It should not be possible to specify a conditional modifier from command line")
@@ -251,7 +254,7 @@ def resolve_alias(modifier: Modifier, aliases: struct) -> list[Modifier]:
     resolved = getattr(aliases, modifier, None)
     if resolved:
         return resolved if isinstance(resolved, list) else [resolved]
-    fail("Found invalid modifier alias `{}`. A list of valid modifier aliases is in buck2/cfg/experimental/alias.bzl".format(modifier))
+    fail("Found invalid modifier alias `{}`. A list of valid modifier aliases is in {}".format(modifier, _ALIASES_LOCATION))
 
 def _get_constraint_setting_deps(modifier_info: ModifierInfo) -> list[TargetLabel]:
     deps = []

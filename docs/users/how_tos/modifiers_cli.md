@@ -40,5 +40,5 @@ pattern followed by the modifiers delimited by `+` (see
 buck2 build ':my_target?release+asan'
 ```
 
-Command-line modifiers have no effect until
+Command-line modifiers are an error until
 [modifiers have been set up](./modifiers_setup.md).

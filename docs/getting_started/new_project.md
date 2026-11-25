@@ -221,7 +221,7 @@ in the Buck2 repository.
 [Modifiers](../concepts/modifiers.md) are how a build is switched between
 variants such as debug and release: `buck2 build //app:server -m release`. They
 are off until the project enables them in a `PACKAGE` file in its root, and
-until then Buck2 accepts modifiers and ignores them.
+until then a modifier on the command line is an error.
 [Set up configuration modifiers](../users/how_tos/modifiers_setup.md) has the
 file, and goes on from there to a working `-m release`.
 

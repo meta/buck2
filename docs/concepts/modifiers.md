@@ -81,9 +81,10 @@ implements what this page describes.
 
 :::caution
 
-In a project that has not called `set_cfg_constructor`, modifiers are ignored.
-`-m release` and a `modifiers` attribute are accepted, and the target is built
-in its default configuration.
+In a project that has not called `set_cfg_constructor`, modifiers do not apply.
+A modifier on the command line is an error. A `modifiers` attribute and the
+modifiers of a `PACKAGE` file are ignored, and the target is built in its
+default configuration.
 
 :::
 

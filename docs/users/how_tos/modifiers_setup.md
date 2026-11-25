@@ -7,7 +7,8 @@ import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
 
 A project has to enable
 [configuration modifiers](../../concepts/modifiers.md) before it can use them.
-Until it does, Buck2 accepts modifiers and ignores them.
+Until it does, a modifier on the command line is an error, and Buck2 ignores
+the ones in `PACKAGE` files and on targets.
 
 <FbInternalOnly>
 

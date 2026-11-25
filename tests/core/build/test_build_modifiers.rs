@@ -372,6 +372,25 @@ async fn test_build_fails_with_pattern_modifier_and_target_universe_modifier(buc
 }
 
 #[buck_test]
+async fn test_build_fails_with_cli_modifiers_and_no_cfg_constructor(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    // The fixture's `PACKAGE` file registers the cfg constructor.
+    std::fs::write(buck.cwd().join("PACKAGE"), "")?;
+
+    for args in [
+        &["root//:dummy?root//:macos"][..],
+        &["--modifier", "root//:macos", "root//:dummy"],
+    ] {
+        buck.build(args)
+            .await
+            .expect_failure()
+            .assert_stderr_matches(r"this project does not enable modifiers");
+    }
+    Ok(())
+}
+
+#[buck_test]
 async fn test_build_modifiers_output_single_modifier(buck: &Buck) -> anyhow::Result<()> {
     let result = run_all_output_flags(buck, &["root//:dummy?root//:macos"]).await?;
 

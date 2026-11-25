@@ -47,6 +47,13 @@ enum CalculationCfgConstructorError {
          Use the first-class `modifiers` attribute instead."
     )]
     MetadataModifiersNotSupported(TargetLabel),
+    #[error(
+        "Modifiers were given (`{}`), but this project does not enable modifiers: the `PACKAGE` \
+         file in its root has to call `set_cfg_constructor`. See \
+         https://buck2.build/docs/users/how_tos/modifiers_setup/",
+        .0.join("`, `")
+    )]
+    ModifiersWithoutCfgConstructor(Vec<String>),
 }
 
 pub struct CfgConstructorCalculationInstance;
@@ -165,8 +172,19 @@ impl CfgConstructorCalculationImpl for CfgConstructorCalculationInstance {
         }
 
         let Some(cfg_constructor) = get_cfg_constructor(ctx).await? else {
-            // To facilitate rollout of modifiers, return original configuration if
-            // no cfg constructors are available.
+            // The modifiers of a `PACKAGE` file or a target can come from code that is shared
+            // with projects that do enable modifiers, so only the ones that the command or a
+            // BXL script asked for are an error.
+            if let CfgConstructorModifiers::TargetPlatform(requested) = &modifiers
+                && !requested.is_empty()
+            {
+                return Err(
+                    CalculationCfgConstructorError::ModifiersWithoutCfgConstructor(
+                        requested.to_vec(),
+                    )
+                    .into(),
+                );
+            }
             return Ok(cfg);
         };
         let modifier_key = cfg_constructor.key();

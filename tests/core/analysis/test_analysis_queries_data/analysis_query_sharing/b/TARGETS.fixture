@@ -1,0 +1,5 @@
+load("//:defs.bzl", "labelled", "query")
+
+labelled(name = "foo", labels = ["yes"])
+
+query(name = "q", arg = "$(query_targets attrfilter(labels, yes, deps(:foo)))")

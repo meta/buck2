@@ -61,9 +61,11 @@ use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
 use dice::ValueSerialize;
 use dupe::Dupe;
 use dupe::IterDupedExt;
+use dupe::ResultDupedErrExt;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use pagable::Pagable;
@@ -137,6 +139,80 @@ impl RuleAnalysisCalculationImpl for RuleAnalysisCalculationInstance {
     }
 }
 
+/// One query macro's evaluation, shared by every target that carries the same
+/// query over the same literals.
+///
+/// It stores labels and looks their nodes up in `compute`, so that DICE tracks
+/// the nodes.
+#[derive(
+    Clone,
+    Dupe,
+    derive_more::Display,
+    Debug,
+    Eq,
+    Hash,
+    PartialEq,
+    Allocative,
+    Pagable
+)]
+#[display("analysis_query({}{})", query, configuration(literals))]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct AnalysisQueryKey {
+    query: Arc<str>,
+    /// `(literal text, configured label)` pairs, sorted and without repeats,
+    /// so equal literal sets make equal keys.
+    literals: Arc<Vec<(String, ConfiguredTargetLabel)>>,
+}
+
+/// The `, <configuration>` part of a key's display. A target's query literals
+/// share one configuration, which is what tells apart two keys with the same
+/// query text. Empty for a query without literals.
+fn configuration(literals: &[(String, ConfiguredTargetLabel)]) -> String {
+    match literals.first() {
+        Some((_, label)) => format!(", {}", label.cfg()),
+        None => String::new(),
+    }
+}
+
+#[async_trait]
+impl Key for AnalysisQueryKey {
+    type Value = buck2_error::Result<Arc<[ConfiguredTargetLabel]>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let nodes = ctx
+            .try_compute_join(self.literals.iter(), async |ctx, (literal, label)| {
+                let node = ctx
+                    .get_configured_target_node(label)
+                    .await
+                    .require_compatible()?;
+                buck2_error::Ok((literal.clone(), node.dupe()))
+            })
+            .await?;
+        let resolved_literals: BuckMutMap<String, ConfiguredTargetNode> =
+            nodes.into_iter().collect();
+        let targets = (EVAL_ANALYSIS_QUERY.get()?)(ctx, &self.query, resolved_literals).await?;
+        Ok(targets.iter().map(|node| node.label().dupe()).collect())
+    }
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::AlwaysUnequal
+    }
+
+    /// A read that failed may work when it is tried again, so errors are not
+    /// kept in the graph.
+    fn validity(value: &Self::Value) -> bool {
+        value.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
+    }
+}
+
 pub async fn resolve_queries(
     ctx: &mut DiceComputations<'_>,
     configured_node: ConfiguredTargetNodeRef<'_>,
@@ -165,32 +241,34 @@ async fn resolve_queries_impl(
     let deps: TargetSet<_> = configured_node.deps().iter().duped().collect();
     let queries: Vec<_> = queries.into_iter().collect();
     let query_results = ctx
-        .try_compute_join(
+        .compute_join(
             queries,
             async |ctx,
                    (query, resolved_literals_labels): (
                 String,
                 ResolvedQueryLiterals<ConfiguredProvidersLabel>,
             )| {
-                let mut resolved_literals = BuckMutMap::with_capacity_and_hasher(
-                    resolved_literals_labels.0.len(),
-                    Default::default(),
-                );
+                let mut literals = Vec::with_capacity(resolved_literals_labels.0.len());
                 for ((offset, len), label) in resolved_literals_labels.0 {
                     let literal = &query[offset..offset + len];
-                    let node = deps.get(label.target()).ok_or_else(|| {
+                    deps.get(label.target()).ok_or_else(|| {
                         internal_error!("Literal `{literal}` not found in `deps`")
                     })?;
-                    resolved_literals.insert(literal.to_owned(), node.dupe());
+                    literals.push((literal.to_owned(), label.target().dupe()));
                 }
+                literals.sort();
+                literals.dedup();
 
-                let result = (EVAL_ANALYSIS_QUERY.get()?)(ctx, &query, resolved_literals).await?;
+                let key = AnalysisQueryKey {
+                    query: Arc::from(query.as_str()),
+                    literals: Arc::new(literals),
+                };
+                let result = ctx.compute(&key).await?.as_ref().duped_err()?;
 
                 // analysis for all the deps in the query result should already have been run since they must
                 // be in our dependency graph, and so we don't worry about parallelizing these lookups.
                 let mut query_results = Vec::new();
-                for node in result.iter() {
-                    let label = node.label();
+                for label in result.iter() {
                     query_results.push((
                         label.dupe(),
                         ctx.get_analysis_result(label)
@@ -202,17 +280,21 @@ async fn resolve_queries_impl(
                 }
 
                 buck2_error::Ok((
-                    query.to_owned(),
+                    query,
                     Arc::new(AnalysisQueryResult {
                         result: query_results,
                     }),
                 ))
             },
         )
-        .await?;
+        .await;
 
-    let query_results: BuckMutMap<_, _> = query_results.into_iter().collect();
-    Ok(query_results)
+    // In the order of the queries: of two that fail, the first one's error is
+    // the one reported.
+    let query_results: Vec<_> = query_results
+        .into_iter()
+        .collect::<buck2_error::Result<_>>()?;
+    Ok(query_results.into_iter().collect())
 }
 
 pub async fn get_dep_analysis<'v>(

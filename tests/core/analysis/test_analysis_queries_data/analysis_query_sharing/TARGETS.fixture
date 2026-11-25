@@ -1,0 +1,9 @@
+constraint_setting(name = "choice")
+
+constraint_value(name = "one", constraint_setting = ":choice")
+
+config_setting(name = "is_one", constraint_values = [":one"], visibility = ["PUBLIC"])
+
+platform(name = "chosen", constraint_values = [":one"])
+
+platform(name = "other")

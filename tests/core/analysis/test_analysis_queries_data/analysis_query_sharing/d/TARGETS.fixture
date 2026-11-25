@@ -1,0 +1,12 @@
+load("//:defs.bzl", "labelled", "query")
+
+# `:foo` matches `q`'s query under `//:chosen` only.
+labelled(
+    name = "foo",
+    labels = select({
+        "//:is_one": ["yes"],
+        "DEFAULT": ["no"],
+    }),
+)
+
+query(name = "q", arg = "$(query_targets attrfilter(labels, yes, deps(:foo)))")

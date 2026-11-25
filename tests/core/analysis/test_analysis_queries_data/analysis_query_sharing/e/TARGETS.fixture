@@ -1,0 +1,17 @@
+load("//:defs.bzl", "labelled", "query")
+
+# The regex gives up on this label, and matches `MATCH`.
+labelled(name = "foo", labels = ["a" * 80 + "!"])
+
+query(name = "q", arg = "$(query_targets attrregexfilter(labels, '^MATCH$|^(a|aa)*(?>b)$', deps(:foo)))")
+query(name = "q2", arg = "$(query_targets attrregexfilter(labels, '^MATCH$|^(a|aa)*(?>b)$', deps(:foo)))")
+
+# Two failing queries in one attribute, in either order.
+query(
+    name = "regex_then_depth",
+    arg = "$(query_targets attrregexfilter(labels, '^MATCH$|^(a|aa)*(?>b)$', deps(:foo))) $(query_targets classpath(:foo, 2))",
+)
+query(
+    name = "depth_then_regex",
+    arg = "$(query_targets classpath(:foo, 2)) $(query_targets attrregexfilter(labels, '^MATCH$|^(a|aa)*(?>b)$', deps(:foo)))",
+)

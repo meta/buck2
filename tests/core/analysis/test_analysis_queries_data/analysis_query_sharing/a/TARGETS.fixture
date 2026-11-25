@@ -1,0 +1,12 @@
+load("//:defs.bzl", "labelled", "query")
+
+labelled(name = "foo", labels = ["no"], deps = ["//c:bar"])
+
+# `q` and `q2` carry the same query; `//b:q`'s `:foo` is another target.
+query(name = "q", arg = "$(query_targets attrfilter(labels, yes, deps(:foo)))")
+query(name = "q2", arg = "$(query_targets attrfilter(labels, yes, deps(:foo)))")
+
+# A query's targets come out in the order the query gives them.
+query(name = "ordered", arg = "$(query_targets set(//c:bar :foo))")
+query(name = "ordered2", arg = "$(query_targets set(//c:bar :foo))")
+query(name = "reversed", arg = "$(query_targets set(:foo //c:bar))")

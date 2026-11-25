@@ -29,54 +29,45 @@ def rewrite_dep_file(src_path, dst_path):
     # Escaped newlines are not meaningful so remove them.
     body = body.replace("\\\n", "")
 
-    # Now, recover targets. They are space separated, but we need to ignore
-    # spaces that are escaped.
-    pos = 0
-
+    # Now, recover targets. They are separated by whitespace, and clang and gcc
+    # escape the characters that make treats specially: a space as `\ ` (also
+    # doubling the backslashes in front of it), `#` as `\#` and `$` as `$$`.
+    # Any other backslash is part of the path.
     deps = []
-    current_parts = []
-
-    def push_slice(s):
-        if s:
-            current_parts.append(s)
-
-    def flush_current_dep():
-        if current_parts:
-            deps.append("".join(current_parts))
-            current_parts.clear()
-
-    while True:
-        next_pos = body.find(" ", pos)
-
-        # If we find the same character we started at, this means we started on
-        # a piece of whitespace. We know this cannot be escaped, because if we
-        # started here that means we stopped at the previous character, which
-        # means it must have been whitespace as well.
-        if next_pos == pos:
-            flush_current_dep()
+    current = []
+    pos = 0
+    while pos < len(body):
+        char = body[pos]
+        if char == "\\":
+            end = pos
+            while end < len(body) and body[end] == "\\":
+                end += 1
+            backslashes = end - pos
+            following = body[end : end + 1]
+            if following == " ":
+                current.append("\\" * (backslashes // 2))
+                if backslashes % 2 == 1:
+                    current.append(" ")
+                    end += 1
+            elif following == "#":
+                current.append("\\" * (backslashes - 1) + "#")
+                end += 1
+            else:
+                current.append("\\" * backslashes)
+            pos = end
+        elif char == "$" and body[pos + 1 : pos + 2] == "$":
+            current.append("$")
+            pos += 2
+        elif char.isspace():
+            if current:
+                deps.append("".join(current))
+                current = []
             pos += 1
-            continue
-
-        # No more whitespace, so this means that whatever is left from our
-        # current position to the end is the last dependency (assuming there is
-        # anything).
-        if next_pos < 0:
-            push_slice(body[pos:].rstrip("\n"))
-            break
-
-        # Check if this was escaped by looking at the previous character. If it
-        # was, then insert the part before the escape, and then push a space.
-        # If it wasn't, then we've reached the end of a dependency.
-        if next_pos > 0 and body[next_pos - 1] == "\\":
-            push_slice(body[pos : next_pos - 1])
-            push_slice(" ")
         else:
-            push_slice(body[pos:next_pos])
-            flush_current_dep()
-
-        pos = next_pos + 1
-
-    flush_current_dep()
+            current.append(char)
+            pos += 1
+    if current:
+        deps.append("".join(current))
 
     # Now that we've parsed deps, we need to normalize them.
     dep_file_utils.normalize_and_write_deps(deps, dst_path)

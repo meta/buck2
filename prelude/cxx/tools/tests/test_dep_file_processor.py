@@ -12,6 +12,7 @@ import os
 import tempfile
 import unittest
 
+from makefile_to_dep_file import rewrite_dep_file
 from show_headers_to_dep_file import parse_into_dep_file
 from show_includes_to_dep_file import rewrite_dep_file_for_msvc
 
@@ -64,3 +65,38 @@ class ShowIncludesTest(unittest.TestCase):
         )
 
         self.assertEqual(deps, ["h1.h", "h2.h", "a.cpp"])
+
+
+class MakefileTest(unittest.TestCase):
+    """`-MD` writes a make rule; clang and gcc escape a space as `\\ `, `#` as `\\#` and
+    `$` as `$$`."""
+
+    def _deps(self, makefile: str) -> list:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "in.d")
+            dep_file = os.path.join(temp_dir, "out.d")
+            with open(src, "w") as f:
+                f.write(makefile)
+            rewrite_dep_file(src, dep_file)
+            with open(dep_file) as f:
+                return f.read().splitlines()
+
+    def test_escaped_file_names(self) -> None:
+        # What clang 21 writes for `clang -c m.c -o m.o -MD -MF m.d` when `m.c` includes
+        # `"ha#sh.h"`, `"dol$lar.h"`, `"sp ace.h"`, `"pct%x.h"` and `"sub dir/n#s.h"`.
+        deps = self._deps(
+            "m.o: \\\n  m.c ha\\#sh.h dol$$lar.h sp\\ ace.h pct%x.h \\\n  sub\\ dir/n\\#s.h\n"
+        )
+
+        self.assertEqual(
+            deps,
+            ["m.c", "ha#sh.h", "dol$lar.h", "sp ace.h", "pct%x.h", "sub dir/n#s.h"],
+        )
+
+    def test_backslashes_before_escaped_characters(self) -> None:
+        # Make reads 2N+1 backslashes before a space as N backslashes and a space,
+        # and 2N backslashes as N backslashes and the end of the name. Before `#`,
+        # only one backslash is added. Backslashes then become `/`.
+        deps = self._deps("o: a\\\\\\ b.h c\\\\ d.h e\\\\#f.h\n")
+
+        self.assertEqual(deps, ["a/ b.h", "c/", "d.h", "e/#f.h"])

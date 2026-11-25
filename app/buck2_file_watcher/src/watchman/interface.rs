@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::path::Path;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -23,6 +24,7 @@ use buck2_core::rollout_percentage::RolloutPercentage;
 use buck2_error::internal_error;
 use buck2_events::dispatch::span_async;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_hash::BuckMutSet;
 use buck2_util::process::async_background_command;
 use dice::DiceTransactionUpdater;
 use dupe::Dupe;
@@ -30,6 +32,7 @@ use tracing::info;
 use watchman_client::expr::Expr;
 use watchman_client::prelude::Connector;
 use watchman_client::prelude::FileType;
+use watchman_client::prelude::ResolvedRoot;
 
 use crate::dep_files::DepFileCache;
 use crate::file_watcher::FileWatcher;
@@ -54,6 +57,11 @@ struct WatchmanQueryProcessor {
     dep_file_cache: Arc<dyn DepFileCache>,
     /// What the changes recorded on the updater are relative to.
     baseline: FileSystemBaseline,
+    /// Whether watchman watches the root through EdenFS. What it reports there is what EdenFS's
+    /// journal sums the changes of a path up to, which differs from its other watchers. For
+    /// one, a change of commit reports every directory between the root and a file it touches
+    /// as modified.
+    on_eden: bool,
 }
 
 /// Used in process_one_change
@@ -74,13 +82,20 @@ impl WatchmanQueryProcessor {
 
         let mut stats = FileWatcherStats::new(base_stats, events.len());
 
-        for ev in events {
+        // On EdenFS these are the directories above a commit change: see `on_eden`.
+        let may_be_new_dirs = if self.on_eden {
+            BuckMutSet::default()
+        } else {
+            modified_dirs_in_modified_dirs(&events)
+        };
+
+        for ev in &events {
             // If the path is invalid, then walk up all the way until you find a valid dir to
             // invalidate listings. We don't need to invalidate the file itself, as we can't
             // read invalid files.
 
             let (path, event) = match ProjectRelativePath::new(&ev.path) {
-                Ok(path) => (path, ChangeEvent::Watchman(&ev)),
+                Ok(path) => (path, ChangeEvent::Watchman(ev)),
                 Err(_) => {
                     // If we error out here then we might miss other changes. This seems like
                     // it shouldn't happen, since the empty path should always be a valid path.
@@ -97,7 +112,8 @@ impl WatchmanQueryProcessor {
                 }
             };
 
-            self.process_one_change(path, event, &mut handler, &mut stats)?;
+            let may_be_new_dir = may_be_new_dirs.contains(ev.path.as_path());
+            self.process_one_change(path, event, may_be_new_dir, &mut handler, &mut stats)?;
         }
 
         let stats = stats.finish();
@@ -111,6 +127,7 @@ impl WatchmanQueryProcessor {
         &self,
         path: &ProjectRelativePath,
         ev: ChangeEvent<'_>,
+        may_be_new_dir: bool,
         handler: &mut FileChangeTracker,
         stats: &mut FileWatcherStats,
     ) -> buck2_error::Result<()> {
@@ -155,6 +172,9 @@ impl WatchmanQueryProcessor {
                         log_kind = buck2_data::FileWatcherKind::Directory;
                         match typ {
                             WatchmanEventType::Modify => {
+                                if may_be_new_dir {
+                                    handler.dir_added_or_removed(path);
+                                }
                                 handler.dir_entries_changed_for_watchman_bug(path);
                                 log_event = buck2_data::FileWatcherEventType::Modify;
                             }
@@ -201,6 +221,28 @@ impl WatchmanQueryProcessor {
     }
 }
 
+/// The directories among `events` that watchman reports as modified in a directory it reports as
+/// modified too. One of these may be new at its path: watchman reports a path with what it is
+/// now, so a file that became a directory is a modified directory, in a directory that has an
+/// entry changed.
+fn modified_dirs_in_modified_dirs(events: &[WatchmanEvent]) -> BuckMutSet<&Path> {
+    let modified: BuckMutSet<&Path> = events
+        .iter()
+        .filter(|ev| {
+            matches!(
+                (&ev.kind, &ev.event),
+                (WatchmanKind::Directory, WatchmanEventType::Modify)
+            )
+        })
+        .map(|ev| ev.path.as_path())
+        .collect();
+    modified
+        .iter()
+        .copied()
+        .filter(|dir| dir.parent().is_some_and(|dir| modified.contains(dir)))
+        .collect()
+}
+
 struct RevisionDetails {
     global_rev: u64,
     timestamp: u64,
@@ -239,6 +281,10 @@ async fn try_fetch_revision_details(hash: &str) -> Option<RevisionDetails> {
 impl SyncableQueryProcessor for WatchmanQueryProcessor {
     type Output = buck2_data::FileWatcherStats;
     type Payload = DiceTransactionUpdater;
+
+    fn on_connect(&mut self, root: &ResolvedRoot) {
+        self.on_eden = root.watcher() == "eden";
+    }
 
     async fn process_events(
         &mut self,
@@ -404,6 +450,7 @@ impl WatchmanFileWatcher {
                 last_mergebase_timestamp: None,
                 dep_file_cache,
                 baseline: FileSystemBaseline::unique(),
+                on_eden: false,
             }),
             watchman_merge_base,
             empty_on_fresh_instance,
@@ -437,5 +484,70 @@ impl FileWatcher for WatchmanFileWatcher {
             },
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn event(event: WatchmanEventType, kind: WatchmanKind, path: &str) -> WatchmanEvent {
+        WatchmanEvent {
+            kind,
+            event,
+            path: PathBuf::from(path),
+        }
+    }
+
+    fn modified_dir(path: &str) -> WatchmanEvent {
+        event(WatchmanEventType::Modify, WatchmanKind::Directory, path)
+    }
+
+    fn paths(dirs: BuckMutSet<&Path>) -> Vec<&Path> {
+        let mut dirs: Vec<_> = dirs.into_iter().collect();
+        dirs.sort();
+        dirs
+    }
+
+    /// What watchman reports for `rm d/entry; mkdir d/entry; touch d/entry/inside`.
+    #[test]
+    fn a_file_that_became_a_directory_is_a_modified_directory_in_a_modified_directory() {
+        let events = [
+            modified_dir("d"),
+            modified_dir("d/entry"),
+            event(
+                WatchmanEventType::Create,
+                WatchmanKind::File,
+                "d/entry/inside",
+            ),
+        ];
+        assert_eq!(
+            paths(modified_dirs_in_modified_dirs(&events)),
+            [Path::new("d/entry")]
+        );
+    }
+
+    /// A directory that has an entry added or removed is reported as modified, and the directory
+    /// it is in is not. Watchman reports nothing for the root.
+    #[test]
+    fn a_directory_with_an_entry_changed_is_not_in_a_modified_directory() {
+        let events = [
+            modified_dir("top"),
+            event(WatchmanEventType::Create, WatchmanKind::File, "top/created"),
+            modified_dir("d/sub"),
+            event(
+                WatchmanEventType::Delete,
+                WatchmanKind::File,
+                "d/sub/removed",
+            ),
+            event(WatchmanEventType::Create, WatchmanKind::Directory, "d/new"),
+            modified_dir("d/new/sub"),
+        ];
+        assert_eq!(
+            paths(modified_dirs_in_modified_dirs(&events)),
+            Vec::<&Path>::new()
+        );
     }
 }

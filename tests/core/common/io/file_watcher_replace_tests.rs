@@ -364,6 +364,61 @@ async fn one_batch(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A file that becomes a directory, where it is. Watchman reports it as a modified directory,
+/// like one whose entries changed.
+pub async fn run_file_to_directory_test(buck: &Buck) -> anyhow::Result<()> {
+    setup_file_watcher_test(buck).await?;
+    let probe = Probe::new(buck, "file_to_directory")?;
+    probe.write("t/with_entry/entry", "")?;
+    probe.write("t/empty/entry", "")?;
+    assert_eq!(
+        probe.files("t").await?,
+        json!(["t/empty/entry", "t/with_entry/entry"])
+    );
+
+    fs::remove_file(probe.path("t/with_entry/entry"))?;
+    probe.write("t/with_entry/entry/inside", "")?;
+    fs::remove_file(probe.path("t/empty/entry"))?;
+    fs::create_dir(probe.path("t/empty/entry"))?;
+    assert_eq!(
+        probe.files("t").await?,
+        json!(["t/with_entry/entry/inside"])
+    );
+    Ok(())
+}
+
+/// A directory with something in it that becomes a file, where it is.
+pub async fn run_directory_to_file_test(buck: &Buck) -> anyhow::Result<()> {
+    setup_file_watcher_test(buck).await?;
+    let probe = Probe::new(buck, "directory_to_file")?;
+    probe.write("t/entry/inside", "")?;
+    probe.write("t/other", "")?;
+    assert_eq!(
+        probe.files("t").await?,
+        json!(["t/entry/inside", "t/other"])
+    );
+
+    fs::remove_dir_all(probe.path("t/entry"))?;
+    probe.write("t/entry", "")?;
+    assert_eq!(probe.files("t").await?, json!(["t/entry", "t/other"]));
+    Ok(())
+}
+
+/// An empty directory that becomes a file, where it is. Nothing is reported below it, so the
+/// report looks like that of a file whose contents changed.
+pub async fn run_empty_directory_to_file_test(buck: &Buck) -> anyhow::Result<()> {
+    setup_file_watcher_test(buck).await?;
+    let probe = Probe::new(buck, "empty_to_file")?;
+    probe.write("t/other", "")?;
+    fs::create_dir(probe.path("t/entry"))?;
+    assert_eq!(probe.files("t").await?, json!(["t/other"]));
+
+    fs::remove_dir(probe.path("t/entry"))?;
+    probe.write("t/entry", "")?;
+    assert_eq!(probe.files("t").await?, json!(["t/entry", "t/other"]));
+    Ok(())
+}
+
 /// Every test above, in one project.
 pub async fn run_replace_directory_tests(buck: &Buck) -> anyhow::Result<()> {
     run_replace_directory_test(buck).await?;

@@ -300,6 +300,11 @@ pub(crate) trait SyncableQueryProcessor: Send + Sync {
     type Output;
     type Payload;
 
+    /// Called on each connection to watchman, before any events from it, with the root as
+    /// watchman resolved it. What watchman reports for a change depends on the watcher it has
+    /// for the root.
+    fn on_connect(&mut self, _root: &ResolvedRoot) {}
+
     /// Process a set of filesystem change events.
     async fn process_events(
         &mut self,
@@ -483,11 +488,11 @@ where
     async fn reconnect(&mut self, client: &mut Option<WatchmanClient>) -> buck2_error::Result<()> {
         self.last_clock = Default::default();
         self.last_mergebase = None;
-        *client = Some(
-            WatchmanClient::connect(&self.connector, self.path.clone())
-                .await
-                .buck_error_context("Error reconnecting to Watchman")?,
-        );
+        let connected = WatchmanClient::connect(&self.connector, self.path.clone())
+            .await
+            .buck_error_context("Error reconnecting to Watchman")?;
+        self.processor.on_connect(connected.root());
+        *client = Some(connected);
         Ok(())
     }
 

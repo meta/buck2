@@ -19,7 +19,6 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use dupe::Dupe;
 use starlark::collections::StarlarkHasher;
-use starlark::environment::Methods;
 use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
 use starlark::values::StringValue;
@@ -34,7 +33,6 @@ use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::promise::PromiseArtifactId;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::methods::EitherStarlarkInputArtifact;
-use crate::interpreter::rule_defs::artifact::methods::artifact_methods;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
@@ -161,14 +159,14 @@ enum NonPromiseArtifactError {
     PromiseArtifact(String),
 }
 
-starlark::methods_static!(STARLARK_ARTIFACT_METHODS = artifact_methods);
-
-#[starlark_value(type = "Artifact")]
+#[starlark_value(
+    type = "Artifact",
+    methods = [
+        crate::interpreter::rule_defs::artifact::methods::any_artifact_methods,
+        crate::interpreter::rule_defs::artifact::methods::input_artifact_methods,
+    ]
+)]
 impl<'v> StarlarkType<'v> for StarlarkArtifactView<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(STARLARK_ARTIFACT_METHODS.methods())
-    }
-
     #[starlark(implements = StarlarkCmdArgsLike)]
     fn cmd_args_like(this: Self) -> &'v dyn CommandLineArgLike<'v> {
         match this {

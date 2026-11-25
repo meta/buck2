@@ -24,7 +24,6 @@ use dupe::Dupe;
 use either::Either;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::values::Freeze;
 use starlark::values::FreezeResult;
@@ -40,7 +39,6 @@ use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 use starlark_map::StarlarkHasher;
 
-use crate::interpreter::rule_defs::artifact::methods::any_artifact_methods;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFingerprint;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactOrOutputArtifact;
@@ -221,19 +219,14 @@ impl<'v> StarlarkArtifactLike<'v> for FrozenStarlarkOutputArtifact<'v> {
     }
 }
 
-starlark::methods_static!(
-    OUTPUT_ARTIFACT_METHODS = |b| {
-        any_artifact_methods(b);
-        output_artifact_methods(b);
-    }
-);
-
-#[starlark_value(type = "OutputArtifact")]
+#[starlark_value(
+    type = "OutputArtifact",
+    methods = [
+        crate::interpreter::rule_defs::artifact::methods::any_artifact_methods,
+        output_artifact_methods,
+    ]
+)]
 impl<'v> StarlarkType<'v> for StarlarkOutputArtifactView<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(OUTPUT_ARTIFACT_METHODS.methods())
-    }
-
     fn equals(this: Self, other: ArtifactOrOutputArtifact<'v>) -> bool {
         StarlarkArtifactLike::equals(this.as_artifact_like(), other)
     }

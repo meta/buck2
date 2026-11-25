@@ -114,7 +114,7 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
 }
 
 #[starlark_module]
-fn input_artifact_methods(builder: &mut MethodsBuilder) {
+pub(crate) fn input_artifact_methods(builder: &mut MethodsBuilder) {
     /// Returns an `OutputArtifact` instance, or fails if the artifact is
     /// either an `Artifact`, or is a bound `Artifact` (You cannot bind twice)
     fn as_output<'v>(
@@ -171,13 +171,4 @@ fn input_artifact_methods(builder: &mut MethodsBuilder) {
             .with_associated_artifacts(artifacts)?
             .alloc(heap))
     }
-}
-
-/// A single input or output file for an action.
-///
-/// There is no `.parent` method on `artifact`, but in most cases
-/// `cmd_args(my_artifact, parent = 1)` can be used to similar effect.
-pub(crate) fn artifact_methods(builder: &mut MethodsBuilder) {
-    any_artifact_methods(builder);
-    input_artifact_methods(builder);
 }

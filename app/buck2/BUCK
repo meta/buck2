@@ -95,6 +95,12 @@ rust_library(
     }),
 )
 
+# Shared flags, deps, and attributes for the buck2 binaries.
+_BUCK2_BIN_RUSTC_FLAGS = (["--cfg=buck2_memfrag"] if _memfrag else []) + select({
+    ":buck2_client_only_setting[build]": ["--cfg=client_only"],
+    "DEFAULT": [],
+})
+
 buck_rust_binary(
     name = "buck2-bin",
     srcs = ["bin/buck2.rs"],
@@ -112,11 +118,7 @@ buck_rust_binary(
         "BUCK2_WIN_INTERNAL_VERSION": read_config("buck", "win_internal_version", ""),
     },
     # @oss-disable[end= ]: pgo = "//buck2/facebook/pgo:pgo",
-    rustc_flags = (["--cfg=buck2_memfrag"] if _memfrag else [])
-    + select({
-        ":buck2_client_only_setting[build]": ["--cfg=client_only"],
-        "DEFAULT": [],
-    }),
+    rustc_flags = _BUCK2_BIN_RUSTC_FLAGS,
     unittests = False,
     deps = [
         "fbsource//third-party/rust:tracing",

@@ -975,7 +975,8 @@ apple_resource = prelude_rule(
                 Specifies the destination in the final application bundle where resource will be copied. Possible
                  values: "resources", "frameworks", "executables", "plugins", "xpcservices", "loginitems",
                  "launchagents" (macOS `Contents/Library/LaunchAgents`), "launchdaemons" (macOS
-                 `Contents/Library/LaunchDaemons`), "extensionkit_extensions".
+                 `Contents/Library/LaunchDaemons`), "systemextensions" (macOS `Contents/Library/SystemExtensions`),
+                 "extensionkit_extensions".
             """,
             ),
             "codesign_on_copy": attrs.bool(

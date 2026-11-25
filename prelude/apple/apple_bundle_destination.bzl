@@ -28,6 +28,7 @@ AppleBundleDestination = enum(
     "loginitems",
     "launchagents",
     "launchdaemons",
+    "systemextensions",
     "appclips",
     "extensionkit_extensions",
 )
@@ -47,6 +48,7 @@ AppleBundleDestinationPaths = record(
     loginitems = field(str, ""),
     launchagents = field(str, ""),
     launchdaemons = field(str, ""),
+    systemextensions = field(str, ""),
     appclips = field(str, ""),
     extensionkit_extensions = field(str, ""),
 )
@@ -84,6 +86,7 @@ _MacOSBundleDestinationPaths = AppleBundleDestinationPaths(
     loginitems = paths.join(macOS_content_path, "Library/LoginItems"),
     launchagents = paths.join(macOS_content_path, "Library/LaunchAgents"),
     launchdaemons = paths.join(macOS_content_path, "Library/LaunchDaemons"),
+    systemextensions = paths.join(macOS_content_path, "Library/SystemExtensions"),
     extensionkit_extensions = paths.join(macOS_content_path, "Extensions"),
 )
 
@@ -160,6 +163,8 @@ def bundle_relative_path_for_destination(destination: AppleBundleDestination, sd
         return bundle_destinations.launchagents
     elif destination == AppleBundleDestination("launchdaemons"):
         return bundle_destinations.launchdaemons
+    elif destination == AppleBundleDestination("systemextensions"):
+        return bundle_destinations.systemextensions
     elif destination == AppleBundleDestination("appclips"):
         return bundle_destinations.appclips
     fail("Unsupported Apple bundle destination {}".format(destination))

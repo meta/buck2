@@ -573,7 +573,13 @@ def _get_signing_context_tree_as_json(signing_context_tree: AppleBundleSigningCo
     return json_obj
 
 def get_bundle_dir_name(ctx: AnalysisContext) -> str:
-    return paths.replace_extension(get_product_name(ctx), "." + get_extension_attr(ctx))
+    product_name = get_product_name(ctx)
+    extension = get_extension_attr(ctx)
+    if extension == "systemextension":
+        # macOS only activates a system extension whose bundle is named after its bundle
+        # identifier, which has dots, so the extension is appended rather than substituted.
+        return product_name + "." + extension
+    return paths.replace_extension(product_name, "." + extension)
 
 def get_apple_bundle_part_relative_destination_path(ctx: AnalysisContext, part: AppleBundlePart) -> str:
     bundle_relative_path = bundle_relative_path_for_destination(
@@ -616,7 +622,7 @@ def _get_codesign_type_from_attribs(ctx: AnalysisContext) -> [CodeSignType, None
 
 def _detect_codesign_type(ctx: AnalysisContext, skip_adhoc_signing: bool) -> CodeSignType:
     def compute_codesign_type():
-        if ctx.attrs.extension not in ["app", "appex", "xctest", "driver"]:
+        if ctx.attrs.extension not in ["app", "appex", "xctest", "driver", "systemextension"]:
             # Only code sign application bundles, extensions and test bundles
             return CodeSignType("skip")
 

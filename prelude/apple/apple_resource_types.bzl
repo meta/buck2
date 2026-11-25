@@ -25,6 +25,7 @@ AppleResourceDestination = enum(
     "loginitems",
     "plugins",
     "resources",
+    "systemextensions",
     "xpcservices",
 )
 

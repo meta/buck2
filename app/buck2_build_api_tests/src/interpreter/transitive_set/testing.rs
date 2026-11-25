@@ -26,6 +26,7 @@ use starlark::environment::GlobalsBuilder;
 use starlark::environment::Module;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::Absent;
 use starlark::values::EmptyList;
 use starlark::values::FreezeErrorContext;
 use starlark::values::OwnedFrozen;
@@ -39,7 +40,7 @@ use crate::interpreter::rule_defs::artifact::testing::artifactory;
 pub(crate) fn tset_factory(builder: &mut GlobalsBuilder) {
     fn make_tset<'v>(
         definition: TransitiveSetDefinitionView<'v>,
-        value: Option<Value<'v>>,
+        #[starlark(default = Absent)] value: Option<Value<'v>>,
         #[starlark(default = EmptyList)] children: Value<'v>, // An iterable.
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, TransitiveSet<'v>>> {

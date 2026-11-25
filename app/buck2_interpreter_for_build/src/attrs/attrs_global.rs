@@ -32,6 +32,7 @@ use either::Either;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::Absent;
 use starlark::values::EmptyList;
 use starlark::values::Heap;
 use starlark::values::StringValue;
@@ -161,7 +162,7 @@ fn dep_like_attr_handle_providers_arg<'v>(
 fn attr_module(registry: &mut GlobalsBuilder) {
     /// Takes a string from the user, supplies a string to the rule.
     fn string<'v>(
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = NoneType)] validate: Value<'v>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -176,7 +177,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Takes a list from the user, supplies a list to the rule.
     fn list<'v>(
         #[starlark(require = pos)] inner: &StarlarkAttribute,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -200,7 +201,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
@@ -232,7 +233,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// without named groups). Supplies the constraint labels as strings to the rule.
     fn exec_compatible_with<'v>(
         #[starlark(require = named)] exec_group: StarlarkExecutionGroupView<'v>,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -263,7 +264,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
             StarlarkExecutionGroupView<'v>,
@@ -295,7 +296,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneType)] cfg: NoneOr<
             Either<StringValue<'v>, &'v dyn TransitionValue>,
         >,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -334,7 +335,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             'v,
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -352,7 +353,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
         #[starlark(require = named)] cfg: &'v dyn TransitionValue,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -386,7 +387,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// See the [`plugins`](../plugins) namespace documentation for a full explanation and examples.
     fn plugin_dep<'v>(
         #[starlark(require = named)] kind: StarlarkPluginKindView<'v>,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -424,7 +425,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             ValueOf<'v, StarlarkListOrTuple<'v, StarlarkPluginKindView<'v>>>,
             ValueOf<'v, AllPlugins>,
         >,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -455,7 +456,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Discouraged, as it provides little type safety and destroys the structure.
     fn any<'v>(
         #[starlark(require = named, default = "")] doc: &str,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
         Ok(ValueOf::alloc(
@@ -466,7 +467,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Takes a boolean and passes it to the rule as a boolean.
     fn bool<'v>(
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -484,7 +485,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// ```
     fn option<'v>(
         #[starlark(require = pos)] inner: &StarlarkAttribute,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -526,7 +527,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Takes a target (as per `deps`) and passes a `label` to the rule.
     /// Validates that the target exists, but does not introduce a dependency on it.
     fn label<'v>(
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -542,7 +543,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         key: &StarlarkAttribute,
         value: &StarlarkAttribute,
         #[starlark(require = named, default = false)] sorted: bool,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -574,7 +575,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// `DefaultExecGroup` for the default group, for args that refer to tools.
     fn arg<'v>(
         #[starlark(require = named, default = false)] json: bool,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] anon_target_compatible: bool,
         #[starlark(require = named, default = NoneType)] exec_group: NoneOr<
@@ -612,7 +613,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Strings are matched case-insensitively, and always passed to the rule lowercase.
     fn r#enum<'v>(
         #[starlark(require = pos)] variants: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
-        #[starlark(require = named)] default: Option<
+        #[starlark(require = named, default = Absent)] default: Option<
             ValueOf<'v, Either<StarlarkStr, StarlarkSelector<'v>>>,
         >,
         #[starlark(require = named, default = "")] doc: &str,
@@ -658,7 +659,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Currently an alias for `attrs.string`.
     fn regex<'v>(
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -671,7 +672,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn set<'v>(
         #[starlark(require = pos)] value_type: &StarlarkAttribute,
         #[starlark(require = named, default = false)] sorted: bool,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -686,7 +687,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn named_set<'v>(
         #[starlark(require = pos)] value_type: &StarlarkAttribute,
         #[starlark(require = named, default = false)] sorted: bool,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -704,7 +705,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Given a list of alternative attributes, selects the first that matches and gives that to the rule.
     fn one_of<'v>(
         #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v, StarlarkAttribute>>,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -726,7 +727,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Takes a tuple of values and gives a tuple to the rule.
     fn tuple<'v>(
         #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v, StarlarkAttribute>>,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -747,7 +748,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Takes an int from the user, supplies an int to the rule.
     fn int<'v>(
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {
@@ -795,7 +796,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// `DefaultInfo` with a `default_outputs` value).
     fn source<'v>(
         #[starlark(require = named, default = false)] allow_directory: bool,
-        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {

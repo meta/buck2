@@ -45,6 +45,7 @@ use starlark::type_matcher;
 use starlark::typing::Ty;
 use starlark::typing::TyCallable;
 use starlark::typing::TyStarlarkValue;
+use starlark::values::Absent;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
@@ -596,7 +597,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
     /// Create a field definition object which can be passed to `provider` type constructor.
     fn provider_field<'v>(
         #[starlark(require=pos)] ty: Value<'v>,
-        #[starlark(require=named)] default: Option<Value<'v>>,
+        #[starlark(require=named, default = Absent)] default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, UserProviderField<'v>>> {
         let ty = provider_field_parse_type(ty, eval)?;

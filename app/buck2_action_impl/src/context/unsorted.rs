@@ -21,6 +21,7 @@ use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::Absent;
 use starlark::values::EmptyList;
 use starlark::values::Heap;
 use starlark::values::Value;
@@ -97,7 +98,7 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
     fn tset<'v>(
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] definition: TransitiveSetDefinitionView<'v>,
-        #[starlark(require = named)] value: Option<Value<'v>>,
+        #[starlark(require = named, default = Absent)] value: Option<Value<'v>>,
         #[starlark(require = named, default = EmptyList)] children: ValueOf<
             'v,
             StarlarkIter<Value<'v>>,

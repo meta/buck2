@@ -21,6 +21,8 @@ use futures::StreamExt;
 use crate::read::EventLogPathBuf;
 use crate::utils::Encoding;
 use crate::utils::EventLogErrors;
+use crate::writer_lock::is_writer_finished;
+use crate::writer_lock::remove_lock_file;
 
 pub(crate) fn get_logfile_name(
     event: &BuckEvent,
@@ -49,6 +51,14 @@ pub(crate) async fn remove_old_logs(logdir: &AbsNormPath, retained_event_logs: u
         let retained_existing_logs = retained_event_logs.saturating_sub(1);
         futures::stream::iter(logfiles.into_iter().rev().skip(retained_existing_logs))
             .then(|file| async move {
+                // A log that is still being written stays: the process that uploads it looks
+                // for the log and for its writer lock where they are. A log whose lock cannot
+                // be looked at is removed as one that is written: kept, it would stay for as
+                // long as its lock cannot be looked at, and nothing else removes old logs.
+                if !is_writer_finished(&file).await.unwrap_or(true) {
+                    return None;
+                }
+                remove_lock_file(&file).await;
                 // The oldest logs might be open from another concurrent build, so suppress error.
                 tokio::fs::remove_file(file).await.ok()
             })
@@ -146,6 +156,40 @@ mod tests {
     use buck2_fs::paths::abs_path::AbsPath;
 
     use super::*;
+    use crate::writer_lock::WriterLock;
+
+    /// A log that is still being written is kept, however old it is: the process that uploads
+    /// it reads it and its writer lock where they are.
+    #[tokio::test]
+    async fn test_remove_old_logs_keeps_a_log_that_is_being_written() -> buck2_error::Result<()> {
+        let logdir = tempfile::tempdir()?;
+        let logdir = AbsNormPathBuf::try_from(logdir.path().canonicalize()?)?;
+        let base_time = SystemTime::now()
+            .checked_sub(Duration::from_secs(100))
+            .unwrap();
+        let logs: Vec<_> = (0..3u64)
+            .map(|i| {
+                let log = logdir.as_abs_path().join(format!("buck-log-{i}.zst"));
+                let file = File::create(&log).unwrap();
+                let times =
+                    std::fs::FileTimes::new().set_modified(base_time + Duration::from_secs(i));
+                file.set_times(times).unwrap();
+                log
+            })
+            .collect();
+        let written = WriterLock::acquire(logs[0].clone()).await?;
+
+        remove_old_logs(&logdir, 1).await;
+
+        assert!(logs[0].exists(), "The log that is being written is kept");
+        assert!(!is_writer_finished(&logs[0]).await?);
+        assert!(!logs[1].exists() && !logs[2].exists());
+
+        written.release().await;
+        remove_old_logs(&logdir, 1).await;
+        assert!(!logs[0].exists(), "A log that is written is removed");
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_remove_old_logs_with_mix_of_files_and_folders() -> buck2_error::Result<()> {

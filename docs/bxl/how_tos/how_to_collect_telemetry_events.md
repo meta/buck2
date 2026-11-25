@@ -57,23 +57,23 @@ my_script = bxl_main(
 
 You cannot use `now()` to measure the time it takes to run actions and ensure
 artifacts because these processes occur asynchronously outside of the BXL script
-execution. For BXL user telemetry, we emit action events via the buck2 core
-automatically. Events around ensuring the artifacts are not emitted currently,
-but will be added soon.
+execution. For BXL user telemetry, we emit action events and an event for
+ensuring the artifacts via the buck2 core automatically. When the BXL script is
+cached, instant events and action events are not emitted again.
 
 ### User event log
 
 To write to your own event log when running BXL, you can run your BXL command
 with the `--user-event-log` flag to tell buck2 where to write the events to.
 Buck2 is aware of the following file extensions: `.json-lines`,
-`json-lines.zst`, `.json-lines.gz`, and will compress the files automatically
+`.json-lines.zst`, `.json-lines.gz`, and will compress the files automatically
 for you depending on the extension. If the extension is not one of these, the
 logs will always be written in JSONL format, uncompressed.
 
 Example:
 
 ```sh
-buck2 bxl path//to/my_script/script.bxl:my_script --user-event-log my_file.json-lines.gz
+buck2 bxl //path/to/my_script/script.bxl:my_script --user-event-log my_file.json-lines.gz
 ```
 
 When using this flag to write to a custom event log, it is up to you to clean up
@@ -87,7 +87,7 @@ to write to a compressed file, you are responsible for decompressing them.
 `buck2 log show-user` can be used to convert a normal event log (regardless of
 encoding/compression) to a user event. Similar to `buck2 log show`, you can
 choose the most recent invocation, or the nth invocation, or provide a path to
-the normal user event log. Note that user event logs are not able to be passed
+the normal event log. Note that user event logs are not able to be passed
 into `buck2 log show` or `buck2 log show-user`.
 
 ### Event log output

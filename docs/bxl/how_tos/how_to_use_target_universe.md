@@ -8,9 +8,9 @@ title: How to Use Target Universe in BXL
 BXL cannot infer the
 [target universe](../../concepts/glossary.md#target-universe) like in the CLI
 (in most cases). BXL splits up cquery functions per function (ex:
-`ctx.cquery().kind(...)`), with the exception of `ctx.cquery.eval(...)`, which
-accepts literals exactly like in the CLI. For the `eval` query, target universe
-is inferred exactly like the CLI.
+`ctx.cquery().kind(...)`), with the exception of `ctx.cquery().eval(...)`,
+which accepts literals exactly like in the CLI. For the `eval` query, target
+universe is inferred exactly like the CLI.
 
 For all other cases, take the following query as an example:
 
@@ -41,8 +41,10 @@ universe.
 
 ### Specifying target universe in BXL cquery
 
-BXL cquery functions should only accept configured targets as inputs, with the
-exception of `eval` and `testsof_with_default_platform`.
+BXL cquery functions also accept unconfigured targets, which they configure
+with the default target platform, or with the one passed to `ctx.cquery()`. To
+get the same results as the CLI, pass them configured targets from a target
+universe. The `owner` function needs the universe as its second argument.
 
 BXL has a `ctx.target_universe()` function to construct a `target_universe`
 object, which has a `lookup()` function to lookup the configured targets within
@@ -54,7 +56,7 @@ the target universe (so at least once for target deps and once for exec deps),
 since cxx toolchains may have multiple configurations. Example:
 
 ```python
-def _impl():
+def _impl(ctx):
     target_universe = ctx.target_universe(["//example:foo", "//example:bar"])
     to_node = target_universe.lookup("//example:foo")
     from_node = target_universe.lookup("//example:bar")
@@ -74,7 +76,7 @@ For `owner` query, the universe would be constructed with the unconfigured
 target nodes returned from `ctx.uquery().owner(...)`. Example:
 
 ```python
-def _impl():
+def _impl(ctx):
     unconfigured_owners = ctx.uquery().owner("foobar")
     target_universe = ctx.target_universe(unconfigured_owners).target_set()
     owners = ctx.cquery().owner("foobar", target_universe)
@@ -84,7 +86,7 @@ For everything else, the universe would usually be constructed using all target
 literals found in your query. Example:
 
 ```python
-def _impl():
+def _impl(ctx):
     target_universe = ctx.target_universe("//example:foo")
     inputs = target_universe.target_set()
     deps = ctx.cquery().deps(inputs)
@@ -96,7 +98,7 @@ argument. (This is a subset of the target universe suggested for non-`owner`
 query cases). Updating the example from above:
 
 ```python
-def _impl():
+def _impl(ctx):
     target_universe = ctx.target_universe("//example:foo") # narrowed down to the "to" literals in rdeps
     universe_node = target_universe.target_set()
     from_node = target_universe.lookup("//example:bar")

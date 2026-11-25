@@ -65,7 +65,8 @@ lazy_ops = [
 result = ctx.lazy.join_all(lazy_ops).catch().resolve()
 ```
 
-The Return type is `Result[list[bxl.AnalysisResult]]`
+The return type is `bxl.Result`. It holds a list with the value of each
+operation: here, two `bxl.AnalysisResult` and one `bxl.ConfiguredTargetNode`.
 
 #### For individual error handling per operation:
 
@@ -73,7 +74,7 @@ The Return type is `Result[list[bxl.AnalysisResult]]`
 result = ctx.lazy.join_all([op.catch() for op in lazy_ops]).resolve()
 ```
 
-The Return type is `list[Result[bxl.AnalysisResult]]`
+The return type is a list of `bxl.Result`, one for each operation.
 
 ## Examples
 

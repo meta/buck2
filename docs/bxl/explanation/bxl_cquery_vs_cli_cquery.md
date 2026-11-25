@@ -30,10 +30,10 @@ within `root//path/...`. Let's look at two approaches:
 We can do a query like this:
 
 ```shell
-buck2 cquery 'rdeps(root//path/..., X, 1)`
+buck2 cquery 'rdeps(root//path/..., X, 1)'
 ```
 
-It will return `A (cfg_b)`, `C (cfg_b)` and `X(cfg_b)`
+It will return `A (cfg_b)`, `C (cfg_b)` and `X (cfg_b)`
 
 ### `cquery` in bxl
 

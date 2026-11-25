@@ -3,6 +3,8 @@ id: how_to_run_actions_based_on_the_content_of_artifact
 title: How to run actions based on the content of artifact
 ---
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 This guide shows you how to run actions that need to read artifact contents
 first. You'll learn how to use
 [dynamic actions](../../../rule_authors/dynamic_dependencies) to handle cases
@@ -34,12 +36,15 @@ or run actions to generate them.
 Declare the outputs that your dynamic action will produce:
 
 ```python
-output_artifact = ctx.actions.declare_output("output.txt")
+actions = ctx.bxl_actions().actions
+output = actions.declare_output("output.txt")
 ```
 
 ### 3. Define dynamic action
 
 ```python
+MyData = record(prefix = str)
+
 process_dynamic = bxl.dynamic_actions(
     impl = process_dynamic_impl,
     attrs = {
@@ -50,7 +55,8 @@ process_dynamic = bxl.dynamic_actions(
 )
 ```
 
-It needs a impl function which we will define in step 4, and attributes that you
+It needs a impl function which we will define in step 4 (in the file, the impl
+function goes between `MyData` and `process_dynamic`), and attributes that you
 want to passed in the dynamic actions includes the artifacts you want to read,
 output artifacts you declared in step 2, and any other values you want to pass
 in. You can using `dynattrs.value([type])` to pass in any type. More details for
@@ -76,7 +82,7 @@ def process_dynamic_impl(
     content = file.read_string()
 
     # Process content and run actions
-    processed_content = ...
+    processed_content = my_data.prefix + content
     bxl_actions = bxl_ctx.bxl_actions().actions
     bxl_actions.write(output, processed_content)
     return []
@@ -85,21 +91,32 @@ def process_dynamic_impl(
 ### 5. Use it in your bxl main function
 
 ```python
-def _main(bxl_ctx: bxl.Context):
-    # Prepare input/output artifacts
-    input_file = ...
-    output = bxl_actions.declare_output("output.txt")
+def _main(ctx: bxl.Context):
+    actions = ctx.bxl_actions().actions
 
-    bxl_actions.dynamic_output_new(
+    # Prepare input/output artifacts
+    input_file = actions.write("input.txt", "hello")
+    output = actions.declare_output("output.txt")
+
+    actions.dynamic_output_new(
         process_dynamic(
-            dep_file = input_file,
-            output = output.as_output()
+            file = input_file,
+            output = output.as_output(),
+            my_data = MyData(prefix = "content: "),
         )
     )
 
     # Don't forgot ensure it to get the output to be materialized
-    ctx.output.ensure(output)
+    ctx.output.print(ctx.output.ensure(output))
+
+main = bxl_main(
+    impl = _main,
+    cli_args = {},
+)
 ```
+
+Running the script prints the path of `output.txt`, which contains
+`content: hello`.
 
 ## Limitations
 
@@ -121,9 +138,13 @@ def _main(bxl_ctx: bxl.Context):
 Examples can be found at 'tests/core/bxl/test_dynamic_new_data/dynamic.bxl' of
 buck2 repo folder.
 
+<FbInternalOnly>
+
 Run such command at `tests/core/bxl/test_dynamic_new_data/` to run the example
 bxl script
 
 ```sh
 buck2 bxl dynamic.bxl:basic
 ```
+
+</FbInternalOnly>

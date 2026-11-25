@@ -24,13 +24,13 @@ This tutorial has 4 parts:
 
 ## Environment
 
-For all following tutorial, we assume you are in [`examples/bxl_tutorial`](
-<FbInternalOnly>https://www.internalfb.com/code/fbsource/fbcode/buck2/examples/bxl_tutorial/</FbInternalOnly>
-<OssOnly>https://github.com/facebook/buck2/tree/main/examples/bxl_tutorial</OssOnly>
-) folder.
+For all following tutorial, we assume you are in
+<FbInternalOnly>[`examples/bxl_tutorial`](https://www.internalfb.com/code/fbsource/fbcode/buck2/examples/bxl_tutorial/)</FbInternalOnly><OssOnly>[`examples/bxl_tutorial`](https://github.com/meta/buck2/tree/main/examples/bxl_tutorial)</OssOnly>
+folder<OssOnly> of a checkout of the Buck2 repository</OssOnly>.
 
 This folder contains a buck2 [project](../../concepts/glossary/#project) with
-several targets. These targets form this dependency graph:
+several targets, declared in the file `TARGETS.fixture`. These targets form this
+dependency graph:
 
 <img src={useBaseUrl('/img/bxl_tutorial/target_dependencies_graph.png')}
 alt='justifyContent'/>
@@ -51,10 +51,12 @@ main = bxl_main(
 )
 ```
 
-`bxl_main` takes 2 arguments:
+`bxl_main` takes these arguments:
 
 1. `impl` implementation of this bxl main function
 2. `cli_args` we can define the arguments here
+3. `doc` (optional) the description that
+   `buck2 bxl hello_world.bxl:main -- --help` shows
 
 Lets run the bxl script to give it a try. The command is in the format
 `buck2 bxl [file_path_to_bxl_file]:[bxl_main_function_name]`. For this case it
@@ -218,10 +220,8 @@ We run the bxl script and the output shows our filtered targets:
 Note that `root//:data_a` is no longer in the list, since it's a resource
 target.
 
-You can find the complete code for this tutorial in [`part1.bxl`](
-<FbInternalOnly>https://www.internalfb.com/code/fbsource/fbcode/buck2/examples/bxl_tutorial/part1.bxl</FbInternalOnly>
-<OssOnly>https://github.com/facebook/buck2/blob/main/examples/bxl_tutorial/part1.bxl</OssOnly>
-).
+You can find the complete code for this tutorial in
+<FbInternalOnly>[`part1.bxl`](https://www.internalfb.com/code/fbsource/fbcode/buck2/examples/bxl_tutorial/part1.bxl)</FbInternalOnly><OssOnly>[`part1.bxl`](https://github.com/meta/buck2/blob/main/examples/bxl_tutorial/part1.bxl)</OssOnly>.
 
 ## Part 2
 
@@ -266,7 +266,7 @@ Feel free to print each step's result to follow what the script is doing.
 Finally, we print the results:
 
 ```python
-ctx.output.print(index_outputs)
+ctx.output.print(pstr(index_outputs))
 ```
 
 You'll see output like this:
@@ -282,10 +282,8 @@ You'll see output like this:
 ]
 ```
 
-You can find the complete code for this tutorial in [`part2.bxl`](
-<FbInternalOnly>https://www.internalfb.com/code/fbsource/fbcode/buck2/examples/bxl_tutorial/part2.bxl</FbInternalOnly>
-<OssOnly>https://github.com/facebook/buck2/blob/main/examples/bxl_tutorial/part2.bxl</OssOnly>
-).
+You can find the complete code for this tutorial in
+<FbInternalOnly>[`part2.bxl`](https://www.internalfb.com/code/fbsource/fbcode/buck2/examples/bxl_tutorial/part2.bxl)</FbInternalOnly><OssOnly>[`part2.bxl`](https://github.com/meta/buck2/blob/main/examples/bxl_tutorial/part2.bxl)</OssOnly>.
 
 ## Part 3
 
@@ -318,23 +316,23 @@ ctx.output.print(ensured_index_db)
 Running the script will show us where our file was created:
 
 ```
-buck-out/v2/gen-bxl/root/78ceb8c295d0ab4e/part3.bxl/__main__e0c0381aecee358a__/index.txt
+buck-out/v2/art-bxl/root/8f9563fb95d63ec8/generate_index.bxl/__main__/227b20c6c3425ff7/index.txt
 ```
 
 We open this file and to see all the index paths:
 
 ```
-buck-out/v2/gen/root/6dd044292ff31ae1/__a__/a.index
-buck-out/v2/gen/root/6dd044292ff31ae1/__b__/b.index
-buck-out/v2/gen/root/6dd044292ff31ae1/__bin__/bin.index
-buck-out/v2/gen/root/6dd044292ff31ae1/__c__/c.index
-buck-out/v2/gen/root/6dd044292ff31ae1/__d__/d.index
-buck-out/v2/gen/root/6dd044292ff31ae1/__e__/e.index
+buck-out/v2/art/root/1ef78538d8598cb2/__a__/a.index
+buck-out/v2/art/root/1ef78538d8598cb2/__b__/b.index
+buck-out/v2/art/root/1ef78538d8598cb2/__bin__/bin.index
+buck-out/v2/art/root/1ef78538d8598cb2/__c__/c.index
+buck-out/v2/art/root/1ef78538d8598cb2/__d__/d.index
+buck-out/v2/art/root/1ef78538d8598cb2/__e__/e.index
 ```
 
 It shows all the index path, but if we check the content of the index, it will
-not error that "no such file or directory". This is because we don't ensure the
-these artifacts.
+error that "No such file or directory". This is because we don't ensure these
+artifacts.
 
 So we ensure our index files to make them available:
 
@@ -344,10 +342,8 @@ ctx.output.ensure_multiple(index_outputs)
 
 Now we can confirm these index files are available on our disk.
 
-You can find the complete code for this tutorial in [`part3.bxl`](
-<FbInternalOnly>https://www.internalfb.com/code/fbsource/fbcode/buck2/examples/bxl_tutorial/part3.bxl</FbInternalOnly>
-<OssOnly>https://github.com/facebook/buck2/blob/main/examples/bxl_tutorial/part3.bxl</OssOnly>
-).
+You can find the complete code for this tutorial in
+<FbInternalOnly>[`part3.bxl`](https://www.internalfb.com/code/fbsource/fbcode/buck2/examples/bxl_tutorial/part3.bxl)</FbInternalOnly><OssOnly>[`part3.bxl`](https://github.com/meta/buck2/blob/main/examples/bxl_tutorial/part3.bxl)</OssOnly>.
 
 ## Conclusion
 

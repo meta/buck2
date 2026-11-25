@@ -16,7 +16,9 @@ You can build targets within BXL with
 [`ctx.build()`](../../../api/bxl/Context/#contextbuild). The result is a
 [`bxl.BuildResult`](../../../api/bxl/BuildResult), which has `artifacts()` and
 `failures()` functions that provide iterators to the artifacts or failures,
-respectively. You can pass in a single target or target pattern to build.
+respectively. You can pass in a target label, a target node, or a list or
+target set of them. `ctx.build()` does not accept a target pattern: to build
+one, pass it `ctx.configured_targets("//pkg/...")`.
 
 ### Analysis
 
@@ -66,8 +68,10 @@ instead.
 #### Cquery
 
 Querying the configured graph means that configurations have been applied to the
-target graph. For cquery, we require that users use a
-[target universe](../../how_tos/how_to_use_target_universe) for their query
+target graph. Cquery functions configure unconfigured inputs with the default
+target platform, which can give different results from the CLI. To get the same
+results as the CLI, use a
+[target universe](../../how_tos/how_to_use_target_universe) for your query
 inputs.
 
 #### Aquery

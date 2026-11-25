@@ -3,6 +3,8 @@ id: how_to_cache_and_share_operations
 title: How to Cache and Share Operations
 ---
 
+import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
+
 This guide shows you how to use anonymous targets in BXL to cache and share
 operations across different commands, improving bxl performance and reducing
 peak memory usage.
@@ -25,8 +27,7 @@ my_anon = bxl.anon_rule(
     impl = _my_anon_impl,
     attrs = {
         "foo": attrs.int(),
-        "bar": attrs.str(),
-        ...
+        "bar": attrs.string(),
     },
 )
 ```
@@ -36,10 +37,14 @@ You can find the supported attributes at the "Attributes" sections
 
 ### 2. Define the anon target impl
 
+In the file, the impl function goes above the `bxl.anon_rule` call.
+
 ```python
-def _my_anon_impl(bxl_ctx: bxl.Context, attrs: struct) -> list[Provider]
+def _my_anon_impl(bxl_ctx: bxl.Context, attrs: struct) -> list[Provider]:
     # Your implementation here
-    return [DefaultInfo(...), ...]
+    actions = bxl_ctx.bxl_actions().actions
+    out = actions.write("out.txt", attrs.bar + " " + str(attrs.foo))
+    return [DefaultInfo(default_output = out)]
 ```
 
 ### 3. Create and resolve the anonymous target in your BXL script
@@ -51,12 +56,11 @@ to create one anon target or
 to create several anon targets.
 
 ```python
-def _bxl_main_impl(bxl_ctx: bxl.Context):
-    ...
+def _bxl_main_impl(ctx: bxl.Context):
     actions = ctx.bxl_actions().actions
 
     # Create anonymous target
-     promise = actions.anon_target(
+    promise = actions.anon_target(
         my_anon,
         attrs = {
             "foo": 42,
@@ -68,7 +72,13 @@ def _bxl_main_impl(bxl_ctx: bxl.Context):
     result = ctx.resolve(actions, promise)
 
     # Use the anon target result
-    ...
+    out = result[DefaultInfo].default_outputs[0]
+    ctx.output.print(ctx.output.ensure(out))
+
+main = bxl_main(
+    impl = _bxl_main_impl,
+    cli_args = {},
+)
 ```
 
 Now you have an anon target and the output of this anon target will be cached
@@ -78,7 +88,9 @@ script modifiers.
 ## Examples
 
 Examples can be found at 'tests/core/bxl/test_anon_bxl_data/anon_bxl.bxl' of
-buck2 repro folder.
+buck2 repo folder.
+
+<FbInternalOnly>
 
 Run such command at `tests/core/bxl/test_anon_bxl_data` to run the example bxl
 script
@@ -86,6 +98,8 @@ script
 ```sh
 buck2 bxl anon_bxl.bxl:eval_anon_bxl
 ```
+
+</FbInternalOnly>
 
 ## Further Reading
 

@@ -19,9 +19,6 @@ cached separately in an action outside of the BXL execution. This means that the
 artifacts produced by BXL are cached separately from the BXL script itself, much
 like the computations within a BXL.
 
-During 2023, there is a plan to add finer grain incrementality to make better
-use of DICE’s existing incrementality support.
-
 ## What’s the difference between `ctx.output.print()` and `print()`?
 
 - `ctx.output.print()` writes items to stdout by buck2 even when the script is
@@ -35,9 +32,10 @@ use of DICE’s existing incrementality support.
 
 ## What do I need to know about ensured artifacts
 
-An `ensured_artifact` prints out the relative or absolute path via
-`ctx.output.print()`, depending on if called with `abs_path()` or `rel_path`(),
-but will print out `<ensured artifact bound to <some path>>` via `print()`.
+A `bxl.EnsuredArtifact` prints out the relative or absolute path via
+`ctx.output.print()`, depending on if called with `abs_path()` or `rel_path()`,
+but will print out
+`<ensured <build artifact f.txt bound to root//faq.bxl:main>>` via `print()`.
 
 This is intentional because when the ensured artifact is created within BXL, it
 has not been materialized yet. It will be materialized after the BXL script
@@ -46,24 +44,28 @@ BXL script.
 
 This is a safeguard to prevent people from misusing the artifact path and
 passing it into an action without the artifact having been materialized or
-passing an absolute path into RE, which can actually mess up RE and render the
-action not shareable across users. In addition, it makes these actions
-separately cacheable from the BXL execution.
+passing an absolute path into remote execution, which can actually mess up
+remote execution and render the action not shareable across users. In addition,
+it makes these actions separately cacheable from the BXL execution.
 
 ## What is the difference between dynamic outputs and anon targets?
 
 Dynamic outputs are meant for
 [dynamic dependencies](../rule_authors/dynamic_dependencies.md). The context
-type is a `bxl_ctx`. Dynamic outputs are ran asynchronously outside of the BXL
-execution.
+type is a `bxl.Context`. Dynamic outputs are ran asynchronously outside of the
+BXL execution.
 
-Anon targets are meant for sharing work between multiple BXLs. The context type
-is a normal rule analysis `context`. Anon targets are `await`-ed inline with
-your BXL function.
+Anon targets are meant for sharing work between multiple BXLs. The
+implementation of a `bxl.anon_rule` receives a `bxl.Context`, and the
+implementation of an anon target made from a normal `rule` receives a normal
+rule analysis context. Anon targets are resolved inline with your BXL function,
+with `ctx.resolve()`.
 
 ## Can I mutate types returned by BXL APIs?
 
-The data types produced by BXL API calls are always immutable.
+The BXL data types, such as nodes, labels and target sets, are immutable. Lists
+and dicts returned by methods such as `get_attrs()` are ordinary Starlark values
+and can be mutated.
 
 ## What is run synchronously vs asynchronously?
 
@@ -74,5 +76,5 @@ If you pass in multiple inputs to builds, queries, or analyses, the execution of
 these API calls will be blocking, but the inputs themselves will be evaluated in
 parallel within the execution.
 
-Ensuring artifacts, dynamic outputs, anon targets, and resolving promises will
-happen _after_ the Starlark script is executed.
+Ensuring artifacts and dynamic outputs will happen _after_ the Starlark script
+is executed.

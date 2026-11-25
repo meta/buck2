@@ -65,6 +65,10 @@ The documentation for a BXL function can be seen by running:
 Note that this is different from `buck2 bxl --help`, which generates the help
 for the buck2 command instead of the function.
 
+The help shows the `doc` string passed to `bxl_main` and the `doc` string passed
+to each `cli_args` function, for example
+`cli_args.bool(doc = "Print more details")`.
+
 ## Return information from BXL
 
 The primary method to return information from BXL is to either print them, or
@@ -105,6 +109,9 @@ On the command line, you can invoke the arguments as follows:
 buck2 bxl //myscript.bxl:example -- --bool_arg true --list_type 1 --list_type 2 --target //foo:bar
 ```
 
+A `cli_args.bool()` argument takes a value, `true` or `false`. It is `False`
+when the argument is not passed.
+
 For BXL functions, to read the arguments, use them as attributes from the
 `cli_args` attribute on the BXL `ctx` object, as follows:
 
@@ -115,8 +122,8 @@ def _impl_example(ctx):
 
 ## Running actions
 
-You can create actions within BXL via the `actions_factory`. This is called once
-globally then used on demand:
+You can create actions within BXL via `ctx.bxl_actions().actions`. This is
+called once globally then used on demand:
 
 ```python
 def _impl_example(ctx):
@@ -126,9 +133,10 @@ def _impl_example(ctx):
 
 You will need to have
 [execution platforms](../../rule_authors/configurations.md#execution-platforms)
-enabled for your project, or else you will get an error. You can specify the
-execution platform resolution by setting named parameters when instantiating
-`bxl_actions`:
+enabled for your project, or else `ctx.bxl_actions()` fails with
+`Execution platforms are not enabled`. A project made with `buck2 init` has
+them enabled. You can specify the execution platform resolution by setting
+named parameters when instantiating `bxl_actions`:
 
 - `exec_deps` - These are dependencies you wish to access as executables for
   creating the action. This is usually the same set of targets one would pass to
@@ -151,7 +159,7 @@ are the unconfigured subtarget labels, and the values are the
 configured/resolved `dependency` objects.
 
 Note that the keys of `exec_deps` and `toolchains` must be unconfigured
-subtarget labels (`StarlarkProvidersLabel`), and not unconfigured target labels.
+subtarget labels (`ProvidersLabel`), and not unconfigured target labels.
 You can use `ctx.unconfigured_sub_targets(...)` or `with_sub_target()` on
 `target_label` to create the label.
 
@@ -159,11 +167,12 @@ You can use `ctx.unconfigured_sub_targets(...)` or `with_sub_target()` on
 def _impl_example(ctx):
     my_exec_dep = ctx.unconfigured_sub_targets("foo//bar:baz") # has some provider that you would use in the action
     bxl_actions = ctx.bxl_actions(exec_deps = [my_exec_dep]) # call once, reuse wherever needed
-    output = bxl_actions.actions.run(
+    output = bxl_actions.actions.declare_output("output")
+    bxl_actions.actions.run(
         [
             "python3",
             bxl_actions.exec_deps[my_exec_dep][RunInfo], # access resolved exec_deps on the `bxl_actions`
-            out.as_output(),
+            output.as_output(),
         ],
         category = "command",
         local_only = True,
@@ -173,11 +182,13 @@ def _impl_example(ctx):
 
 ## Getting providers from an analysis
 
-After calling `analysis()`, you can get the providers collection from
-`providers()`:
+`analysis()` takes configured targets: a configured target node or label, or a
+list or target set of them. After calling `analysis()`, you can get the
+providers collection from `providers()`:
 
 ```python
 def _impl_example(ctx):
+    my_target = ctx.configured_targets("//path/to:target")
     my_providers = ctx.analysis(my_target).providers()
 ```
 
@@ -188,6 +199,7 @@ After calling `analysis()`, you can also get the providers collection from
 
 ```python
 def _impl_example(ctx):
+    my_target = ctx.configured_targets("//path/to:target")
     default_info = ctx.analysis(my_target).providers()[DefaultInfo]
     ctx.output.print(default_info)
 ```
@@ -200,6 +212,7 @@ collections:
 
 ```python
 def _impl_example(ctx):
+    my_target = ctx.configured_targets("//path/to:target")
     subtarget = ctx.analysis(my_target).providers()[DefaultInfo].sub_targets["my_subtarget"]
     ctx.output.print(subtarget)
 ```
@@ -218,11 +231,11 @@ the util function
 BXL provides a unified API for accessing attributes on both unconfigured and
 configured target nodes.
 
-- [`node.get_attr(key)`](../../../api/bxl/ConfiguredTargetNode/#configuredtargetnodeget_attrs):
+- [`node.get_attr(key)`](../../../api/bxl/ConfiguredTargetNode/#configuredtargetnodeget_attr):
   Get one attribute
 - [`node.get_attrs`](../../../api/bxl/ConfiguredTargetNode/#configuredtargetnodeget_attrs):
   Get all attributes
-- [`node.has_attrs(key)`](../../../api/bxl/ConfiguredTargetNode/#configuredtargetnodeget_attrs):
+- [`node.has_attr(key)`](../../../api/bxl/ConfiguredTargetNode/#configuredtargetnodehas_attr):
   Check if one attribute exists
 
 For special attributes like `rule_kind`, we get them directly from node:
@@ -261,8 +274,8 @@ def _impl_example(ctx):
     # check if "foo" attribute exists on node
     foo_exist = my_configured_node.has_attr("foo")
 
-    # access special attribute `rule_type`
-    rule_type = my_configured_node.rule_type
+    # access special attribute `rule_kind`
+    rule_kind = my_configured_node.rule_kind
 
     # same for UnconfiguredTargetNode
 ```
@@ -287,17 +300,18 @@ There are a few BXL actions that return a `target_set` (such as a cquery
 You can use following apis to initialize `target_set`
 
 ```python
-def bxl.utarget_set(nodes: None | list[bxl.UnconfiguredTargetNode]) -> bxl.UnconfiguredTargetSet
+def bxl.utarget_set(nodes: list[bxl.UnconfiguredTargetNode] = []) -> bxl.TargetSet[bxl.UnconfiguredTargetNode]
 ```
 
 ```python
-def bxl.ctarget_set(nodes: None | list[bxl.ConfiguredTargetNode]) -> bxl.ConfiguredTargetSet
+def bxl.ctarget_set(nodes: list[bxl.ConfiguredTargetNode] = []) -> bxl.TargetSet[bxl.ConfiguredTargetNode]
 ```
 
 ## Profiling, Testing, and Debugging a BXL script
 
-You can use `buck2 bxl profiler`, with various measurements, to determine where
-the script is least efficient.
+You can use `buck2 profile bxl --mode <MODE> --output <PATH> <bxl function>`,
+with various measurements, to determine where the script is least efficient.
+`buck2 profile bxl --help` lists the modes.
 
 To time individual pieces of the script, you can use BXL’s timestamp methods:
 

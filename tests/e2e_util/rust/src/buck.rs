@@ -213,6 +213,21 @@ impl Buck {
         )
     }
 
+    /// Sets Buck settings from TOML for every later command, above every settings file and
+    /// below `--setting`. Unlike those, it can set any setting, including ones that allow no
+    /// overrides.
+    ///
+    /// Only buck2 built for e2e tests (`fbcode//buck2:buck2_e2e`) allows that; any other
+    /// buck2 holds these settings to the same policy as a `.bucksettings.local.toml`.
+    pub fn set_test_settings(&mut self, settings: &str) -> anyhow::Result<()> {
+        let mut path = self.settings_home_dir();
+        path.pop();
+        path.push("test.bucksettings.toml");
+        std::fs::write(&path, settings)?;
+        self.set_env("BUCK2_SETTINGS_OVERRIDE", path);
+        Ok(())
+    }
+
     /// The buck2 executable commands run.
     pub fn executable(&self) -> &Path {
         &self.executable

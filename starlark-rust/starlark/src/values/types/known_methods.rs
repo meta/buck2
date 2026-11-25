@@ -21,8 +21,6 @@ use std::sync::LazyLock;
 use dupe::Dupe;
 use hashbrown::HashMap;
 
-use crate::environment::MemberTable;
-use crate::environment::Methods;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::pagable::StarlarkDeserialize;
@@ -44,16 +42,13 @@ use crate::values::string::StarlarkStr;
 
 /// A method and the table that declares it.
 ///
-/// The method is a `static` or comes from a `&'static Methods`, so it is immortal and is brought
-/// to the brand of the heap in use through [`HeapEdge::immortal`].
+/// The method is a `static`, so it is immortal and is brought to the brand of the heap in use
+/// through [`HeapEdge::immortal`].
 #[derive(Clone, Copy)]
 pub(crate) struct KnownMethod {
-    /// The table of the type the method is defined by, as the type's vtable names it: the
-    /// address of its static table, with zero for `type_methods`, or else the address of the
-    /// table it builds at run time, with zero here. A receiver whose vtable names the same
-    /// table has this method under this name.
+    /// The address of the table of the type the method is defined by. A receiver whose vtable
+    /// names the same table has this method under this name.
     type_members: usize,
-    type_methods: usize,
     /// The method.
     method: ValueTyped<'static, NativeMethod>,
     /// Copied here from `method` to faster invocation (one fewer deref).
@@ -93,12 +88,7 @@ impl KnownMethod {
     pub(crate) fn is_method_of(&self, vtable: &'static AValueVTable) -> bool {
         match vtable.members() {
             Some(members) => ptr::from_ref(members).addr() == self.type_members,
-            // Two types with the same run-time table have the same members, whichever of
-            // them the method was taken from.
-            None => match vtable.methods_unconditionally() {
-                Some(methods) => ptr::from_ref(methods).addr() == self.type_methods,
-                None => false,
-            },
+            None => false,
         }
     }
 
@@ -127,31 +117,17 @@ impl KnownMethods {
     fn build() -> KnownMethods {
         let mut methods = HashMap::new();
 
-        fn add_methods(
-            methods: &mut HashMap<&'static str, KnownMethod>,
-            type_members: Option<&'static MemberTable>,
-            type_methods: Option<&'static Methods>,
-        ) {
-            let members: Vec<(&'static str, Value<'static>)> = match (type_members, type_methods) {
-                (Some(table), _) => table
-                    .members()
-                    .into_iter()
-                    .map(|member| (member.name(), member.value()))
-                    .collect(),
-                (None, Some(type_methods)) => type_methods.members::<'static>().collect(),
-                (None, None) => Vec::new(),
-            };
+        fn add<T: StarlarkValue<'static>>(methods: &mut HashMap<&'static str, KnownMethod>) {
+            let table = <T::Type as StarlarkType<'static>>::MEMBERS
+                .expect("a type with known methods has a table")
+                .table();
             let mut has_at_least_one_method = false;
-            for (name, member) in members {
+            for member in table.members() {
                 // Take methods, ignore attributes.
-                if let Some(method) = ValueTyped::<NativeMethod>::new(member) {
+                if let Some(method) = ValueTyped::<NativeMethod>::new(member.value()) {
                     // First wins, e. g. `list.clear` is hit, and `dict.clear` is miss.
-                    methods.entry(name).or_insert(KnownMethod {
-                        type_members: type_members.map_or(0, |table| ptr::from_ref(table).addr()),
-                        type_methods: match type_members {
-                            Some(_) => 0,
-                            None => type_methods.map_or(0, |table| ptr::from_ref(table).addr()),
-                        },
+                    methods.entry(member.name()).or_insert(KnownMethod {
+                        type_members: ptr::from_ref(table).addr(),
                         method,
                         imp: method.as_ref().function,
                     });
@@ -160,18 +136,6 @@ impl KnownMethods {
             }
             // Sanity check.
             assert!(has_at_least_one_method);
-        }
-
-        fn add<T: StarlarkValue<'static>>(methods: &mut HashMap<&'static str, KnownMethod>) {
-            let type_members =
-                <T::Type as StarlarkType<'static>>::MEMBERS.map(|members| members.table());
-            // Asking a type for its run-time table builds it, and a type with a static table
-            // is never read through that one.
-            let type_methods = match type_members {
-                Some(_) => None,
-                None => T::get_methods(),
-            };
-            add_methods(methods, type_members, type_methods);
         }
 
         // We don't need to add all the methods, only the most common ones. This is fine.

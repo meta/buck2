@@ -50,15 +50,6 @@ pub(crate) enum ModuleKind {
     Methods,
 }
 
-impl ModuleKind {
-    pub(crate) fn statics_macro_name(self) -> &'static str {
-        match self {
-            ModuleKind::Globals => "globals_static",
-            ModuleKind::Methods => "methods_static",
-        }
-    }
-}
-
 /// Parse a single entry in `#[starlark_types(RustType as StarlarkName)]`
 /// or `#[starlark_types(RustType as StarlarkName no_docs)]`.
 impl syn::parse::Parse for StarTypeEntry {

@@ -64,10 +64,10 @@ impl StaticValueEntry {
 
 inventory::collect!(StaticValueEntry);
 
-/// Registry entry for a static globals or methods heap.
+/// Registry entry for a static globals heap.
 ///
-/// The `globals_static!` and `methods_static!` macros register their backing
-/// heaps here, so all values allocated in those heaps are treated as static
+/// The `globals_static!` macro registers its backing
+/// heap here, so all values allocated in those heaps are treated as static
 /// values during pagable serialization.
 pub struct StaticHeapEntry {
     /// Source file where this static heap was registered (from `file!()`).

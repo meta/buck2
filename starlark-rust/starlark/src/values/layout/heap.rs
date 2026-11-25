@@ -60,7 +60,7 @@
 //!   frozen heap.
 //! * Freezing seals the module's frozen heap, with every reference the module gained, into the
 //!   `FrozenModule`.
-//! * [`Globals`], [`Methods`] and [`FrozenModule`] own the sealed heaps their values live in.
+//! * [`Globals`] and [`FrozenModule`] own the sealed heaps their values live in.
 //!   Statics ([`AllocStaticSimple`], [`const_frozen_string!`]) are in no heap and need no
 //!   reference, see [`HeapEdge::immortal`].
 //!
@@ -80,7 +80,6 @@
 //! [`Module`]: crate::environment::Module
 //! [`FrozenModule`]: crate::environment::FrozenModule
 //! [`Globals`]: crate::environment::Globals
-//! [`Methods`]: crate::environment::Methods
 //! [`AllocStaticSimple`]: crate::values::AllocStaticSimple
 //! [`const_frozen_string!`]: crate::const_frozen_string
 

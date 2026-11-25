@@ -55,7 +55,6 @@ use crate::collections::StarlarkHasher;
 use crate::docs::DocItem;
 use crate::docs::DocMember;
 use crate::docs::DocProperty;
-use crate::environment::Methods;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::private::Private;
@@ -310,18 +309,6 @@ pub trait StarlarkType<'v>:
     /// [`#[starlark_value]`](crate::values::starlark_value) generates this, as the nominal type
     /// of the representation, unless the block overrides it.
     fn get_type_starlark_repr() -> Ty;
-
-    /// The methods and attributes of a type that does not name a module of them: a table built
-    /// at run time, with [`methods_static!`](crate::methods_static).
-    ///
-    /// A type's methods and attributes are normally the members of a `#[starlark_module]`,
-    /// which the block names; see [`MEMBERS`](Self::MEMBERS).
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        None
-    }
 
     /// The type's methods and attributes, accessible via `this_type.x`, as a `static` table.
     /// These members have `dir`/`getattr`/`hasattr` properly implemented, so it is the
@@ -1159,11 +1146,6 @@ pub trait StarlarkValue<'v>:
     /// [`StarlarkType::get_type_starlark_repr`] of [`Type`](Self::Type).
     fn get_type_starlark_repr() -> Ty {
         <Self::Type as StarlarkType<'v>>::get_type_starlark_repr()
-    }
-
-    /// [`StarlarkType::get_methods`] of [`Type`](Self::Type).
-    fn get_methods() -> Option<&'static Methods> {
-        <Self::Type as StarlarkType<'v>>::get_methods()
     }
 
     /// [`StarlarkType::attr_ty`] of [`Type`](Self::Type).

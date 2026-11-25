@@ -83,7 +83,7 @@ impl<'v> HeapEdge<'v, 'static> {
     /// The dependency of every heap on the `'static` brand.
     ///
     /// The only data at the `'static` brand is immortal: statics ([`AllocStaticSimple`],
-    /// [`const_frozen_string!`]) and the [`Methods`] tables reached through `&'static Methods`.
+    /// [`const_frozen_string!`]).
     /// Nothing keeps it alive because nothing needs to, and the frozen bit already makes the
     /// garbage collector skip it, so every heap trivially depends on it and the edge can be minted
     /// anywhere.
@@ -97,7 +97,6 @@ impl<'v> HeapEdge<'v, 'static> {
     /// [`ValueTyped::at`]: crate::values::ValueTyped::at
     /// [`ValueOf::at`]: crate::values::ValueOf::at
     /// [`const_frozen_string!`]: crate::const_frozen_string
-    /// [`Methods`]: crate::environment::Methods
     pub fn immortal() -> Self {
         // SAFETY: `'static` is a brand: no stack data can be borrowed at it, so a `'static`-branded
         // value can only be immortal data, which every heap keeps alive by virtue of it never

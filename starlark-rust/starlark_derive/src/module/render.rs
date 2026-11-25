@@ -100,7 +100,6 @@ fn render_impl(x: StarModule) -> syn::Result<TokenStream> {
         generics,
         starlark_types,
     } = x;
-    let statics_macro = format_ident!("{}", module_kind.statics_macro_name());
     let module_name = input.sig.ident.to_string();
     if module_kind == ModuleKind::Methods {
         return render_methods(input, docstring, stmts, &generics, &module_name);
@@ -144,7 +143,7 @@ fn render_impl(x: StarModule) -> syn::Result<TokenStream> {
     };
 
     Ok(quote! {
-        starlark::#statics_macro!(#statics_name = {
+        starlark::globals_static!(#statics_name = {
             #inner_fn
             build
         });
@@ -164,7 +163,7 @@ fn member_table_slots(members: usize) -> usize {
 }
 
 /// A module of methods is a `static` table of its members. The function the author wrote is
-/// kept, as what adds the table to a `MethodsBuilder`.
+/// kept, as what the block of a type names.
 fn render_methods(
     mut input: syn::ItemFn,
     docstring: Option<String>,
@@ -188,24 +187,16 @@ fn render_methods(
         None => render_none(),
     };
 
-    let vis = &input.vis;
-    let fn_name = &input.sig.ident;
+    let vis = input.vis.clone();
     let table_name = format_ident!("{}_MEMBERS", module_name.to_uppercase());
     let slots_name = format_ident!("{}_SLOTS", module_name.to_uppercase());
-    let builder = match input.sig.inputs.first() {
-        Some(syn::FnArg::Typed(arg)) => arg.pat.clone(),
-        _ => {
-            return Err(syn::Error::new_spanned(
-                fn_name,
-                "expected a builder parameter",
-            ));
-        }
-    };
-    input.block = syn::parse_quote! {
-        {
-            #builder.extend(&#table_name);
-        }
-    };
+    // A static table is not built, so the function has nothing to do and cannot be called;
+    // it is kept as what `methods = path` names.
+    input.block = syn::parse_quote! { {} };
+    if let Some(syn::FnArg::Typed(arg)) = input.sig.inputs.first_mut() {
+        arg.pat = syn::parse_quote! { _ };
+    }
+    input.attrs.push(syn::parse_quote! { #[allow(dead_code)] });
 
     Ok(quote! {
         /// The number of slots of the module's table, for a table that is put together from

@@ -42,7 +42,6 @@ use crate::values::function::BoundMethod;
 use crate::values::function::NativeAttribute;
 use crate::values::function::NativeMethFn;
 use crate::values::function::NativeMethod;
-use crate::values::types::unbound::UnboundValue;
 
 // SAFETY: A `MethodStatic` or an `AttributeStatic` is declared by `#[starlark_module]`, which
 // registers it next to its declaration.
@@ -198,16 +197,14 @@ impl Member {
         self.name
     }
 
-    /// The member as the old representation of a table holds it.
-    pub(crate) fn unbound(&self) -> UnboundValue<'static> {
+    /// The method, for a member that is one.
+    #[inline(always)]
+    pub(crate) fn as_method<'v>(&'static self) -> Option<FrozenValueTyped<'v, NativeMethod>> {
         match self.kind {
-            MemberKind::Empty => unreachable!("an empty slot is not handed out"),
-            MemberKind::Method { value, .. } => UnboundValue::Method(
-                FrozenValueTyped::from_typed(value.0.unpack()).expect("a static is frozen"),
-            ),
-            MemberKind::Attribute { value } => UnboundValue::Attr(
-                FrozenValueTyped::from_typed(value.0.unpack()).expect("a static is frozen"),
-            ),
+            MemberKind::Method { value, .. } => {
+                Some(FrozenValueTyped::new(value.at()).expect("a static method"))
+            }
+            _ => None,
         }
     }
 
@@ -518,6 +515,11 @@ impl<const S: usize> LateMemberTable<S> {
 
 impl<S: ?Sized + AsRef<[Member]>> MemberTable<S> {
     /// The members, in the order they were declared.
+    pub fn members(&'static self) -> Vec<&'static Member> {
+        self.declared()
+    }
+
+    /// The members, in the order they were declared.
     fn declared(&self) -> Vec<&Member> {
         let mut members: Vec<&Member> = self
             .slots
@@ -562,16 +564,6 @@ impl MemberTable {
         } else {
             None
         }
-    }
-
-    /// The members, in the order they were declared.
-    pub fn members(&'static self) -> Vec<&'static Member> {
-        self.declared()
-    }
-
-    /// The documentation written on the module the table was declared by.
-    pub(crate) fn docstring(&self) -> Option<&'static str> {
-        self.docstring
     }
 
     /// The documentation of a type `ty` that has these members.

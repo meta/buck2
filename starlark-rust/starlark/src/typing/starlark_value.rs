@@ -455,10 +455,6 @@ impl TyStarlarkValue {
             if let Some(member) = members.table().get_str(Hashed::new(name)) {
                 return Ok(member.ty());
             }
-        } else if let Some(methods) = (self.vtable.vtable.get_methods)() {
-            if let Some(ty) = methods.get_ty(name) {
-                return Ok(ty);
-            }
         }
         Err(TypingNoContextError)
     }

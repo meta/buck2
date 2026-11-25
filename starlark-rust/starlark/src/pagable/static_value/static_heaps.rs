@@ -17,8 +17,8 @@
 
 //! Lookup maps for registered static heaps.
 //!
-//! Heaps registered through [`StaticHeapEntry`] (`globals_static!` /
-//! `methods_static!`) are process-wide singletons: they are always resident,
+//! Heaps registered through [`StaticHeapEntry`] (`globals_static!`)
+//! are process-wide singletons: they are always resident,
 //! and every value allocated in them serializes as a `StaticValueId`.
 //! Serialized data therefore references these heaps by [`StaticHeapId`] and
 //! resolves back to the live heap, instead of paging their bodies through

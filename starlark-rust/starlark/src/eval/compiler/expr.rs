@@ -66,7 +66,6 @@ use crate::eval::runtime::slots::LocalCapturedSlotId;
 use crate::eval::runtime::slots::LocalSlotId;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
-use crate::values::HeapEdge;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
@@ -88,7 +87,6 @@ use crate::values::types::list::value::ListData;
 use crate::values::types::string::dot_format::format_one;
 use crate::values::types::string::interpolation::percent_s_one;
 use crate::values::types::tuple::value::Tuple;
-use crate::values::types::unbound::UnboundValue;
 
 /// `bool` operation.
 #[derive(Copy, Clone, Dupe, Eq, PartialEq, Debug)]
@@ -931,18 +929,14 @@ impl<'f> ExprCompiled<'f> {
     ) -> Option<Value<'f>> {
         // We assume `getattr` has no side effects.
         let v = get_attr_hashed_raw(ctx.edge().rebrand(left), attr, ctx.heap()).ok()?;
-        let member = match v {
-            MemberOrValue::Static(m) => m.unbound(),
-            MemberOrValue::Member(m) => *m,
-            MemberOrValue::Value(v) => return ctx.demote(v),
-        };
-        match HeapEdge::immortal().rebrand(member) {
-            UnboundValue::Method(m) => Some(
+        match v {
+            // An attribute is not read at compile time.
+            MemberOrValue::Member(member) => Some(
                 ctx.frozen_heap()
-                    .alloc(BoundMethod::new(left, m))
+                    .alloc(BoundMethod::new(left, member.as_method()?))
                     .to_value(),
             ),
-            UnboundValue::Attr(..) => None,
+            MemberOrValue::Value(v) => ctx.demote(v),
         }
     }
 
@@ -1204,10 +1198,8 @@ fn get_attr_no_attr_error<'v>(x: Value<'v>, attribute: &Symbol) -> crate::Error 
 }
 
 pub(crate) enum MemberOrValue<'v> {
-    /// A member from the static table of a type that names one.
-    Static(&'static Member),
-    /// A member of a type that builds its table at run time.
-    Member(&'static UnboundValue<'static>),
+    /// A member from the type's table.
+    Member(&'static Member),
     Value(Value<'v>),
 }
 
@@ -1221,8 +1213,7 @@ impl<'v> MemberOrValue<'v> {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
         match self {
-            MemberOrValue::Static(member) => member.invoke_method(this, span, args, eval),
-            MemberOrValue::Member(member) => member.at().invoke_method(this, span, args, eval),
+            MemberOrValue::Member(member) => member.invoke_method(this, span, args, eval),
             MemberOrValue::Value(value) => value.invoke_with_loc(Some(span), args, eval),
         }
     }
@@ -1237,11 +1228,7 @@ pub(crate) fn get_attr_hashed_raw<'v>(
     let aref = x.get_ref();
     if let Some(members) = aref.vtable().members() {
         if let Some(member) = members.get(attribute) {
-            return Ok(MemberOrValue::Static(member));
-        }
-    } else if let Some(methods) = aref.vtable().methods() {
-        if let Some(v) = methods.get_frozen_symbol(attribute) {
-            return Ok(MemberOrValue::Member(v));
+            return Ok(MemberOrValue::Member(member));
         }
     }
     match aref.get_attr_hashed(attribute.as_str_hashed(), heap) {
@@ -1260,18 +1247,10 @@ pub(crate) fn get_attr_hashed_bind<'v>(
         if let Some(member) = members.get(attribute) {
             return member.bind(x, heap);
         }
-    } else if let Some(methods) = aref.vtable().methods() {
-        if let Some(v) = methods.get_frozen_symbol(attribute) {
-            return v.at().bind(x, heap);
-        }
     }
     match aref.get_attr_hashed(attribute.as_str_hashed(), heap) {
         None => Err(get_attr_no_attr_error(x, attribute)),
-        Some(x) => {
-            // Only `get_methods` is allowed to return unbound methods or attributes.
-            // Both types are crate private, so we assume `get_attr` never returns them.
-            Ok(x)
-        }
+        Some(x) => Ok(x),
     }
 }
 

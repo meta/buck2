@@ -37,7 +37,6 @@ use crate::collections::StarlarkHashValue;
 use crate::collections::StarlarkHasher;
 use crate::docs::DocItem;
 use crate::environment::MemberTable;
-use crate::environment::Methods;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::pagable::DeserTypeId;
@@ -331,32 +330,13 @@ impl AValueVTable {
         (self.starlark_value.ty.get_type_starlark_repr)()
     }
 
-    /// The type's table of members, for a type that names one.
+    /// The type's table of members, for a type that has methods or attributes.
     #[inline(always)]
     pub(crate) fn members(&'static self) -> Option<&'static MemberTable> {
         match self.starlark_value.ty.members {
             Some(members) => Some(members.table()),
             None => None,
         }
-    }
-
-    /// The table of members that a type without [`members`](Self::members) builds at run
-    /// time. `None` without a call for a type that has no methods at all, which most values
-    /// whose attributes are read are.
-    #[inline(always)]
-    pub(crate) fn methods(&'static self) -> Option<&'static Methods> {
-        if self.starlark_value.ty.HAS_get_methods {
-            (self.starlark_value.ty.get_methods)()
-        } else {
-            None
-        }
-    }
-
-    /// [`methods`](Self::methods) without the test that saves the call: for where the value
-    /// is the receiver of a method call, which a value without methods rarely is.
-    #[inline(always)]
-    pub(crate) fn methods_unconditionally(&'static self) -> Option<&'static Methods> {
-        (self.starlark_value.ty.get_methods)()
     }
 
     pub(crate) fn drop_in_place(&'static self, value: StarlarkValueRawPtr) {

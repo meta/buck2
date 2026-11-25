@@ -1061,12 +1061,6 @@ impl<'v> Value<'v> {
                 return Ok(Some(member.bind(self, heap)?));
             }
             Ok(aref.get_attr_hashed(attribute, heap))
-        } else if let Some(methods) = aref.vtable().methods() {
-            let attribute = Hashed::new(attribute);
-            if let Some(v) = methods.get_hashed(attribute) {
-                return Ok(Some(v.at().bind(self, heap)?));
-            }
-            Ok(aref.get_attr_hashed(attribute, heap))
         } else {
             Ok(aref.get_attr(attribute, heap))
         }
@@ -1088,10 +1082,6 @@ impl<'v> Value<'v> {
             if members.get_str(Hashed::new(attribute)).is_some() {
                 return true;
             }
-        } else if let Some(methods) = aref.vtable().methods() {
-            if methods.get(attribute).is_some() {
-                return true;
-            }
         }
         aref.has_attr(attribute, heap)
     }
@@ -1108,8 +1098,6 @@ impl<'v> Value<'v> {
                     .into_iter()
                     .map(|member| member.name().to_owned()),
             );
-        } else if let Some(methods) = aref.vtable().methods() {
-            result.extend(methods.names());
         }
         result.sort();
         result

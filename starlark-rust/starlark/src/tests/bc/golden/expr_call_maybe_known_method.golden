@@ -14,5 +14,5 @@ Instructions:
     0: Const 1 ->&2
    24: CallMaybeKnownMethodPos &x append <m> &2..&3 instrs.star.bzl:1:14-25 ->&1
         # instrs.star.bzl:1:14-25
-  120: ReturnConst None
-  136: End
+  112: ReturnConst None
+  128: End

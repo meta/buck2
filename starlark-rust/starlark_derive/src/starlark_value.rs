@@ -1200,7 +1200,6 @@ const WITHOUT_RECEIVER: &[&str] = &[
     "get",
     "get_type_value_static",
     "get_type_starlark_repr",
-    "get_methods",
     "attr_ty",
     "bin_op_signatures",
     "rbin_op_signatures",

@@ -25,7 +25,6 @@ use std::hash::Hasher;
 use strong_hash::StrongHash;
 
 use crate::environment::GlobalFrozenHeapName;
-use crate::environment::MethodFrozenHeapName;
 
 /// Object-safe trait for user-defined heap names that supports hashing and downcasting.
 ///
@@ -76,8 +75,6 @@ impl Clone for Box<dyn UserHeapName> {
 /// Name/identifier for a frozen heap, used for heap graph tracking and metrics.
 #[derive(Clone, derive_more::Display, Debug, pagable::Pagable)]
 pub enum FrozenHeapName {
-    /// For starlark Methods heaps.
-    Method(MethodFrozenHeapName),
     /// For the global starlark environment heap.
     Global(GlobalFrozenHeapName),
     /// For starlark singleton heaps
@@ -95,12 +92,11 @@ impl FrozenHeapName {
 
 impl StrongHash for FrozenHeapName {
     fn strong_hash<H: Hasher>(&self, state: &mut H) {
-        // Inner Method/Global/Singleton variants implement `Hash` (deterministic
+        // Inner Global/Singleton variants implement `Hash` (deterministic
         // here because we control the `Hasher`); the User variant goes through
         // the `StrongHash` trait object.
         std::mem::discriminant(self).hash(state);
         match self {
-            FrozenHeapName::Method(m) => m.hash(state),
             FrozenHeapName::Global(g) => g.hash(state),
             FrozenHeapName::Singleton(s) => s.hash(state),
             FrozenHeapName::User(b) => b.dyn_strong_hash(state),

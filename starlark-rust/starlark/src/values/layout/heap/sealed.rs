@@ -756,7 +756,7 @@ const HEAP_REF_TAG_STATIC: u8 = 2;
 /// The wire format of [`OwnedFrozen<()>`], which delegates here: the inner Arc via the pagable arc
 /// mechanism.
 ///
-/// Registered static heaps (`globals_static!` / `methods_static!`) are
+/// Registered static heaps (`globals_static!`) are
 /// referenced by `StaticHeapId` instead: their values serialize as
 /// `StaticValueId`s, so the body is never needed on page-in, and paging the
 /// process-wide arc would stamp a `DataKey` on shared state that other

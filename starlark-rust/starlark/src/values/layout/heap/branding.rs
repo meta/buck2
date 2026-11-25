@@ -112,7 +112,7 @@
 //!    heap and provides the edge from the module's value heap to it; the dependency is
 //!    structural, see `ModuleHeaps`.
 //!  - `HeapEdge::immortal` is the edge from every heap to the `'static` brand, at which only
-//!    immortal data exists: statics, and the `Methods` tables reached through `&'static Methods`.
+//!    immortal data exists: statics.
 //!    `at()` on the static holders is this edge behind a name.
 //!  - `HeapEdge::identity` is the edge from a heap to itself, for code written against two brands
 //!    that is handed one heap for both.

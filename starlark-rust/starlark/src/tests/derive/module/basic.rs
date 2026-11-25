@@ -68,7 +68,7 @@ fn test_starlark_methods() {
         }
     }
 
-    MethodsBuilder::new().with(methods).build();
+    assert_eq!(1, METHODS_MEMBERS.members().len());
 }
 
 #[test]

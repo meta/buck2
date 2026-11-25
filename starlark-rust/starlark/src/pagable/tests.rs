@@ -42,7 +42,6 @@ use crate as starlark;
 use crate::const_frozen_string;
 use crate::environment::GlobalFrozenHeapName;
 use crate::environment::GlobalsBuilder;
-use crate::environment::MethodFrozenHeapName;
 use crate::pagable::error::PagableError;
 use crate::pagable::heap_ref_id::HeapRefId;
 use crate::pagable::starlark_deserialization_state_retained_bytes;
@@ -83,7 +82,6 @@ pagable::static_str!(CROSS_THREAD_GLOBALS_HEAP_NAME = "cross_thread");
 pagable::static_str!(BENCH_EVAL_HEAP_NAME = "bench_eval");
 pagable::static_str!(TEST_BCINSTRS_HEAP_NAME = "test_bcinstrs");
 pagable::static_str!(TEST_BCINSTRS_DET_GLOBALS_HEAP_NAME = "test_bcinstrs_det_globals");
-pagable::static_str!(METHOD_TEST_HEAP_NAME = "method_test");
 
 /// A frozen heap under construction whose allocations come back brand-erased.
 ///
@@ -297,9 +295,6 @@ fn test_frozen_heap_name_round_trip() -> crate::Result<()> {
     let names = [
         FrozenHeapName::Global(GlobalFrozenHeapName {
             name: TEST_EVAL_HEAP_NAME,
-        }),
-        FrozenHeapName::Method(MethodFrozenHeapName {
-            name: METHOD_TEST_HEAP_NAME,
         }),
         FrozenHeapName::Singleton(singleton_heap_name!()),
         TestHeapName::heap_name("user_test"),
@@ -2099,19 +2094,6 @@ starlark::globals_static!(
     }
 );
 
-starlark::methods_static!(
-    PAGABLE_TEST_STATIC_METHODS = |methods| {
-        methods.set_attribute(
-            "method_value",
-            SimpleData {
-                flag: false,
-                count: 23,
-            },
-            None,
-        );
-    }
-);
-
 fn assert_static_value_round_trip(
     static_fv: Value<'static>,
     label: usize,
@@ -2147,18 +2129,6 @@ fn test_globals_static_heap_value_round_trip() -> crate::Result<()> {
         .expect("static global should still point to SimpleData");
     assert_eq!(restored_data.flag, true);
     assert_eq!(restored_data.count, 17);
-    Ok(())
-}
-
-#[test]
-fn test_methods_static_heap_value_round_trip() -> crate::Result<()> {
-    let static_fv = PAGABLE_TEST_STATIC_METHODS
-        .methods()
-        .members()
-        .find_map(|(name, value)| (name == "method_value").then_some(value))
-        .expect("static method attribute should exist");
-
-    assert_static_value_round_trip(static_fv, 9)?;
     Ok(())
 }
 

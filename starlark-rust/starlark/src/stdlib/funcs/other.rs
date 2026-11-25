@@ -466,6 +466,31 @@ mod tests {
         );
     }
 
+    /// The specification says in words where `None` is accepted: the operands of a slice, the
+    /// bounds of `list.index`, the separator of `split`. These parameters it only calls
+    /// optional, so the one way not to give the argument is to leave it out.
+    #[test]
+    fn test_optional_parameter_of_the_specification_refuses_none() {
+        for call in [
+            r#"int("12", None)"#,
+            "range(3, None)",
+            "[1, 2, 3].pop(None)",
+            r#"" x ".strip(None)"#,
+            r#"" x ".lstrip(None)"#,
+            r#"" x ".rstrip(None)"#,
+            r#""aXa".replace("a", "b", None)"#,
+        ] {
+            assert::fail(call, "doesn't match");
+        }
+        for call in [
+            "sorted([3, 1, 2], key = None)",
+            "min([3, 1, 2], key = None)",
+            "max([3, 1, 2], key = None)",
+        ] {
+            assert::fail(call, "not supported on type `NoneType`");
+        }
+    }
+
     #[test]
     fn test_constants() {
         assert::is_true("not None");

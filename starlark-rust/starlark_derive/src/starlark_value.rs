@@ -470,69 +470,57 @@ impl ImplStarlarkValue {
         path
     }
 
-    /// For `methods = ..`: the table of the type's members as its `MEMBERS`, and a
-    /// `get_methods` that is filled from the same table. Also the items that go before the
-    /// block, which a type with two modules has: the table of both, and what `get_methods`
-    /// returns.
+    /// For `methods = ..`: the table of the type's members as its `MEMBERS`. Also the item that
+    /// goes before the block, which a type with two modules has: the table of both.
     fn methods(&self) -> (proc_macro2::TokenStream, Vec<syn::ImplItem>) {
-        let (before, members, statics): (proc_macro2::TokenStream, syn::Path, syn::Path) =
-            match self.attrs.methods.as_slice() {
-                [] => return (proc_macro2::TokenStream::new(), Vec::new()),
-                [module] => (
-                    proc_macro2::TokenStream::new(),
-                    Self::module_static(module, "MEMBERS"),
-                    Self::module_static(module, "STATICS"),
-                ),
-                modules => {
-                    let (first, second) = (&modules[0], &modules[1]);
-                    // The two statics need names that no other block of the module has.
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    std::hash::Hash::hash(
-                        &self.input.self_ty.to_token_stream().to_string(),
-                        &mut hasher,
-                    );
-                    let unique = std::hash::Hasher::finish(&hasher);
-                    let members = quote::format_ident!("__STARLARK_MEMBERS_{:016X}", unique);
-                    let statics = quote::format_ident!("__STARLARK_METHODS_{:016X}", unique);
-                    let (first_members, second_members) = (
-                        Self::module_static(first, "MEMBERS"),
-                        Self::module_static(second, "MEMBERS"),
-                    );
-                    let (first_slots, second_slots) = (
-                        Self::module_static(first, "SLOTS"),
-                        Self::module_static(second, "SLOTS"),
-                    );
-                    (
-                        quote! {
-                            static #members: starlark::environment::MemberTable<
-                                [starlark::environment::Member;
-                                    starlark::environment::concat_slots(#first_slots, #second_slots)],
-                            > = starlark::environment::MemberTable::concat(
-                                &#first_members,
-                                &#second_members,
-                            );
-                            starlark::methods_static!(
-                                #statics = |builder| builder.extend(&#members)
-                            );
-                        },
-                        syn::parse_quote! { #members },
-                        syn::parse_quote! { #statics },
-                    )
-                }
-            };
+        let (before, members): (proc_macro2::TokenStream, syn::Path) = match self
+            .attrs
+            .methods
+            .as_slice()
+        {
+            [] => return (proc_macro2::TokenStream::new(), Vec::new()),
+            [module] => (
+                proc_macro2::TokenStream::new(),
+                Self::module_static(module, "MEMBERS"),
+            ),
+            modules => {
+                let (first, second) = (&modules[0], &modules[1]);
+                // The static needs a name that no other block of the module has.
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(
+                    &self.input.self_ty.to_token_stream().to_string(),
+                    &mut hasher,
+                );
+                let unique = std::hash::Hasher::finish(&hasher);
+                let members = quote::format_ident!("__STARLARK_MEMBERS_{:016X}", unique);
+                let (first_members, second_members) = (
+                    Self::module_static(first, "MEMBERS"),
+                    Self::module_static(second, "MEMBERS"),
+                );
+                let (first_slots, second_slots) = (
+                    Self::module_static(first, "SLOTS"),
+                    Self::module_static(second, "SLOTS"),
+                );
+                (
+                    quote! {
+                        static #members: starlark::environment::MemberTable<
+                            [starlark::environment::Member;
+                                starlark::environment::concat_slots(#first_slots, #second_slots)],
+                        > = starlark::environment::MemberTable::concat(
+                            &#first_members,
+                            &#second_members,
+                        );
+                    },
+                    syn::parse_quote! { #members },
+                )
+            }
+        };
         (
             before,
-            vec![
-                syn::parse_quote! {
-                    const MEMBERS: std::option::Option<&'static starlark::environment::MemberTable> =
-                        std::option::Option::Some(&#members);
-                },
-                syn::parse_quote! {
-                    fn get_methods() -> std::option::Option<&'static starlark::environment::Methods> {
-                        std::option::Option::Some(#statics.methods())
-                    }
-                },
-            ],
+            vec![syn::parse_quote! {
+                const MEMBERS: std::option::Option<&'static starlark::environment::MemberTable> =
+                    std::option::Option::Some(&#members);
+            }],
         )
     }
 

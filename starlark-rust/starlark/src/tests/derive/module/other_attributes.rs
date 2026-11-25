@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn statics_are_populated() {
-        let _ = &TEST_OTHER_ATTRIBUTES_IN_METHODS_STATICS;
-        let _ = &TEST_OTHER_ATTRIBUTES_IN_ATRIBUTES_STATICS;
+        let _ = &TEST_OTHER_ATTRIBUTES_IN_METHODS_MEMBERS;
+        let _ = &TEST_OTHER_ATTRIBUTES_IN_ATRIBUTES_MEMBERS;
     }
 }

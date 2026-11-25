@@ -269,20 +269,6 @@ impl MethodsStatic {
             builder.build()
         })
     }
-
-    /// Copy all the methods into another builder. The methods' values stay
-    /// owned by the static's heap; `out`'s heap takes a reference so the
-    /// dependency is recorded for downstream consumers (e.g. pagable
-    /// serialization).
-    pub fn populate(&'static self, out: &mut MethodsBuilder) {
-        let methods = self.methods();
-        for (name, value) in methods.members.iter() {
-            out.members.insert(name.as_str(), *value);
-        }
-        out.heap
-            .with(|heap| heap.add_reference(methods.heap.owner()));
-        out.docstring = methods.docstring.clone();
-    }
 }
 
 /// Forget the brand of a member, for storage in a [`MethodsBuilder`].

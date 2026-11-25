@@ -192,7 +192,6 @@ fn render_methods(
     let fn_name = &input.sig.ident;
     let table_name = format_ident!("{}_MEMBERS", module_name.to_uppercase());
     let slots_name = format_ident!("{}_SLOTS", module_name.to_uppercase());
-    let statics_name = format_ident!("{}_STATICS", module_name.to_uppercase());
     let builder = match input.sig.inputs.first() {
         Some(syn::FnArg::Typed(arg)) => arg.pat.clone(),
         _ => {
@@ -204,7 +203,7 @@ fn render_methods(
     };
     input.block = syn::parse_quote! {
         {
-            #statics_name.populate(#builder);
+            #builder.extend(&#table_name);
         }
     };
 
@@ -218,13 +217,6 @@ fn render_methods(
         #vis static #table_name:
             starlark::environment::MemberTable<[starlark::environment::Member; #slots_name]> =
             starlark::environment::MemberTable::new(#docstring, [ #( #members ),* ]);
-
-        starlark::methods_static!(#vis #statics_name = {
-            fn build(builder: &mut starlark::environment::MethodsBuilder) {
-                builder.extend(&#table_name);
-            }
-            build
-        });
 
         #input
     })

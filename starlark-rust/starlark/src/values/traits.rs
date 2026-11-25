@@ -311,13 +311,23 @@ pub trait StarlarkType<'v>:
     /// of the representation, unless the block overrides it.
     fn get_type_starlark_repr() -> Ty;
 
-    /// Get the members associated with this type, accessible via `this_type.x`.
-    /// These members will have `dir`/`getattr`/`hasattr` properly implemented,
-    /// so it is the preferred way to go if possible.
+    /// The methods and attributes of a type that does not name a module of them: a table built
+    /// at run time, with [`methods_static!`](crate::methods_static).
     ///
-    /// `#[starlark_module]` creates a [`MethodsStatic`](crate::environment::MethodsStatic)
-    /// named after the initializer function. Attributes and methods can be attached
-    /// to a value with that generated static:
+    /// A type's methods and attributes are normally the members of a `#[starlark_module]`,
+    /// which the block names; see [`MEMBERS`](Self::MEMBERS).
+    fn get_methods() -> Option<&'static Methods>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    /// The type's methods and attributes, accessible via `this_type.x`, as a `static` table.
+    /// These members have `dir`/`getattr`/`hasattr` properly implemented, so it is the
+    /// preferred way to go if possible.
+    ///
+    /// `#[starlark_value(methods = ..)]` sets it, from the `#[starlark_module]` it names:
     ///
     /// ```ignore
     /// #[starlark_module]
@@ -328,31 +338,14 @@ pub trait StarlarkType<'v>:
     ///     }
     /// }
     ///
-    /// #[starlark_value(type = "foo")]
-    /// impl<'v> StarlarkValue<'v> for Foo {
-    ///     fn get_methods() -> Option<&'static Methods> {
-    ///         Some(FOO_METHODS_STATICS.methods())
-    ///     }
-    /// }
+    /// #[starlark_value(type = "foo", methods = foo_methods)]
+    /// impl<'v> StarlarkValue<'v> for Foo {}
     /// ```
     ///
-    /// The generated `FOO_METHODS_STATICS` already owns the method table; do not
-    /// also register the initializer with [`methods_static!`](crate::methods_static).
-    /// When migrating from `StarlarkAttrs`, remove field-level `#[starlark(skip)]`
+    /// The vtable holds the table, and a lookup of `x.name` reads it from there, without a
+    /// call. When migrating from `StarlarkAttrs`, remove field-level `#[starlark(skip)]`
     /// and `#[starlark(clone)]` attributes. Omit getters for skipped fields, and
     /// return borrowed or preallocated values instead of cloning expensive fields.
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        None
-    }
-
-    /// The type's methods and attributes as a `static` table: what
-    /// `#[starlark_value(methods = ..)]` sets, from the module it names. The vtable holds it,
-    /// and a lookup of `x.name` reads it from there, without a call. A type that still
-    /// writes [`get_methods`](Self::get_methods) by hand has `None` here and is looked up
-    /// through that.
     #[doc(hidden)]
     const MEMBERS: Option<&'static crate::environment::MemberTable> = None;
 

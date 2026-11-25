@@ -85,6 +85,12 @@ pub struct SettingKeyMetadata {
 
 impl SettingKeyMetadata {
     pub(super) fn allows_source(&self, source: SettingSource) -> bool {
+        // Open source builds have no rollout cache, so enforcement through
+        // `overridable_in()` would leave keys settable only via the repo
+        // file. Everything is overrideable there.
+        if cfg!(not(fbcode_build)) {
+            return true;
+        }
         match source {
             SettingSource::Base | SettingSource::Rollout => true,
             SettingSource::Override(source) => self.overridable_in.contains(&source),

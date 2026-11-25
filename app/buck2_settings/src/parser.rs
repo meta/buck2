@@ -1236,6 +1236,8 @@ mod tests {
         Ok(())
     }
 
+    // Internal-only policy: open source builds skip the override check.
+    #[cfg(fbcode_build)]
     #[test]
     fn test_rejects_disallowed_local_settings_override() {
         let local = ProjectRootTemp::new().unwrap();
@@ -1261,6 +1263,8 @@ mod tests {
         );
     }
 
+    // Internal-only policy: open source builds skip the override check.
+    #[cfg(fbcode_build)]
     #[test]
     fn test_rejects_disallowed_command_line_override() {
         let error = resolve_with_metadata::<TestBuckSettingsData>(
@@ -1289,6 +1293,30 @@ mod tests {
                 ),
                 table("[test_section]\ntest_flag = true"),
             )],
+            TEST_FLAG_NOT_OVERRIDABLE,
+        )?;
+        assert_eq!(resolved.test_section.unwrap().test_flag, Some(true));
+        Ok(())
+    }
+
+    #[cfg(not(fbcode_build))]
+    #[test]
+    fn test_oss_overrides_bypass_policy() -> buck2_error::Result<()> {
+        let local = ProjectRootTemp::new()?;
+        let resolved = resolve_with_metadata::<TestBuckSettingsData>(
+            vec![
+                SettingsLayer::new(
+                    SettingOrigin::Local(
+                        local
+                            .path()
+                            .root()
+                            .as_abs_path()
+                            .join(".bucksettings.local.toml"),
+                    ),
+                    table("[test_section]\ntest_flag = false"),
+                ),
+                SettingsLayer::setting_flag(table("[test_section]\ntest_flag = true")),
+            ],
             TEST_FLAG_NOT_OVERRIDABLE,
         )?;
         assert_eq!(resolved.test_section.unwrap().test_flag, Some(true));

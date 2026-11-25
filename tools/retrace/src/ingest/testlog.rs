@@ -132,6 +132,7 @@ pub fn command_only_log(dir: &Path, result: CommandOnlyResult, phases: bool) -> 
         frames.push(frame(buck2_cli_proto::command_progress::Progress::Result(
             Box::new(buck2_cli_proto::CommandResult {
                 result: Some(response),
+                ..Default::default()
             }),
         )));
     }
@@ -620,6 +621,7 @@ pub fn demo_log_with(dir: &Path, o: DemoOpts) -> PathBuf {
                         ..Default::default()
                     },
                 )),
+                ..Default::default()
             }),
         )));
     }
@@ -1064,6 +1066,7 @@ pub fn local_cache_stage_log(dir: &Path) -> PathBuf {
             result: Some(buck2_cli_proto::command_result::Result::BuildResponse(
                 Default::default(),
             )),
+            ..Default::default()
         }),
     )));
     let path = dir.join("local_cache_stages.pb");
@@ -1419,6 +1422,7 @@ pub fn wait_state_log(dir: &Path, case: WaitStateCase) -> PathBuf {
                 result: Some(buck2_cli_proto::command_result::Result::BuildResponse(
                     buck2_cli_proto::BuildResponse::default(),
                 )),
+                ..Default::default()
             }),
         )));
     }
@@ -1533,6 +1537,7 @@ pub fn reorder_log(dir: &Path) -> PathBuf {
             result: Some(buck2_cli_proto::command_result::Result::BuildResponse(
                 buck2_cli_proto::BuildResponse::default(),
             )),
+            ..Default::default()
         }),
     )));
     let path = dir.join("reorder_events.pb");
@@ -1641,6 +1646,7 @@ pub fn many_tsets_log(dir: &Path) -> PathBuf {
             result: Some(buck2_cli_proto::command_result::Result::BuildResponse(
                 buck2_cli_proto::BuildResponse::default(),
             )),
+            ..Default::default()
         }),
     )));
     let path = dir.join("many_tsets_events.pb");
@@ -1757,6 +1763,7 @@ pub fn equal_label_log(dir: &Path) -> PathBuf {
             result: Some(buck2_cli_proto::command_result::Result::BuildResponse(
                 buck2_cli_proto::BuildResponse::default(),
             )),
+            ..Default::default()
         }),
     )));
     let path = dir.join("equal_label_events.pb");
@@ -2056,6 +2063,7 @@ pub fn command_profile_log(dir: &Path) -> PathBuf {
             result: Some(buck2_cli_proto::command_result::Result::InstallResponse(
                 Default::default(),
             )),
+            ..Default::default()
         }),
     )));
     let path = dir.join("command_profile_events.pb");

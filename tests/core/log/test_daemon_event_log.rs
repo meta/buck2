@@ -45,9 +45,9 @@ async fn finished_log(buck: &Buck) -> Vec<Value> {
 
 /// A command that asks the daemon for the event log has one log, where the client's would be,
 /// and it holds the command from its start to its result.
-#[buck_test]
+#[buck_test(write_invocation_record = true)]
 async fn test_daemon_writes_the_event_log(buck: &Buck) -> anyhow::Result<()> {
-    buck.build(&[WRITTEN_BY_DAEMON]).await?;
+    let built = buck.build(&[WRITTEN_BY_DAEMON]).await?;
 
     let log = finished_log(buck).await;
     let has = |path: &[&str]| log.iter().any(|e| json_get(e, path).is_some());
@@ -68,6 +68,14 @@ async fn test_daemon_writes_the_event_log(buck: &Buck) -> anyhow::Result<()> {
         .filter(|path| path.to_string_lossy().ends_with("_events.pb.zst"))
         .collect();
     assert_eq!(logs, [Path::new(path)]);
+
+    // The daemon says how much of the log it had written when it sent the result, which is
+    // not all of it, and the client records that.
+    let said = log.last().unwrap()["Result"]["event_log_size_bytes"].as_u64();
+    let file_bytes = std::fs::metadata(path)?.len();
+    assert!(said.is_some_and(|said| 0 < said && said <= file_bytes));
+    let recorded = &built.invocation_record()?["compressed_event_log_size_bytes"];
+    assert_eq!(recorded.as_u64(), said);
     Ok(())
 }
 

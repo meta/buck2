@@ -1000,6 +1000,7 @@ impl BuckdServer {
                 .as_ref()
                 .map(|_| daemon_event_log(soft_error_context.dupe()))
                 .unzip();
+            let event_log_flusher = event_log_sender.as_ref().map(|sender| sender.flusher());
             let (events, dispatch) = daemon_state
                 .prepare_events(trace_id, event_log_sender)
                 .await?;
@@ -1233,6 +1234,10 @@ impl BuckdServer {
                         drop(version_control_revision_collector);
                         #[cfg(unix)]
                         drop(memory_reporter);
+                        // The result says how much of the event log the daemon has written.
+                        if let Some(event_log_flusher) = &event_log_flusher {
+                            event_log_flusher.flush().await;
+                        }
                         match result {
                             Ok(_) => dispatch.command_result(result_to_command_result(result)),
                             Err(e) => {
@@ -1397,6 +1402,7 @@ fn error_to_command_result(e: buck2_error::Error) -> CommandResult {
         result: Some(command_result::Result::Error(
             buck2_data::ErrorReport::from(&e),
         )),
+        event_log_size_bytes: None,
     }
 }
 
@@ -1406,6 +1412,7 @@ fn result_to_command_result<R: Into<command_result::Result>>(
     match result {
         Ok(result) => CommandResult {
             result: Some(result.into()),
+            event_log_size_bytes: None,
         },
         Err(e) => error_to_command_result(e),
     }
@@ -3719,6 +3726,7 @@ mod tests {
         fn body_result() -> CommandResult {
             CommandResult {
                 result: Some(command_result::Result::PingResponse(PingResponse::default())),
+                event_log_size_bytes: None,
             }
         }
 

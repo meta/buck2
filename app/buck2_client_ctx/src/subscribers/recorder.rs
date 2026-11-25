@@ -241,6 +241,9 @@ pub struct InvocationRecorder {
     has_command_result: bool,
     has_end_of_stream: bool,
     compressed_event_log_size_bytes: Option<Arc<AtomicU64>>,
+    /// How much of the event log the daemon had written when it sent the command's result,
+    /// if the daemon writes the log.
+    daemon_event_log_size_bytes: Option<u64>,
     critical_path_backend: Option<String>,
     bxl_ensure_artifacts_duration: Option<prost_types::Duration>,
     install_duration: Option<prost_types::Duration>,
@@ -478,6 +481,7 @@ impl InvocationRecorder {
             has_command_result: false,
             has_end_of_stream: false,
             compressed_event_log_size_bytes: None,
+            daemon_event_log_size_bytes: None,
             critical_path_backend: None,
             bxl_ensure_artifacts_duration: None,
             install_duration: None,
@@ -1293,13 +1297,15 @@ impl InvocationRecorder {
             restarted_trace_id: self.restarted_trace_id.as_ref().map(|t| t.to_string()),
             has_command_result: Some(self.has_command_result),
             has_end_of_stream: Some(self.has_end_of_stream),
-            // At this point we expect the event log writer to have finished
-            compressed_event_log_size_bytes: Some(
-                self.compressed_event_log_size_bytes
-                    .as_ref()
-                    .map(|x| x.load(Ordering::Relaxed))
-                    .unwrap_or_default(),
-            ),
+            // At this point we expect the client's event log writer to have finished
+            compressed_event_log_size_bytes: Some(self.daemon_event_log_size_bytes.unwrap_or_else(
+                || {
+                    self.compressed_event_log_size_bytes
+                        .as_ref()
+                        .map(|x| x.load(Ordering::Relaxed))
+                        .unwrap_or_default()
+                },
+            )),
             critical_path_backend: self.critical_path_backend.take(),
             instant_command_is_success: None,
             bxl_ensure_artifacts_duration: self.bxl_ensure_artifacts_duration.take(),
@@ -2904,6 +2910,7 @@ impl EventSubscriber for InvocationRecorder {
         result: &buck2_cli_proto::CommandResult,
     ) -> buck2_error::Result<()> {
         self.has_command_result = true;
+        self.daemon_event_log_size_bytes = result.event_log_size_bytes;
         match &result.result {
             Some(command_result::Result::BuildResponse(res)) => {
                 // Append per-BuildTarget rule type names from the build

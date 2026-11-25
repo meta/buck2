@@ -585,6 +585,7 @@ mod tests {
                     result: Some(buck2_cli_proto::command_result::Result::BuildResponse(
                         buck2_cli_proto::BuildResponse::default(),
                     )),
+                    ..Default::default()
                 }),
             )),
         }

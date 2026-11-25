@@ -760,6 +760,7 @@ mod tests {
             result: Some(command_result::Result::BuildResponse(
                 buck2_cli_proto::BuildResponse::default(),
             )),
+            ..Default::default()
         }
     }
 

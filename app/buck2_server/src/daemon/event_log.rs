@@ -16,6 +16,8 @@
 
 use std::mem;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::SystemTime;
 
@@ -41,18 +43,36 @@ use buck2_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot;
 
 /// How often the events written so far are flushed to the log, as the client does for its own.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
+/// How long a command's result waits for the log to be flushed, so that it can say how big
+/// the log is. A writer that is further behind than this does not hold the result.
+const RESULT_FLUSH_WAIT: Duration = Duration::from_secs(1);
+
+/// What waits to be written.
+enum Queued {
+    /// An event or the command's result.
+    Event(Event),
+    /// A request to flush the log once what was queued before this is written. It is
+    /// answered when that is done.
+    Flush(oneshot::Sender<()>),
+}
+
 /// Gives a command's events to the task that writes them to the daemon's event log.
 pub(crate) struct DaemonEventLogSender {
-    events: UnboundedSender<Event>,
+    events: UnboundedSender<Queued>,
+    /// How many bytes of the log, compressed, are in its file.
+    written_bytes: Arc<AtomicU64>,
 }
 
 /// The events of a command that are to be written to the daemon's event log.
 pub(crate) struct DaemonEventLogEvents {
-    events: UnboundedReceiver<Event>,
+    events: UnboundedReceiver<Queued>,
+    /// Where the writer counts the bytes of the log, compressed, that are in its file.
+    written_bytes: Arc<AtomicU64>,
     /// When the queue was made, which is before the command's first event. It is the start
     /// time in the log's header.
     started: SystemTime,
@@ -62,14 +82,36 @@ pub(crate) struct DaemonEventLogEvents {
     soft_errors: Arc<SoftErrorContext>,
 }
 
+/// Has the task that writes a command's event log flush it.
+pub(crate) struct DaemonEventLogFlusher {
+    events: UnboundedSender<Queued>,
+}
+
+impl DaemonEventLogFlusher {
+    /// Has the writer write what is queued and flush the log, and waits for that, though no
+    /// longer than `RESULT_FLUSH_WAIT`. A command does this before it sends its result, which
+    /// says how much of the log is in its file.
+    pub(crate) async fn flush(&self) {
+        let (flushed, wait) = oneshot::channel();
+        if self.events.send(Queued::Flush(flushed)).is_ok() {
+            let _ignored = tokio::time::timeout(RESULT_FLUSH_WAIT, wait).await;
+        }
+    }
+}
+
 pub(crate) fn daemon_event_log(
     soft_errors: Arc<SoftErrorContext>,
 ) -> (DaemonEventLogSender, DaemonEventLogEvents) {
     let (send, recv) = tokio::sync::mpsc::unbounded_channel();
+    let written_bytes = Arc::new(AtomicU64::new(0));
     (
-        DaemonEventLogSender { events: send },
+        DaemonEventLogSender {
+            events: send,
+            written_bytes: written_bytes.dupe(),
+        },
         DaemonEventLogEvents {
             events: recv,
+            written_bytes,
             started: SystemTime::now(),
             soft_errors,
         },
@@ -83,13 +125,28 @@ impl DaemonEventLogSender {
         DaemonEventLogSink { sender: self, sink }
     }
 
-    /// Queues a copy of `event`, if it is one that an event log holds.
-    fn send(&self, event: &Event) {
+    pub(crate) fn flusher(&self) -> DaemonEventLogFlusher {
+        DaemonEventLogFlusher {
+            events: self.events.clone(),
+        }
+    }
+
+    /// Queues a copy of `event`. The command's result is first told how much of the log is
+    /// in its file by now, which is how the client learns the size of a log it does not
+    /// write.
+    fn send(&self, event: &mut Event) {
+        match event {
+            Event::Buck(..) => {}
+            Event::CommandResult(result) => {
+                result.event_log_size_bytes = Some(self.written_bytes.load(Ordering::Relaxed));
+            }
+            Event::PartialResult(..) => return,
+        }
         // The log ends at the command's result, and events can follow it.
-        if matches!(event, Event::PartialResult(..)) || self.events.is_closed() {
+        if self.events.is_closed() {
             return;
         }
-        let _ignored = self.events.send(event.clone());
+        let _ignored = self.events.send(Queued::Event(event.clone()));
     }
 }
 
@@ -100,13 +157,13 @@ pub(crate) struct DaemonEventLogSink {
 
 #[async_trait]
 impl EventSink for DaemonEventLogSink {
-    fn send(&self, event: Event) {
-        self.sender.send(&event);
+    fn send(&self, mut event: Event) {
+        self.sender.send(&mut event);
         self.sink.send(event);
     }
 
-    async fn send_now(&self, event: Event) {
-        self.sender.send(&event);
+    async fn send_now(&self, mut event: Event) {
+        self.sender.send(&mut event);
         self.sink.send_now(event).await;
     }
 }
@@ -149,7 +206,8 @@ impl DaemonEventLogEvents {
             command_name: client_ctx.command_name.clone(),
             retained_event_logs: settings.event_log.retained_logs(),
         };
-        let mut log = writer(files, client_ctx, request, start_time)?;
+        let written_bytes = Some(self.written_bytes.dupe());
+        let mut log = writer(files, client_ctx, request, start_time, written_bytes)?;
         log.open(trace_id, start_time).await?;
         let path = log
             .command_log()
@@ -163,7 +221,7 @@ impl DaemonEventLogEvents {
 
     /// Waits for what is queued and appends it to `batch`. Returns false once no more can be
     /// queued.
-    async fn recv(&mut self, batch: &mut Vec<Event>) -> bool {
+    async fn recv(&mut self, batch: &mut Vec<Queued>) -> bool {
         self.events.recv_many(batch, 1000).await != 0
     }
 }
@@ -175,6 +233,7 @@ fn writer(
     client_ctx: &ClientContext,
     request: &DaemonEventLogRequest,
     start_time: SystemTime,
+    written_bytes: Option<Arc<AtomicU64>>,
 ) -> buck2_error::Result<WriteEventLog> {
     let expanded_argv = request.expanded_command_line_args.clone();
     Ok(WriteEventLog::new(
@@ -186,21 +245,27 @@ fn writer(
         }
         .no_need_to_sanitize(),
         start_time,
-        None,
+        written_bytes,
     ))
 }
 
 /// Writes `batch` to `log`. Returns false once it holds the command's result.
-async fn write_batch(log: &mut WriteEventLog, batch: Vec<Event>) -> buck2_error::Result<bool> {
+async fn write_batch(log: &mut WriteEventLog, batch: Vec<Queued>) -> buck2_error::Result<bool> {
     let mut buck_events = Vec::with_capacity(batch.len());
-    for event in batch {
-        match event {
-            Event::Buck(event) => buck_events.push(Arc::new(event)),
-            Event::PartialResult(..) => {}
-            Event::CommandResult(result) => {
+    for queued in batch {
+        match queued {
+            Queued::Event(Event::Buck(event)) => buck_events.push(Arc::new(event)),
+            Queued::Event(Event::PartialResult(..)) => {}
+            Queued::Event(Event::CommandResult(result)) => {
                 log.write_events(&buck_events).await?;
                 log.write_result(&result).await?;
                 return Ok(false);
+            }
+            Queued::Flush(flushed) => {
+                let events = mem::take(&mut buck_events);
+                log.write_events(&events).await?;
+                log.flush_files().await?;
+                let _ignored = flushed.send(());
             }
         }
     }
@@ -286,12 +351,23 @@ mod tests {
         (sender.tee(Arc::new(client)), events, source)
     }
 
-    async fn queued(events: &mut DaemonEventLogEvents) -> Vec<String> {
+    async fn queued_events(events: &mut DaemonEventLogEvents) -> Vec<Event> {
         let mut received = Vec::new();
         while !events.events.is_empty() {
             assert!(events.recv(&mut received).await);
         }
-        received.iter().map(|e| message(e).to_owned()).collect()
+        received
+            .into_iter()
+            .filter_map(|queued| match queued {
+                Queued::Event(event) => Some(event),
+                Queued::Flush(..) => None,
+            })
+            .collect()
+    }
+
+    async fn queued(events: &mut DaemonEventLogEvents) -> Vec<String> {
+        let events = queued_events(events).await;
+        events.iter().map(|e| message(e).to_owned()).collect()
     }
 
     fn sent_on(source: &mut ChannelEventSource) -> Vec<String> {
@@ -309,5 +385,63 @@ mod tests {
 
         assert_eq!(queued(&mut events).await, ["a", "result"]);
         assert_eq!(sent_on(&mut client), ["a", "partial result", "result"]);
+    }
+
+    /// The command's result says how much of the log is in its file when it is sent, to the
+    /// client and in the log.
+    #[tokio::test]
+    async fn test_result_has_the_size_of_the_log_so_far() {
+        let (sink, mut events, mut client) = sink();
+        events.written_bytes.store(42, Ordering::Relaxed);
+        sink.send(Event::CommandResult(Box::default()));
+
+        let size = |event: Option<Event>| match event {
+            Some(Event::CommandResult(result)) => result.event_log_size_bytes,
+            event => panic!("Not a result: {event:?}"),
+        };
+        assert_eq!(size(client.try_receive()), Some(42));
+        assert_eq!(size(queued_events(&mut events).await.pop()), Some(42));
+    }
+
+    /// A flush puts what is queued in the log's file, so that the size of the log that the
+    /// result then carries is the size of the file.
+    #[tokio::test]
+    async fn test_flush_writes_what_is_queued_to_the_file() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let (sink, events, _client) = sink();
+        let flusher = sink.sender.flusher();
+        let written_bytes = events.written_bytes.dupe();
+        let files = EventLogFiles::Command {
+            logdir: AbsNormPathBuf::try_from(dir.path().canonicalize()?)?,
+            command_name: "build".to_owned(),
+            retained_event_logs: 2,
+        };
+        let client_ctx = ClientContext {
+            working_dir: dir.path().canonicalize()?.to_str().unwrap().to_owned(),
+            ..Default::default()
+        };
+        let log = writer(
+            files,
+            &client_ctx,
+            &DaemonEventLogRequest::default(),
+            SystemTime::now(),
+            Some(written_bytes.dupe()),
+        )?;
+        tokio::spawn(write_events(log, events));
+        sink.send(event("a"));
+
+        flusher.flush().await;
+
+        let logs: Vec<_> = std::fs::read_dir(dir.path())?
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .filter(|path| path.is_file())
+            .collect();
+        let [log] = logs.as_slice() else {
+            panic!("Not one log: {logs:?}");
+        };
+        let file_bytes = log.metadata()?.len();
+        assert!(file_bytes > 0);
+        assert_eq!(written_bytes.load(Ordering::Relaxed), file_bytes);
+        Ok(())
     }
 }

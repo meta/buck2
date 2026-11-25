@@ -821,6 +821,13 @@ message CommandResult {
     GenericResponse generic_response = 100;
     NewGenericResponseMessage new_generic_response_message = 101;
   }
+
+  // How many bytes of the command's event log, compressed, the daemon had
+  // written to the log's file when it sent this result, if the daemon writes
+  // the log. The daemon first flushes the log, for up to a second. The log is
+  // not complete then: this result is not counted, and neither are the events
+  // the daemon had yet to write if it was further behind than that.
+  optional uint64 event_log_size_bytes = 102;
 }
 
 message StdoutBytes {

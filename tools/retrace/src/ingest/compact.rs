@@ -498,6 +498,7 @@ mod tests {
             result: Some(buck2_cli_proto::command_result::Result::PingResponse(
                 Default::default(),
             )),
+            ..Default::default()
         }));
         let StreamValue::Result(result) = clean(result, false) else {
             panic!("Result marker removed")
@@ -510,6 +511,7 @@ mod tests {
             result: Some(buck2_cli_proto::command_result::Result::BuildResponse(
                 Default::default(),
             )),
+            ..Default::default()
         }));
         assert_kept(result, false);
         for result in [
@@ -519,6 +521,7 @@ mod tests {
             assert_kept(
                 StreamValue::Result(Box::new(buck2_cli_proto::CommandResult {
                     result: Some(result),
+                    ..Default::default()
                 })),
                 false,
             );

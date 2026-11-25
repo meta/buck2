@@ -962,6 +962,7 @@ mod tests {
                     message: "é".repeat(20_000),
                     ..Default::default()
                 })),
+                ..Default::default()
             },
         )));
         assert_eq!(collector.profile.result_outcome.as_deref(), Some("failed"));
@@ -1005,6 +1006,7 @@ mod tests {
                     executor_exit_code: 1,
                     ..Default::default()
                 })),
+                ..Default::default()
             },
         )));
         assert_eq!(c.profile.result_outcome.as_deref(), Some("tests-failed"));
@@ -1015,6 +1017,7 @@ mod tests {
                     error_count: 2,
                     ..Default::default()
                 })),
+                ..Default::default()
             },
         )));
         assert_eq!(c.profile.result_outcome.as_deref(), Some("success"));
@@ -1294,6 +1297,7 @@ mod tests {
                 result: Some(buck2_cli_proto::command_result::Result::InstallResponse(
                     Default::default(),
                 )),
+                ..Default::default()
             },
         )));
         assert_eq!(c.profile.result_outcome.as_deref(), Some("success"));
@@ -1302,6 +1306,7 @@ mod tests {
                 result: Some(buck2_cli_proto::command_result::Result::Error(
                     Default::default(),
                 )),
+                ..Default::default()
             },
         )));
         let p = c.finish(false).unwrap();

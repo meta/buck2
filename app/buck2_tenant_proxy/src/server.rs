@@ -195,6 +195,7 @@ impl ProxyState {
         };
         Ok(Response::new(CommandResult {
             result: Some(response.into()),
+            event_log_size_bytes: None,
         }))
     }
 
@@ -218,6 +219,7 @@ impl ProxyState {
         }
         Ok(Response::new(CommandResult {
             result: Some(KillResponse {}.into()),
+            event_log_size_bytes: None,
         }))
     }
 

@@ -769,6 +769,7 @@ impl StatefulSuperConsole {
         let mut lines = Lines::new();
         if let buck2_cli_proto::CommandResult {
             result: Some(buck2_cli_proto::command_result::Result::Error(e)),
+            ..
         } = result
         {
             let style = ContentStyle {
@@ -1859,6 +1860,7 @@ mod tests {
                 result: Some(buck2_cli_proto::command_result::Result::GenericResponse(
                     GenericResponse {},
                 )),
+                event_log_size_bytes: None,
             })
             .await
             .unwrap();
@@ -1990,7 +1992,7 @@ mod tests {
         assert_frame_contains(&frame, "Loading targets");
 
         console
-            .handle_command_result(&buck2_cli_proto::CommandResult { result: None })
+            .handle_command_result(&buck2_cli_proto::CommandResult::default())
             .await?;
 
         Ok(())

@@ -295,7 +295,10 @@ mod tests {
     use super::*;
 
     fn result(r: command_result::Result) -> StreamValue {
-        StreamValue::Result(Box::new(buck2_cli_proto::CommandResult { result: Some(r) }))
+        StreamValue::Result(Box::new(buck2_cli_proto::CommandResult {
+            result: Some(r),
+            event_log_size_bytes: None,
+        }))
     }
 
     fn error(message: &str) -> buck2_data::ErrorReport {

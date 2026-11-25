@@ -951,6 +951,7 @@ impl StatefulSuperConsoleImpl {
             | buck2_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedInstant(_, _) => {
                 Err(VisitorError::MissingField(event.clone()).into())
             }
+            buck2_event_observer::unpack_event::UnpackedBuckEvent::Record(_, _) => Ok(()),
         }
     }
 

@@ -9,6 +9,7 @@
  */
 
 use buck2_data::InstantEvent;
+use buck2_data::RecordEvent;
 use buck2_data::SpanEndEvent;
 use buck2_data::SpanStartEvent;
 use buck2_data::buck_event;
@@ -19,8 +20,6 @@ use buck2_events::BuckEvent;
 pub enum VisitorError {
     #[error("Sent an event missing one or more fields: `{0:?}`")]
     MissingField(BuckEvent),
-    #[error("Sent an unexpected Record event: `{0:?}`")]
-    UnexpectedRecord(BuckEvent),
 }
 
 /// Just a simple structure that makes it easier to deal with BuckEvent rather than
@@ -44,6 +43,7 @@ pub enum UnpackedBuckEvent<'a> {
     UnrecognizedSpanStart(&'a BuckEvent, &'a SpanStartEvent),
     UnrecognizedSpanEnd(&'a BuckEvent, &'a SpanEndEvent),
     UnrecognizedInstant(&'a BuckEvent, &'a InstantEvent),
+    Record(&'a BuckEvent, &'a RecordEvent),
 }
 
 pub fn unpack_event(event: &BuckEvent) -> buck2_error::Result<UnpackedBuckEvent<'_>> {
@@ -69,6 +69,6 @@ pub fn unpack_event(event: &BuckEvent) -> buck2_error::Result<UnpackedBuckEvent<
                 UnpackedBuckEvent::UnrecognizedInstant(event, v)
             }
         }),
-        buck_event::Data::Record(_) => Err(VisitorError::UnexpectedRecord(event.clone()).into()),
+        buck_event::Data::Record(v) => Ok(UnpackedBuckEvent::Record(event, v)),
     }
 }

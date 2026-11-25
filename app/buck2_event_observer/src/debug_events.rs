@@ -81,6 +81,7 @@ impl DebugEventsState {
             UnpackedBuckEvent::UnrecognizedSpanEnd(_, span_end) => self.span_end(span_end, None),
             UnpackedBuckEvent::Instant(_, _, data) => self.instant(Some(data)),
             UnpackedBuckEvent::UnrecognizedInstant(_, _) => self.instant(None),
+            UnpackedBuckEvent::Record(_, _) => {}
         }
 
         Ok(())

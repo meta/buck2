@@ -33,8 +33,7 @@ use crate::values::set::SetRef;
 use crate::values::set::SetType;
 use crate::values::string::StarlarkStr;
 use crate::values::tuple::AllocTuple;
-use crate::values::tuple::TupleRef;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::typing::StarlarkNever;
 
@@ -118,7 +117,7 @@ fn test_unpack_value() {
 enum References<'v> {
     Str(&'v str),
     List(StarlarkList<'v>),
-    Tuple(&'v TupleRef<'v>),
+    Tuple(StarlarkTuple<'v>),
     Dict(DictRef<'v>),
     Set(SetRef<'v>),
 }
@@ -127,7 +126,7 @@ enum References<'v> {
 fn test_reference_payloads() {
     assert_eq!(
         Either::<
-            Either<Either<StarlarkStr, StarlarkList>, TupleType<Value>>,
+            Either<Either<StarlarkStr, StarlarkList>, StarlarkTuple>,
             Either<DictType<Value, Value>, SetType<Value>>,
         >::starlark_type_repr(),
         References::starlark_type_repr()

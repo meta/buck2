@@ -23,7 +23,7 @@ use crate::values::FrozenHeap;
 use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueOf;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 
 /// Utility to allocate a tuple.
 ///
@@ -51,7 +51,7 @@ where
     T: IntoIterator,
     T::Item: AllocValue<'v>,
 {
-    type Type = TupleType<<T::Item as AllocValue<'v>>::Type>;
+    type Type = StarlarkTuple<'v, <T::Item as AllocValue<'v>>::Type>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         heap.alloc_tuple_iter(self.0.into_iter().map(|x| heap.alloc(x)))
@@ -63,7 +63,7 @@ where
     T: IntoIterator,
     T::Item: AllocFrozenValue<'fv>,
 {
-    type Type = TupleType<<T::Item as AllocFrozenValue<'fv>>::Type>;
+    type Type = StarlarkTuple<'fv, <T::Item as AllocFrozenValue<'fv>>::Type>;
 
     fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         heap.alloc_tuple_iter(self.0.into_iter().map(|x| heap.alloc(x)))

@@ -19,14 +19,9 @@
 
 pub(crate) mod alloc;
 pub(crate) mod globals;
-pub(crate) mod refs;
 pub(crate) mod rust_tuple;
 mod starlark_tuple;
-pub(crate) mod tuple_type;
 pub(crate) mod value;
 
 pub use crate::values::types::tuple::alloc::AllocTuple;
-pub use crate::values::types::tuple::refs::TupleRef;
 pub use crate::values::types::tuple::starlark_tuple::StarlarkTuple;
-pub use crate::values::types::tuple::tuple_type::TupleOf;
-pub use crate::values::types::tuple::tuple_type::TupleType;

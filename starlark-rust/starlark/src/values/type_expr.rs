@@ -39,7 +39,7 @@ use crate::values::ValueOf;
 /// [`NoneOr<T>`](crate::values::none::NoneOr), `typing.Any` is [`Value`], and so on. Each
 /// Starlark type has one implementer, so that two Rust spellings never have to be reconciled;
 /// unions are the exception, since a union can be spelled in several orders. The handles to a
-/// value (`ValueTyped<T>`, `&T`, `&TupleRef` and the like) are what a type is read through,
+/// value (`ValueTyped<T>`, `&T`, `DictRef` and the like) are what a type is read through,
 /// not a type.
 ///
 /// Membership and inspection are one operation: [`get`](Self::get) says whether a value is of
@@ -56,10 +56,10 @@ pub trait StarlarkTypeExpr<'v>: Sized {
     fn starlark_type_repr() -> Ty;
 
     /// What a value of this type is read through: `ValueTyped<'v, Foo>` for a nominal type with
-    /// one representation, the view for one with several, the type itself for a list
-    /// ([`StarlarkList`](crate::values::list::StarlarkList)), the reading for another typed
-    /// container (the [`ValueOf`] handle together with what the read found, such as
-    /// [`TupleOf`](crate::values::tuple::TupleOf)), `Option<T::Get>` for `NoneOr<T>`,
+    /// one representation, the view for one with several, the type itself for a list or a
+    /// tuple ([`StarlarkList`](crate::values::list::StarlarkList)), the reading for a dict or a
+    /// set (the [`ValueOf`] handle together with what the read found, such as
+    /// [`DictOf`](crate::values::dict::DictOf)), `Option<T::Get>` for `NoneOr<T>`,
     /// `Either<A::Get, B::Get>` for a union.
     ///
     /// For a [`StarlarkType`](crate::values::StarlarkType) it is a handle: it is copied freely
@@ -149,7 +149,7 @@ impl<'v, TLeft: StarlarkTypeExprHashable<'v>, TRight: StarlarkTypeExprHashable<'
 
 /// What a variant of a `#[derive(UnpackValue)]` union holds: a [`ValueOf`] of a type
 /// expression, a type expression that is its own [`Get`](StarlarkTypeExpr::Get), such as a
-/// view, or a reference that a type is read through, such as `&TupleRef`. The derive reads the
+/// view, or a reference that a type is read through, such as `DictRef`. The derive reads the
 /// type expression off the payload to test the variant.
 pub trait UnionPayload<'v>: Sized {
     /// The type expression the payload stands for.
@@ -207,7 +207,6 @@ macro_rules! union_payload_is_conversion {
 
 union_payload_is_conversion! {
     &'v str;
-    &'v crate::values::tuple::TupleRef<'v>;
     crate::values::dict::DictRef<'v>;
     crate::values::set::SetRef<'v>;
 }

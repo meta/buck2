@@ -24,7 +24,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::function::SpecialBuiltinFunction;
 use crate::values::tuple::AllocTuple;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::tuple::value::Tuple;
 use crate::values::typing::StarlarkIter;
 
@@ -50,7 +50,7 @@ pub(crate) fn register_tuple(globals: &mut GlobalsBuilder) {
     fn tuple<'v>(
         #[starlark(require = pos)] a: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
         heap: Heap<'v>,
-    ) -> starlark::Result<ValueOf<'v, TupleType<Value<'v>>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkTuple<'v>>> {
         if let Some(a) = a {
             if let Some(tuple) = ValueOf::new(a.to_value()) {
                 return Ok(tuple);

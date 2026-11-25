@@ -36,7 +36,7 @@ use crate::values::layout::avalue::starlark_deserialize_with_extra;
 use crate::values::layout::avalue::starlark_serialize_with_extra;
 use crate::values::layout::heap::maybe_uninit_slice_util::maybe_uninit_write_from_exact_size_iter;
 use crate::values::layout::heap::repr::AValueRepr;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::types::tuple::value::Tuple;
 
 fn tuple_avalue<'v>(len: usize) -> AValueImpl<'v, AValueTuple> {
@@ -161,7 +161,7 @@ impl<'v> AValue<'v> for AValueFrozenTuple {
 
 impl<'fh> FrozenHeap<'fh> {
     /// Allocate a tuple with the given elements on this heap.
-    pub(crate) fn alloc_tuple(self, elems: &[Value<'fh>]) -> ValueOf<'fh, TupleType<Value<'fh>>> {
+    pub(crate) fn alloc_tuple(self, elems: &[Value<'fh>]) -> ValueOf<'fh, StarlarkTuple<'fh>> {
         // Every value is a `typing.Any`, so the tuple is a `tuple[typing.Any, ...]`.
         ValueOf::new_unchecked(self.alloc_tuple_values(elems.iter().copied()))
     }
@@ -171,7 +171,7 @@ impl<'fh> FrozenHeap<'fh> {
     pub(crate) fn alloc_tuple_iter<T: StarlarkTypeExpr<'fh>>(
         self,
         elems: impl IntoIterator<Item = ValueOf<'fh, T>>,
-    ) -> ValueOf<'fh, TupleType<T>> {
+    ) -> ValueOf<'fh, StarlarkTuple<'fh, T>> {
         // The items are `T`s, so the tuple is a `tuple[T, ...]`.
         ValueOf::new_unchecked(self.alloc_tuple_values(elems.into_iter().map(ValueOf::to_value)))
     }
@@ -197,7 +197,7 @@ impl<'fh> FrozenHeap<'fh> {
 
 impl<'v> Heap<'v> {
     /// Allocate a tuple with the given elements.
-    pub(crate) fn alloc_tuple(self, elems: &[Value<'v>]) -> ValueOf<'v, TupleType<Value<'v>>> {
+    pub(crate) fn alloc_tuple(self, elems: &[Value<'v>]) -> ValueOf<'v, StarlarkTuple<'v>> {
         // Every value is a `typing.Any`, so the tuple is a `tuple[typing.Any, ...]`.
         ValueOf::new_unchecked(self.alloc_tuple_values_from_slice(elems))
     }
@@ -220,7 +220,7 @@ impl<'v> Heap<'v> {
     pub(crate) fn alloc_tuple_iter<T: StarlarkTypeExpr<'v>>(
         self,
         elems: impl IntoIterator<Item = ValueOf<'v, T>>,
-    ) -> ValueOf<'v, TupleType<T>> {
+    ) -> ValueOf<'v, StarlarkTuple<'v, T>> {
         // The items are `T`s, so the tuple is a `tuple[T, ...]`.
         ValueOf::new_unchecked(self.alloc_tuple_values(elems.into_iter().map(ValueOf::to_value)))
     }

@@ -45,7 +45,6 @@ use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::layout::avalue::TrailingValues;
 use crate::values::tuple::StarlarkTuple;
-use crate::values::tuple::TupleType;
 
 /// Define the tuple type.
 #[repr(C)]
@@ -144,7 +143,7 @@ fn repeated<'v>(
     tuple: StarlarkTuple<'v>,
     times: i32,
     heap: Heap<'v>,
-) -> ValueOf<'v, TupleType<Value<'v>>> {
+) -> ValueOf<'v, StarlarkTuple<'v>> {
     let mut result = Vec::new();
     for _i in 0..times {
         result.extend(tuple.values());
@@ -220,7 +219,7 @@ impl<'v> StarlarkType<'v> for StarlarkTuple<'v> {
 
     unsafe fn iter_stop(_this: Self) {}
 
-    fn add(this: Self, other: Self, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
+    fn add(this: Self, other: Self, heap: Heap<'v>) -> ValueOf<'v, StarlarkTuple<'v>> {
         // The slices are taken once: read through the tuples again after the allocation, the
         // lengths are loaded a second time.
         let (this, other) = (this.content(), other.content());
@@ -234,11 +233,11 @@ impl<'v> StarlarkType<'v> for StarlarkTuple<'v> {
         heap.alloc_tuple(&result)
     }
 
-    fn mul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
+    fn mul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, StarlarkTuple<'v>> {
         repeated(this, times, heap)
     }
 
-    fn rmul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, TupleType<Value<'v>>> {
+    fn rmul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, StarlarkTuple<'v>> {
         repeated(this, times, heap)
     }
 

@@ -54,6 +54,7 @@ use crate::values::OwnedFrozenHeap;
 use crate::values::OwnedFrozenRef;
 use crate::values::ProvidesStaticType;
 use crate::values::StarlarkPagable;
+use crate::values::StarlarkType;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::function::NativeFunc;
@@ -62,6 +63,7 @@ use crate::values::function::SpecialBuiltinFunction;
 use crate::values::layout::heap::name::FrozenHeapName;
 use crate::values::namespace::Namespace;
 use crate::values::namespace::value::MaybeDocHiddenValue;
+use crate::values::starlark_value_as_type::NamesStarlarkType;
 use crate::values::types::function::NativeFunction;
 
 /// The global values available during execution: the builtins, and whatever the embedder adds
@@ -550,6 +552,31 @@ impl GlobalsBuilder {
         unsafe { self.set_inner(name, value, false) }
     }
 
+    /// Sets the global that names the type `T`, which is what a Starlark program writes in a
+    /// type annotation and passes to `isinstance`: the type's constructor, if its
+    /// `#[starlark_value]` block has a function marked `#[starlark(constructor)]`, and
+    /// otherwise an object that is only the type.
+    ///
+    /// A constructor is called what its function is called. A type without one is called what
+    /// its `TYPE` says, without the namespaces in front: `Foo` for `bxl.Foo`.
+    ///
+    /// `T` is the type or any of its representations.
+    pub fn type_symbol<T: NamesStarlarkType>(&mut self)
+    where
+        T::Type: HasTypeSymbol,
+    {
+        let symbol = T::Type::TYPE_SYMBOL;
+        (symbol.set)(self, symbol.name);
+    }
+
+    /// Sets what [`type_symbol`](Self::type_symbol) sets, called `name`.
+    pub fn type_symbol_as<T: NamesStarlarkType>(&mut self, name: &str)
+    where
+        T::Type: HasTypeSymbol,
+    {
+        (T::Type::TYPE_SYMBOL.set)(self, name);
+    }
+
     /// Allocate on the heap where globals are allocated.
     pub fn frozen_heap<R>(&self, f: impl for<'fh> FnOnce(FrozenHeap<'fh>) -> R) -> R {
         self.heap.with(f)
@@ -562,6 +589,94 @@ impl GlobalsBuilder {
     pub fn set_docstring(&mut self, docstring: &str) {
         self.docstring = Some(docstring.to_owned());
     }
+}
+
+/// A type that has a symbol, the global that names it: see [`GlobalsBuilder::type_symbol`].
+///
+/// `#[starlark_value]` implements this for the type of its block. A block that is generic over
+/// a type cannot, because a symbol is registered for one type; [`type_symbol!`] declares the
+/// symbol of one instantiation of such a type.
+///
+/// [`type_symbol!`]: crate::type_symbol
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` has no symbol",
+    note = "`#[starlark_value]` declares the symbol of the type of its block, unless the block is generic over a type; `starlark::type_symbol!(..)` declares the symbol of one instantiation of such a type"
+)]
+pub trait HasTypeSymbol: StarlarkType<'static> {
+    /// The symbol.
+    #[doc(hidden)]
+    const TYPE_SYMBOL: TypeSymbol;
+}
+
+/// The global that names a type: see [`GlobalsBuilder::type_symbol`].
+#[derive(Clone, Copy)]
+pub struct TypeSymbol {
+    name: &'static str,
+    /// Sets the global under the given name.
+    set: fn(&mut GlobalsBuilder, &str),
+}
+
+impl TypeSymbol {
+    /// The symbol of a type without a constructor: an object that is only the type, which
+    /// `set` sets under a name. It is called what `ty`, the type's `TYPE`, says after its
+    /// last `.`.
+    #[doc(hidden)]
+    pub const fn type_object(ty: &'static str, set: fn(&mut GlobalsBuilder, &str)) -> TypeSymbol {
+        let bytes = ty.as_bytes();
+        let mut start = bytes.len();
+        while start > 0 && bytes[start - 1] != b'.' {
+            start -= 1;
+        }
+        let (_, name) = bytes.split_at(start);
+        TypeSymbol {
+            // The split is after an ASCII character.
+            name: match std::str::from_utf8(name) {
+                Ok(name) => name,
+                Err(_) => panic!("split at a character boundary"),
+            },
+            set,
+        }
+    }
+}
+
+/// Declares the symbol of the type `$T`, an object that is only the type, which
+/// [`GlobalsBuilder::type_symbol`] sets.
+///
+/// `#[starlark_value]` does this for the type of its block. This is for one instantiation of
+/// a type whose block is generic over a type, in the crate that declares the type:
+///
+/// ```ignore
+/// starlark::type_symbol!(StarlarkTargetSet<ConfiguredTargetNode>);
+/// ```
+#[macro_export]
+macro_rules! type_symbol {
+    ($T:ty) => {
+        const _: () = {
+            // SAFETY: Registered just below.
+            unsafe impl $crate::values::starlark_value_as_type::TypeSymbolRegistered for $T {}
+
+            // One static: the object that is registered has to be the one that is set, and
+            // two uses of a constant can be two objects.
+            static OBJECT: $crate::values::starlark_value_as_type::StarlarkValueAsType<$T> =
+                $crate::values::starlark_value_as_type::StarlarkValueAsType::of_type();
+
+            $crate::__derive_refs::inventory::submit! {
+                $crate::__derive_refs::StaticValueEntry::new(
+                    concat!(file!(), "::type symbol of ", stringify!($T)),
+                    line!(),
+                    || OBJECT.to_value(),
+                )
+            }
+
+            impl $crate::environment::HasTypeSymbol for $T {
+                const TYPE_SYMBOL: $crate::environment::TypeSymbol =
+                    $crate::environment::TypeSymbol::type_object(
+                        <$T as $crate::values::StarlarkType<'static>>::TYPE,
+                        |globals, name| globals.set(name, OBJECT),
+                    );
+            }
+        };
+    };
 }
 
 /// Lazy, named cache for a [`Globals`] value. Created via the

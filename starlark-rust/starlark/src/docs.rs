@@ -231,8 +231,13 @@ pub struct DocType {
 
 impl DocType {
     pub fn from_starlark_value<T: StarlarkValue<'static>>() -> DocType {
+        Self::from_starlark_type::<T::Type>()
+    }
+
+    /// The documentation of the type `T`: its methods and attributes.
+    pub fn from_starlark_type<T: StarlarkType<'static>>() -> DocType {
         let ty = T::get_type_starlark_repr();
-        match <T::Type as StarlarkType<'static>>::MEMBERS {
+        match T::MEMBERS {
             Some(members) => members.table().documentation(ty),
             None => DocType {
                 docs: None,

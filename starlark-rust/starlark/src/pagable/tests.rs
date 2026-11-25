@@ -2132,6 +2132,23 @@ fn test_globals_static_heap_value_round_trip() -> crate::Result<()> {
     Ok(())
 }
 
+/// The object that `type_symbol` sets for a type is the one that the type's block registered
+/// as a static value.
+#[test]
+fn test_type_symbol_round_trip() -> crate::Result<()> {
+    let globals = GlobalsBuilder::new()
+        .with(|globals| globals.type_symbol_as::<SimpleData>("SimpleData"))
+        .build();
+    let symbol = erase(
+        globals
+            .get_ref("SimpleData")
+            .expect("the symbol should be set")
+            .value(),
+    );
+    assert_static_value_round_trip(symbol, 10)?;
+    Ok(())
+}
+
 fn colliding_static_heap_a() -> OwnedFrozenRef<'static, ()> {
     starlark::globals_static!(
         COLLIDING_STATIC_GLOBALS = |globals| {

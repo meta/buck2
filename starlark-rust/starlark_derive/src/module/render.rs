@@ -218,6 +218,7 @@ fn render_stmt(x: StarStmt, generics: &StarGenerics, module_name: &str) -> syn::
         StarStmt::Const(x) => Ok(render_const(x)),
         StarStmt::Attr(x) => Ok(render_attr(x, generics, module_name)),
         StarStmt::Fun(x) => render_fun(x, module_name),
+        StarStmt::BuilderCall(x) => Ok(syn::Expr::MethodCall(x)),
     }
 }
 

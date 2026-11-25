@@ -119,8 +119,10 @@ pub(crate) fn parse(mut input: ItemFn) -> syn::Result<StarModule> {
         }
     };
     // FIXME(JakobDegen): Pick one form and enforce it
-    let (syn::Pat::Ident(_) | syn::Pat::Wild(_)) = &mut **pat else {
-        return Err(syn::Error::new(pat.span(), "Expected ident"));
+    let builder = match &**pat {
+        syn::Pat::Ident(ident) => Some(ident.ident.clone()),
+        syn::Pat::Wild(_) => None,
+        _ => return Err(syn::Error::new(pat.span(), "Expected ident")),
     };
     // Replace the argument with a known one - the user can't depend on it anyway
     **pat = syn::Pat::Ident(syn::PatIdent {
@@ -140,7 +142,7 @@ pub(crate) fn parse(mut input: ItemFn) -> syn::Result<StarModule> {
     )
     .stmts
     .into_iter()
-    .map(|stmt| parse_stmt(stmt, module_kind))
+    .map(|stmt| parse_stmt(stmt, module_kind, builder.as_ref()))
     .collect::<syn::Result<_>>()?;
 
     Ok(StarModule {
@@ -194,13 +196,29 @@ fn parse_module_docstring(input: &ItemFn) -> syn::Result<Option<String>> {
     }
 }
 
-fn parse_stmt(stmt: Stmt, module_kind: ModuleKind) -> syn::Result<StarStmt> {
+fn parse_stmt(
+    stmt: Stmt,
+    module_kind: ModuleKind,
+    builder: Option<&syn::Ident>,
+) -> syn::Result<StarStmt> {
     match stmt {
         Stmt::Item(Item::Fn(x)) => parse_fun(x, module_kind),
         Stmt::Item(Item::Const(x)) => Ok(StarStmt::Const(parse_const(x)?)),
+        // A call on the builder of globals, by the name the function gives it.
+        Stmt::Expr(Expr::MethodCall(mut call), Some(_))
+            if module_kind == ModuleKind::Globals
+                && matches!(
+                    (&*call.receiver, builder),
+                    (Expr::Path(receiver), Some(builder)) if receiver.path.is_ident(builder)
+                ) =>
+        {
+            call.receiver = syn::parse_quote! { globals_builder };
+            Ok(StarStmt::BuilderCall(call))
+        }
         s => Err(syn::Error::new(
             s.span(),
-            "Can only put constants and functions inside a #[starlark_module]",
+            "Can only put constants, functions and calls on the builder of globals inside a \
+             #[starlark_module]",
         )),
     }
 }

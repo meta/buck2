@@ -524,6 +524,29 @@ impl ImplStarlarkValue {
         )
     }
 
+    /// What goes before the block to declare the type's symbol, an object that is only the
+    /// type. A block that is generic over a type declares none, because a symbol is registered
+    /// for one type.
+    fn type_symbol(&self) -> proc_macro2::TokenStream {
+        if self.generics_shape() == GenericsShape::Other {
+            return proc_macro2::TokenStream::new();
+        }
+        let ty = self.self_ty_with_lifetime(syn::parse_quote! { 'static });
+        // A representation names its type already.
+        let names_itself = (self.impl_of == ImplOf::Type).then(|| {
+            quote! {
+                impl starlark::values::starlark_value_as_type::NamesStarlarkType for #ty {
+                    type Type = Self;
+                }
+            }
+        });
+        quote! {
+            #names_itself
+
+            starlark::type_symbol!(#ty);
+        }
+    }
+
     fn get_type_value_static(&self) -> syn::Result<syn::ImplItem> {
         let typ = self.typ()?;
         syn::parse2(quote! {
@@ -1105,8 +1128,11 @@ impl ImplStarlarkValue {
         }
         let memberships = memberships_impl(&memberships, &self.input, lt);
         let before = self.methods().0;
+        let symbol = self.type_symbol();
         Ok(quote! {
             #before
+
+            #symbol
 
             #type_impl
 

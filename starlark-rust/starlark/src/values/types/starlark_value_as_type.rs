@@ -72,6 +72,28 @@ pub unsafe trait AsTypeStaticRegistered {}
 #[cfg(not(feature = "pagable"))]
 unsafe impl<T> AsTypeStaticRegistered for T {}
 
+/// A Rust type that names a Starlark type: the type itself, or one of its representations.
+///
+/// Implemented for every representation, and by `#[starlark_value]` for a type whose
+/// representations are other types.
+pub trait NamesStarlarkType {
+    /// The type that is named.
+    type Type: StarlarkType<'static>;
+}
+
+impl<T: StarlarkValue<'static>> NamesStarlarkType for T {
+    type Type = T::Type;
+}
+
+/// Says that the type object [`StarlarkValueAsType::of_type`] makes for the type is registered
+/// as a static value.
+///
+/// # Safety
+///
+/// Only `#[starlark_value]` implements this, for the type of its block, next to the
+/// registration.
+pub unsafe trait TypeSymbolRegistered {}
+
 #[derive(
     Debug,
     NoSerialize,
@@ -200,6 +222,25 @@ impl<T> StarlarkValueAsType<T> {
     }
 
     /// Constructor.
+    /// The type object of the type `T`, documented from it. It is what
+    /// [`GlobalsBuilder::type_symbol`](crate::environment::GlobalsBuilder::type_symbol) sets
+    /// for a type that has no constructor.
+    #[doc(hidden)]
+    pub const fn of_type() -> Self
+    where
+        T: StarlarkType<'static> + TypeSymbolRegistered,
+    {
+        StarlarkValueAsType(
+            &const {
+                AllocStaticSimple::alloc(StarlarkValueAsTypeStarlarkValue(
+                    T::get_type_starlark_repr,
+                    || DocItem::Type(DocType::from_starlark_type::<T>()),
+                ))
+            },
+            PhantomData,
+        )
+    }
+
     /// The type object of the type expression `T`, undocumented.
     pub const fn new_no_docs() -> Self
     where
@@ -400,6 +441,57 @@ def f(x: CompilerArgs): pass
 
 f(compiler_args("hello"))
         "#,
+        );
+    }
+
+    #[derive(
+        derive_more::Display,
+        Debug,
+        NoSerialize,
+        Allocative,
+        ProvidesStaticType,
+        StarlarkPagable
+    )]
+    #[display("flags")]
+    struct StarlarkFlags;
+
+    #[starlark_value(type = "tools.Flags")]
+    impl<'v> StarlarkValue<'v> for StarlarkFlags {}
+
+    #[starlark_module]
+    fn symbols(globals: &mut GlobalsBuilder) {
+        const flags: StarlarkFlags = StarlarkFlags;
+
+        globals.type_symbol_as::<StarlarkCompilerArgs>("Args");
+        // Called what `TYPE` says after its namespace.
+        globals.type_symbol::<StarlarkFlags>();
+    }
+
+    #[test]
+    fn test_the_symbol_of_a_type_is_declared_by_its_block() {
+        let mut a = Assert::new();
+        a.globals_add(|globals| {
+            compiler_args_globals(globals);
+            symbols(globals);
+        });
+        a.pass(
+            r#"
+def f(x: Args, y: Flags): pass
+
+f(compiler_args("hello"), flags)
+assert_eq(str(Flags), "tools.Flags")
+assert_true(isinstance(compiler_args("hello"), Args))
+assert_true(not isinstance(flags, Args))
+        "#,
+        );
+        a.fail(
+            r#"
+def g(x: Args): pass
+
+def h():
+    g([])
+"#,
+            r#"Expected type `compiler_args` but got"#,
         );
     }
 

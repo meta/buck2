@@ -99,6 +99,9 @@ pub(crate) enum StarStmt {
     Const(StarConst),
     Fun(StarFun),
     Attr(StarAttr),
+    /// A call of a method of the builder, such as `globals.type_symbol::<Foo>();`, with the
+    /// receiver replaced by the name the generated code has for the builder.
+    BuilderCall(syn::ExprMethodCall),
 }
 
 #[derive(Debug)]

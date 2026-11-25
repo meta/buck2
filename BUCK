@@ -63,6 +63,9 @@ pagable_transition_alias(
     actual = "//buck2/app/buck2:buck2_e2e-bin",
     labels = [],
     modifiers = buck2_modifiers(),
+    # Only core end-to-end tests run it. Open source has no `PACKAGE` file
+    # that makes it public.
+    visibility = ["//buck2/tests/core/..."],
 )
 
 buck2_bundle(

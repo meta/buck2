@@ -287,6 +287,7 @@ def buck2_e2e_test(
     test_with_deployed_buck2 = False,
     test_with_reverted_buck2 = False,
     use_compiled_buck2_client_and_tpx = False,
+    use_e2e_binary = False,
     skip_deployed_buck2_version_dep = False,
     deps = (),
     env = None,
@@ -329,6 +330,11 @@ def buck2_e2e_test(
         A full prod archive is distinct from a normal build of buck2 in that it uses a client-only
         binary and additionally makes TPX available. Needed if you want to be able to `buck.test`
         Default is False.
+    use_e2e_binary:
+        Whether tests with the compiled buck2 run the e2e test build (`buck2_e2e`) instead of
+        the production build (`buck2`). Only core tests need the test settings layer the e2e
+        build enables; rules and prelude tests run the production build.
+        Default is False; `buck2_core_tests` sets it for core tests.
     skip_deployed_buck2_version_dep:
         A boolean for whether to skip adding the dependency on tools/buck2-versions:stable when
         test_with_deployed_buck2 is True. This is useful for tests that don't need the version
@@ -382,17 +388,27 @@ def buck2_e2e_test(
         # without them, their coverage is dropped and coverage-based test selection does not
         # link these tests to buck2 or tpx sources.
         if use_compiled_buck2_client_and_tpx:
-            compiled_env["LLVM_COVERAGE_ADDITIONAL_OBJECT_PATHS"] = ";".join(
-                ["$(location fbcode//buck2:buck2_e2e_bundle)/" + binary for binary in ["buck2", "buck2-daemon", "buck2-tpx"]]
-            )
-            base_exe = "$(location fbcode//buck2:buck2_e2e_bundle)/buck2"
+            if use_e2e_binary:
+                compiled_env["LLVM_COVERAGE_ADDITIONAL_OBJECT_PATHS"] = ";".join(
+                    ["$(location fbcode//buck2:buck2_e2e_bundle)/" + binary for binary in ["buck2", "buck2-daemon", "buck2-tpx"]]
+                )
+                base_exe = "$(location fbcode//buck2:buck2_e2e_bundle)/buck2"
+            else:
+                compiled_env["LLVM_COVERAGE_ADDITIONAL_OBJECT_PATHS"] = ";".join(
+                    ["$(location fbcode//buck2:symlinked_buck2_and_tpx)/" + binary for binary in ["buck2", "buck2-daemon", "buck2-tpx"]]
+                )
+                base_exe = "$(location fbcode//buck2:symlinked_buck2_and_tpx)/buck2"
             exe = select({
                 "DEFAULT": base_exe,
                 "ovr_config//os:windows": base_exe + ".exe",
             })
         else:
-            compiled_env["LLVM_COVERAGE_ADDITIONAL_OBJECT_PATHS"] = "$(location fbcode//buck2:buck2)"
-            exe = "$(location fbcode//buck2:buck2)"
+            if use_e2e_binary:
+                compiled_env["LLVM_COVERAGE_ADDITIONAL_OBJECT_PATHS"] = "$(location fbcode//buck2:buck2_e2e)"
+                exe = "$(location fbcode//buck2:buck2_e2e)"
+            else:
+                compiled_env["LLVM_COVERAGE_ADDITIONAL_OBJECT_PATHS"] = "$(location fbcode//buck2:buck2)"
+                exe = "$(location fbcode//buck2:buck2)"
 
         buck_e2e_test(
             # deployed buck2 test target retains the original target name so that when user runs `buck test <test target>`,
@@ -471,6 +487,9 @@ def buck2_core_tests(extra_attrs = {}, target_extra_attrs = {}, allow_bundled_ce
 
             attrs = dict(extra_attrs)
             attrs.update(target_extra_attrs.get(target) or {})
+            # Only core tests run the e2e test build; rules and prelude tests
+            # run the production build (see `use_e2e_binary`).
+            attrs["use_e2e_binary"] = True
             if allow_bundled_cells:
                 attrs["env"] = dict(attrs.get("env") or {})
                 attrs["env"]["BUCK2_E2E_TEST_ALLOW_BUNDLED_CELLS"] = "1"

@@ -214,3 +214,10 @@ buck2_client_transition_alias(
     default_target_platform = _dtp,
     visibility = ["PUBLIC"],
 )
+
+buck2_client_transition_alias(
+    name = "buck2_e2e_client-bin",
+    actual = ":buck2_e2e-bin",
+    default_target_platform = _dtp,
+    visibility = ["PUBLIC"],
+)

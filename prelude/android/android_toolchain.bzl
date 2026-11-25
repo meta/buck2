@@ -65,6 +65,8 @@ AndroidToolchainInfo = provider(
         "filter_dex_class_names": provider_field(typing.Any, default = None),
         "filter_prebuilt_native_library_dir": provider_field(typing.Any, default = None),
         "filter_resources": provider_field(typing.Any, default = None),
+        # Gatorade's entry points, from fbsource//xplat/toolchains/android/ndk/gatorade:defs.bzl.
+        # @oss-disable[end= ]: "gatorade": provider_field(typing.Any, default = None),
         # @oss-disable[end= ]: "gatorade_mergemap_tool": provider_field(typing.Any, default = None),
         "generate_build_config": provider_field(typing.Any, default = None),
         "generate_manifest": provider_field(typing.Any, default = None),

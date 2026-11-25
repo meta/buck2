@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 # Shared schema for the [native_build_commands] sub-target, used by both
-# android_binary_native_library_rules.bzl and meta_only/gatorade.bzl. This lives in a leaf module
+# android_binary_native_library_rules.bzl and Gatorade's rule code. This lives in a leaf module
 # because gatorade.bzl is loaded by android_binary_native_library_rules.bzl and so cannot import the
 # entry helper back from there.
 

@@ -33,7 +33,7 @@ load("@prelude//android:relinker_linker_outputs.bzl", "get_extra_relinker_args",
 load("@prelude//android:util.bzl", "EnhancementContext", "merge_extra_linker_args", "merge_linker_args_for_platform")
 load("@prelude//android:voltron.bzl", "ROOT_MODULE", "all_targets_in_root_module", "get_apk_module_graph_info", "is_root_module")
 # @oss-disable[end= ]: load(
-    # @oss-disable[end= ]: "@prelude//android/meta_only:gatorade.bzl",
+    # @oss-disable[end= ]: "@prelude//android/meta_only:gatorade_hook.bzl",
     # @oss-disable[end= ]: "add_gatorade_relinker_args",
     # @oss-disable[end= ]: "early_gatorade_libraries",
     # @oss-disable[end= ]: "gatorade_allows_shlib_interfaces",
@@ -579,6 +579,14 @@ def get_android_binary_native_library_info(
     monogatorade_products = None
     monogatorade_step_commands = {}
     monogatorade_plans = {}
+
+    # What the rule knows that the whole-app step may read, so that a new
+    # input of the step needs no change here.
+    # @oss-disable[end= ]: monogatorade_rule_inputs = struct(
+        # @oss-disable[end= ]: android_packageable_info = android_packageable_info,
+        # @oss-disable[end= ]: enhance_ctx = enhance_ctx,
+        # @oss-disable[end= ]: java_packaging_deps = java_packaging_deps,
+    # @oss-disable[end= ]: )
     if native_library_merge_sequence:
         native_library_merge_input_file = ctx.actions.write_json(
             "mergemap.input",
@@ -612,6 +620,7 @@ def get_android_binary_native_library_info(
                 # @oss-disable[end= ]: prebuilt_dir_symbols_by_platform,
                 # @oss-disable[end= ]: monogatorade_step_commands,
                 # @oss-disable[end= ]: plans_by_platform = monogatorade_plans,
+                # @oss-disable[end= ]: rule_inputs = monogatorade_rule_inputs,
             # @oss-disable[end= ]: )
         elif not "early" in getattr(ctx.attrs, "gatorade_phases", []):
             mergemap_cmd = cmd_args(ctx.attrs._android_toolchain[AndroidToolchainInfo].mergemap_tool)
@@ -693,6 +702,7 @@ def get_android_binary_native_library_info(
             # @oss-disable[end= ]: prebuilt_dir_symbols_by_platform,
             # @oss-disable[end= ]: monogatorade_step_commands,
             # @oss-disable[end= ]: plans_by_platform = monogatorade_plans,
+            # @oss-disable[end= ]: rule_inputs = monogatorade_rule_inputs,
         # @oss-disable[end= ]: )
 
     mergemap_gencode_jar = None

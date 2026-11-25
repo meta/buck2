@@ -33,7 +33,11 @@ from functools import partial
 from py_compile import compile, PycInvalidationMode, PyCompileError
 from types import TracebackType
 
-DEFAULT_FORMAT: str = importlib.util.cache_from_source("{pkg}/{name}.py")
+# Built by hand rather than with `importlib.util.cache_from_source`, which follows
+# `PYTHONPYCACHEPREFIX` and `PYTHONOPTIMIZE` in the environment the action inherits.
+DEFAULT_FORMAT: str = os.path.join(
+    "{pkg}", "__pycache__", "{name}.%s.pyc" % sys.implementation.cache_tag
+)
 
 
 def get_pyc_path(src_path: str, fmt: str) -> str:
@@ -174,6 +178,7 @@ def main(argv: list[str]) -> None:
                     cfile=pyc,
                     dfile=dst,
                     doraise=True,
+                    optimize=0,
                     invalidation_mode=invalidation_mode,
                 )
             except PyCompileError:

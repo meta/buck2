@@ -34,7 +34,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::StarlarkDict;
 use crate::values::list::StarlarkList;
-use crate::values::set::SetType;
+use crate::values::set::StarlarkSet;
 use crate::values::types::int::view::IntView;
 
 // TODO(nmj): Figure out default values here. ValueOf<i32> = 5 should work.
@@ -128,7 +128,9 @@ fn validate_module(builder: &mut GlobalsBuilder) {
             },
         }
     }
-    fn with_set<'v>(v: ValueOf<'v, SetType<IntView<'v>>>) -> anyhow::Result<(Value<'v>, String)> {
+    fn with_set<'v>(
+        v: ValueOf<'v, StarlarkSet<'v, IntView<'v>>>,
+    ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v.try_items::<IntView>().map(Result::unwrap).join(", ");
         Ok((v.to_value(), repr))
     }

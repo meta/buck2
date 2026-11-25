@@ -23,13 +23,12 @@ use starlark_derive::type_matcher;
 
 use crate as starlark;
 use crate::typing::starlark_value::TyStarlarkValue;
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::dict::DictRef;
 use crate::values::dict::value::FrozenDict;
 use crate::values::list::StarlarkList;
 use crate::values::list::value::FrozenList;
-use crate::values::set::refs::SetRef;
+use crate::values::set::StarlarkSet;
 use crate::values::set::value::FrozenSet;
 use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::tuple::value::Tuple;
@@ -224,8 +223,8 @@ unsafe impl<I: TypeMatcher> TypeMatcherRegistered for IsSetOf<I> {}
 
 impl<I: TypeMatcher> TypeMatcher for IsSetOf<I> {
     fn matches(&self, value: Value) -> bool {
-        match SetRef::unpack_value_opt(value) {
-            Some(set) => set.aref.iter().all(|v| self.0.matches(v)),
+        match StarlarkSet::from_value(value) {
+            Some(set) => set.borrowed().aref.iter().all(|v| self.0.matches(v)),
             _ => false,
         }
     }

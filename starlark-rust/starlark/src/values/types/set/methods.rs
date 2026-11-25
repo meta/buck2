@@ -23,6 +23,7 @@ use either::Either;
 use starlark_derive::starlark_module;
 use starlark_map::Hashed;
 use starlark_map::small_set::SmallSet;
+use starlark_syntax::internal_error;
 use starlark_syntax::value_error;
 
 use crate as starlark;
@@ -32,10 +33,35 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::none::NoneType;
+use crate::values::set::StarlarkSet;
 use crate::values::set::refs::SetMut;
 use crate::values::set::refs::SetRef;
 use crate::values::set::value::SetData;
 use crate::values::typing::StarlarkIter;
+
+/// The receiver of a method that reads the set, as a set.
+///
+/// The methods take the receiver as a plain value and read it here, in their bodies: a
+/// receiver typed `StarlarkSet` is converted before the arguments are, and the method then
+/// tells the set's representations apart a second time where it reads the set. And this is
+/// `StarlarkSet::from_value` rather than a conversion to `set[typing.Any]`, which borrows
+/// the set to look at its items although there is nothing to check about them.
+#[inline(always)]
+fn this_set<'v>(this: Value<'v>) -> starlark::Result<StarlarkSet<'v>> {
+    #[cold]
+    #[inline(never)]
+    fn not_a_set<'v>(this: Value<'v>) -> starlark::Error {
+        match <StarlarkSet>::unpack_value_err(this) {
+            Err(e) => e,
+            Ok(_) => internal_error!("The receiver is a set and was not read as one"),
+        }
+    }
+
+    match StarlarkSet::from_value(this) {
+        Some(set) => Ok(set),
+        None => Err(not_a_set(this)),
+    }
+}
 
 enum SetFromValue<'v> {
     Set(SmallSet<Value<'v>>),
@@ -47,8 +73,8 @@ impl<'v> SetFromValue<'v> {
         value: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> crate::Result<Self> {
-        match SetRef::unpack_value_opt(value.to_value()) {
-            Some(v) => Ok(SetFromValue::Ref(v)),
+        match StarlarkSet::from_value(value.to_value()) {
+            Some(v) => Ok(SetFromValue::Ref(v.borrowed())),
             _ => {
                 let mut set = SmallSet::default();
                 for elem in value.to_value().iterate(heap)? {
@@ -100,10 +126,11 @@ pub(crate) fn set_methods(builder: &mut MethodsBuilder) {
     /// # "#);
     /// ```
     fn union<'v>(
-        this: SetRef<'v>,
+        this: Value<'v>,
         #[starlark(require=pos)] other: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<SetData<'v>> {
+        let this = this_set(this)?.borrowed();
         if this.aref.content.is_empty() {
             let other_set = SetFromValue::from_value(other, heap)?;
             return Ok(SetData {
@@ -128,10 +155,11 @@ pub(crate) fn set_methods(builder: &mut MethodsBuilder) {
     /// # "#);
     /// ```
     fn intersection<'v>(
-        this: SetRef<'v>,
+        this: Value<'v>,
         #[starlark(require=pos)] other: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<SetData<'v>> {
+        let this = this_set(this)?.borrowed();
         let other_set = SetFromValue::from_value(other, heap)?;
         let mut data = SetData::default();
         if other_set.is_empty() {
@@ -155,10 +183,11 @@ pub(crate) fn set_methods(builder: &mut MethodsBuilder) {
     /// # "#);
     /// ```
     fn symmetric_difference<'v>(
-        this: SetRef<'v>,
+        this: Value<'v>,
         #[starlark(require=pos)] other: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<SetData<'v>> {
+        let this = this_set(this)?.borrowed();
         let other_set = SetFromValue::from_value(other, heap)?;
 
         let other_set = other_set.into_set();
@@ -318,10 +347,11 @@ pub(crate) fn set_methods(builder: &mut MethodsBuilder) {
     /// # "#);
     /// ```
     fn difference<'v>(
-        this: SetRef<'v>,
+        this: Value<'v>,
         #[starlark(require=pos)] other: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<SetData<'v>> {
+        let this = this_set(this)?.borrowed();
         let other_set = SetFromValue::from_value(other, heap)?;
 
         let content = this.aref.content.difference_with(other_set.get());
@@ -338,12 +368,13 @@ pub(crate) fn set_methods(builder: &mut MethodsBuilder) {
     /// # "#);
     /// ```
     fn issuperset<'v>(
-        this: SetRef<'v>,
+        this: Value<'v>,
         #[starlark(require=pos)] other: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<bool> {
+        let this = this_set(this)?.borrowed();
         let other_var;
-        let other = match SetRef::unpack_value_opt(other.to_value()) {
+        let other = match StarlarkSet::from_value(other.to_value()).map(StarlarkSet::borrowed) {
             Some(other) => {
                 if this.aref.content.len() < other.aref.content.len() {
                     return Ok(false);
@@ -371,10 +402,11 @@ pub(crate) fn set_methods(builder: &mut MethodsBuilder) {
     /// # "#);
     /// ```
     fn issubset<'v>(
-        this: SetRef<'v>,
+        this: Value<'v>,
         #[starlark(require=pos)] other: ValueOf<'v, StarlarkIter<Value<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<bool> {
+        let this = this_set(this)?.borrowed();
         if this.aref.content.is_empty() {
             other.to_value().iterate(heap)?;
             return Ok(true);

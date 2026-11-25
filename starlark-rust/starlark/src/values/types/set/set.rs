@@ -20,11 +20,10 @@ use starlark_derive::starlark_module;
 use crate as starlark;
 use crate::environment::GlobalsBuilder;
 use crate::values::Heap;
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::function::SpecialBuiltinFunction;
-use crate::values::set::refs::SetRef;
+use crate::values::set::StarlarkSet;
 use crate::values::set::value::FrozenSet;
 use crate::values::set::value::SetData;
 use crate::values::typing::StarlarkIter;
@@ -41,8 +40,8 @@ pub(crate) fn register_set(globals: &mut GlobalsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<SetData<'v>> {
         let set = match arg {
-            Some(pos) => match SetRef::unpack_value_opt(pos.to_value()) {
-                Some(set) => (set.aref).clone(),
+            Some(pos) => match StarlarkSet::from_value(pos.to_value()) {
+                Some(set) => (set.borrowed().aref).clone(),
                 None => {
                     let it = pos.to_value().iterate(heap)?;
                     let mut data = SetData::default();

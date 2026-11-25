@@ -381,7 +381,8 @@ impl<'v> StarlarkType<'v> for StarlarkSet<'v> {
 
     // Set union
     // Unlike in `union` it is not possible to `|` `set` and iterable. This is due python semantics.
-    fn bit_or(this: Self, rhs: SetRef<'v>) -> SetData<'v> {
+    fn bit_or(this: Self, rhs: Self) -> SetData<'v> {
+        let rhs = rhs.borrowed();
         let content = this.repr().content();
         if content.is_empty() {
             return (*rhs.aref).clone();
@@ -394,7 +395,8 @@ impl<'v> StarlarkType<'v> for StarlarkSet<'v> {
     }
 
     // Set intersection
-    fn bit_and(this: Self, rhs: SetRef<'v>) -> SetData<'v> {
+    fn bit_and(this: Self, rhs: Self) -> SetData<'v> {
+        let rhs = rhs.borrowed();
         let mut items = SmallSet::new();
         let content = this.repr().content();
         if content.is_empty() {
@@ -411,7 +413,8 @@ impl<'v> StarlarkType<'v> for StarlarkSet<'v> {
     }
 
     // Set symmetric difference
-    fn bit_xor(this: Self, rhs: SetRef<'v>) -> SetData<'v> {
+    fn bit_xor(this: Self, rhs: Self) -> SetData<'v> {
+        let rhs = rhs.borrowed();
         let items = this
             .repr()
             .content()
@@ -420,7 +423,8 @@ impl<'v> StarlarkType<'v> for StarlarkSet<'v> {
     }
 
     // Set difference
-    fn sub(this: Self, rhs: SetRef<'v>) -> SetData<'v> {
+    fn sub(this: Self, rhs: Self) -> SetData<'v> {
+        let rhs = rhs.borrowed();
         let content = this.repr().content();
 
         let content = content.difference_with(&rhs.aref.content);

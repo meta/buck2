@@ -19,12 +19,9 @@
 pub(crate) mod methods;
 pub(crate) mod refs;
 pub(crate) mod set;
-pub(crate) mod set_type;
 mod starlark_set;
 pub(crate) mod value;
-pub use crate::values::set::refs::SetMut;
-pub use crate::values::set::refs::SetRef;
-pub use crate::values::set::set_type::SetOf;
-pub use crate::values::set::set_type::SetType;
+pub(crate) use crate::values::set::refs::SetMut;
+pub(crate) use crate::values::set::refs::SetRef;
 pub use crate::values::set::starlark_set::SetValues;
 pub use crate::values::set::starlark_set::StarlarkSet;

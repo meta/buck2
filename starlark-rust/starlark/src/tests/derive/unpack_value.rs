@@ -28,8 +28,7 @@ use crate::values::dict::StarlarkDict;
 use crate::values::int::IntView;
 use crate::values::list::AllocList;
 use crate::values::list::StarlarkList;
-use crate::values::set::SetRef;
-use crate::values::set::SetType;
+use crate::values::set::StarlarkSet;
 use crate::values::string::StarlarkStr;
 use crate::values::tuple::AllocTuple;
 use crate::values::tuple::StarlarkTuple;
@@ -113,31 +112,31 @@ fn test_unpack_value() {
 }
 
 #[derive(UnpackValue)]
-enum References<'v> {
+enum StrOrContainer<'v> {
     Str(&'v str),
     List(StarlarkList<'v>),
     Tuple(StarlarkTuple<'v>),
     Dict(StarlarkDict<'v>),
-    Set(SetRef<'v>),
+    Set(StarlarkSet<'v>),
 }
 
 #[test]
-fn test_reference_payloads() {
+fn test_str_and_container_payloads() {
     assert_eq!(
         Either::<
             Either<Either<StarlarkStr, StarlarkList>, StarlarkTuple>,
-            Either<StarlarkDict, SetType<Value>>,
+            Either<StarlarkDict, StarlarkSet>,
         >::starlark_type_repr(),
-        References::starlark_type_repr()
+        StrOrContainer::starlark_type_repr()
     );
 
     Heap::temp(|heap| {
-        let show = |v: Value| match References::unpack_value_opt(v) {
-            Some(References::Str(s)) => format!("str {s}"),
-            Some(References::List(l)) => format!("list {}", l.len()),
-            Some(References::Tuple(t)) => format!("tuple {}", t.len()),
-            Some(References::Dict(d)) => format!("dict {}", d.len()),
-            Some(References::Set(_)) => "set".to_owned(),
+        let show = |v: Value| match StrOrContainer::unpack_value_opt(v) {
+            Some(StrOrContainer::Str(s)) => format!("str {s}"),
+            Some(StrOrContainer::List(l)) => format!("list {}", l.len()),
+            Some(StrOrContainer::Tuple(t)) => format!("tuple {}", t.len()),
+            Some(StrOrContainer::Dict(d)) => format!("dict {}", d.len()),
+            Some(StrOrContainer::Set(_)) => "set".to_owned(),
             None => "other".to_owned(),
         };
         assert_eq!("str abc", show(heap.alloc("abc").to_value()));
@@ -151,7 +150,7 @@ fn test_reference_payloads() {
     });
     let set = crate::assert::pass("set([1, 2])");
     assert!(matches!(
-        References::unpack_value_opt(set.as_ref().value()),
-        Some(References::Set(s)) if s.iter().count() == 2
+        StrOrContainer::unpack_value_opt(set.as_ref().value()),
+        Some(StrOrContainer::Set(s)) if s.iter().count() == 2
     ));
 }

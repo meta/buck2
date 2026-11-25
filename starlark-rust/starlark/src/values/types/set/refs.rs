@@ -18,22 +18,18 @@
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;
-use std::convert::Infallible;
 
 use dupe::Dupe;
 use either::Either;
 
 use super::value::SetData;
-use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueOf;
-use crate::values::set::SetOf;
-use crate::values::set::SetType;
 use crate::values::set::value::SetGen;
 
-/// Define the set type.
-pub struct SetRef<'v> {
+/// A set, borrowed: it cannot be changed while this is alive. What is public borrows a set
+/// inside [`StarlarkSet`](crate::values::set::StarlarkSet)'s methods and iterators.
+pub(crate) struct SetRef<'v> {
     pub(crate) aref: Either<Ref<'v, SetData<'v>>, &'v SetData<'v>>,
 }
 
@@ -51,40 +47,24 @@ impl<'v> Clone for SetRef<'v> {
 }
 
 impl<'v> SetRef<'v> {
-    /// Downcast the value to a set.
-    #[inline]
-    pub fn from_value(x: Value<'v>) -> Option<SetRef<'v>> {
-        if let Some(x) = x.downcast_ref::<SetGen<SetData<'v>>>() {
-            Some(SetRef {
-                aref: Either::Right(&x.0),
-            })
-        } else {
-            let ptr = x.downcast_ref::<SetGen<RefCell<SetData<'v>>>>()?;
-            Some(SetRef {
-                aref: Either::Left(ptr.0.borrow()),
-            })
-        }
-    }
-}
-
-impl<'v> SetRef<'v> {
     /// Iterate through the values in the set.
-    pub fn iter<'a>(&'a self) -> impl ExactSizeIterator<Item = Value<'v>> + 'a {
+    pub(crate) fn iter<'a>(&'a self) -> impl ExactSizeIterator<Item = Value<'v>> + 'a {
         self.aref.iter()
     }
 }
 
 impl<'v> Dupe for SetRef<'v> {}
 
-/// Mutably borrowed `Set`.
-pub struct SetMut<'v> {
+/// A set, borrowed to change it: reading the set while this is alive panics, so the crate
+/// holds it across nothing that could.
+pub(crate) struct SetMut<'v> {
     pub(crate) aref: RefMut<'v, SetData<'v>>,
 }
 
 impl<'v> SetMut<'v> {
     /// Downcast the value to a mutable set reference.
     #[inline]
-    pub fn from_value(x: Value<'v>) -> anyhow::Result<SetMut<'v>> {
+    pub(crate) fn from_value(x: Value<'v>) -> anyhow::Result<SetMut<'v>> {
         #[derive(thiserror::Error, Debug)]
         #[error("Value is not set, value type: `{0}`")]
         struct NotSetError(&'static str);
@@ -107,18 +87,5 @@ impl<'v> SetMut<'v> {
                 Err(_) => Err(ValueError::MutationDuringIteration.into()),
             },
         }
-    }
-}
-
-impl<'v> UnpackValue<'v> for SetRef<'v> {
-    type Type = SetType<Value<'v>>;
-    type Error = Infallible;
-
-    #[inline]
-    fn unpack(
-        _value: ValueOf<'v, Self::Type>,
-        get: SetOf<'v, Value<'v>>,
-    ) -> Result<Self, Infallible> {
-        Ok(get.set())
     }
 }

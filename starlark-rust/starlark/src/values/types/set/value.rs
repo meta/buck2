@@ -52,7 +52,6 @@ use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::comparison::equals_small_set;
-use crate::values::set::SetType;
 use crate::values::set::StarlarkSet;
 use crate::values::set::methods;
 use crate::values::starlark_value;
@@ -128,10 +127,10 @@ crate::register_simple_vtable_entry!(FrozenSet);
 unsafe impl<'v> crate::__derive_refs::VtableRegistered for SetGen<SetData<'v>> {}
 
 impl<'v> AllocValue<'v> for SetData<'v> {
-    type Type = SetType<Value<'v>>;
+    type Type = StarlarkSet<'v>;
 
     fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
-        ValueOf::alloc(heap, SetGen(RefCell::new(self))).into()
+        ValueOf::alloc(heap, SetGen(RefCell::new(self)))
     }
 }
 

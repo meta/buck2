@@ -762,8 +762,6 @@ fn is_int_literal(default: &Expr) -> bool {
 /// - An integer literal: not every `i32` is an `int` that exists without a heap on every
 ///   target, and in a constant one that is not fails to compile.
 fn render_default(default: &Expr) -> syn::Expr {
-    let respelled = render_default_spelled_as_rust_value(default);
-    let default = respelled.as_ref().unwrap_or(default);
     match default {
         Expr::Lit(ExprLit {
             lit: Lit::Str(_), ..
@@ -778,48 +776,5 @@ fn render_default(default: &Expr) -> syn::Expr {
             }
         },
         _ => default.clone(),
-    }
-}
-
-/// TRANSITIONAL: a default used to be a Rust value of the parameter's type. Until the callers
-/// are respelled, the spellings in use are read as the Starlark value they stand for.
-fn render_default_spelled_as_rust_value(default: &Expr) -> Option<syn::Expr> {
-    let spelling: String = quote!(#default)
-        .to_string()
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    match spelling.as_str() {
-        "NoneOr::None" => Some(syn::parse_quote! { starlark::values::none::NoneType }),
-        "NoneOr::Other(true)" => Some(syn::parse_quote! { true }),
-        "ValueOf::empty_list()"
-        | "Either::Left(ValueOf::empty_list())"
-        | "Either::Right(ValueOf::empty_list())"
-        | "SubtargetNameArg::List(ValueOf::empty_list())"
-        | "StarlarkCommandLineValueUnpack::List(ValueOf::empty_list())"
-        | "StarlarkList::empty()"
-        | "NoneOr::Other(StarlarkList::empty())" => {
-            Some(syn::parse_quote! { starlark::values::EmptyList })
-        }
-        "ValueOf::empty_dict()" => Some(syn::parse_quote! { starlark::values::EmptyDict }),
-        // These name something that only the default uses. They keep naming it, so that
-        // nothing is left unused before the caller is respelled.
-        "ValueOf::new_unchecked(Value::new_empty_list())" => Some(syn::parse_quote! {
-            { let _ = Value::new_empty_list; starlark::values::EmptyList }
-        }),
-        "ValueOf::new_unchecked(Value::new_empty_dict())" => Some(syn::parse_quote! {
-            { let _ = Value::new_empty_dict; starlark::values::EmptyDict }
-        }),
-        "AllocList::EMPTY" | "default_empty_value_of_list()" => Some(syn::parse_quote! {
-            { let _ = #default; starlark::values::EmptyList }
-        }),
-        "default_empty_dict()" => Some(syn::parse_quote! {
-            { let _ = #default; starlark::values::EmptyDict }
-        }),
-        "ValueAsStarlarkTargetLabel::NONE" => Some(syn::parse_quote! {
-            { let _ = #default; starlark::values::none::NoneType }
-        }),
-        "0u32" => Some(syn::parse_quote! { 0 }),
-        _ => None,
     }
 }

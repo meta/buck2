@@ -30,6 +30,7 @@ use dupe::Dupe;
 use mini_vec::MiniBoxSlice;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOf;
@@ -104,8 +105,9 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
             'v,
             StarlarkListOrTuple<'v, StarlarkArtifactView<'v>>,
         >,
-        #[starlark(require = named)] inputs: Option<
-            ValueOf<'v, StarlarkListOrTuple<'v, StarlarkArtifactView<'v>>>,
+        #[starlark(require = named, default = EmptyList)] inputs: ValueOf<
+            'v,
+            StarlarkListOrTuple<'v, StarlarkArtifactView<'v>>,
         >,
         #[starlark(require = named)] outputs: ValueOf<
             'v,

@@ -33,6 +33,7 @@ use starlark::typing::Ty;
 use starlark::typing::TyStarlarkValue;
 use starlark::typing::TyUser;
 use starlark::typing::TyUserParams;
+use starlark::values::EmptyDict;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
@@ -466,20 +467,22 @@ impl<'v> TransitiveSetDefinitionLike<'v> for FrozenTransitiveSetDefinition<'v> {
 #[starlark_module]
 pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
     fn transitive_set<'v>(
-        #[starlark(require = named)] args_projections: Option<
-            ValueOf<'v, StarlarkDict<'v, StarlarkStr, Projection<'v>>>,
+        #[starlark(require = named, default = EmptyDict)] args_projections: ValueOf<
+            'v,
+            StarlarkDict<'v, StarlarkStr, Projection<'v>>,
         >,
-        #[starlark(require = named)] json_projections: Option<
-            ValueOf<'v, StarlarkDict<'v, StarlarkStr, Projection<'v>>>,
+        #[starlark(require = named, default = EmptyDict)] json_projections: ValueOf<
+            'v,
+            StarlarkDict<'v, StarlarkStr, Projection<'v>>,
         >,
-        #[starlark(require = named)] reductions: Option<
-            ValueOf<'v, StarlarkDict<'v, StarlarkStr, Reduction<'v>>>,
+        #[starlark(require = named, default = EmptyDict)] reductions: ValueOf<
+            'v,
+            StarlarkDict<'v, StarlarkStr, Reduction<'v>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, TransitiveSetDefinitionView<'v>>> {
         let projections: BuckMutInsertionMap<_, _> = args_projections
-            .into_iter()
-            .flat_map(|v| v.iter())
+            .iter()
             .map(|entry| {
                 let (k, v) = entry?;
                 Ok::<_, starlark::Error>((
@@ -490,36 +493,28 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
                     },
                 ))
             })
-            .chain(
-                json_projections
-                    .into_iter()
-                    .flat_map(|v| v.iter())
-                    .map(|entry| {
-                        let (k, v) = entry?;
-                        Ok::<_, starlark::Error>((
-                            k.as_str().to_owned(),
-                            TransitiveSetProjectionSpec {
-                                kind: TransitiveSetProjectionKind::Json,
-                                projection: check_signature("json_projections", k.as_str(), v)?,
-                            },
-                        ))
-                    }),
-            )
+            .chain(json_projections.iter().map(|entry| {
+                let (k, v) = entry?;
+                Ok::<_, starlark::Error>((
+                    k.as_str().to_owned(),
+                    TransitiveSetProjectionSpec {
+                        kind: TransitiveSetProjectionKind::Json,
+                        projection: check_signature("json_projections", k.as_str(), v)?,
+                    },
+                ))
+            }))
             .collect::<starlark::Result<_>>()?;
 
-        let reductions = match reductions {
-            Some(reductions) => reductions
-                .iter()
-                .map(|entry| {
-                    let (k, v) = entry?;
-                    Ok::<_, starlark::Error>((
-                        k.as_str().to_owned(),
-                        check_signature("reductions", k.as_str(), v)?,
-                    ))
-                })
-                .collect::<starlark::Result<_>>()?,
-            None => BuckMutInsertionMap::new(),
-        };
+        let reductions = reductions
+            .iter()
+            .map(|entry| {
+                let (k, v) = entry?;
+                Ok::<_, starlark::Error>((
+                    k.as_str().to_owned(),
+                    check_signature("reductions", k.as_str(), v)?,
+                ))
+            })
+            .collect::<starlark::Result<_>>()?;
 
         let starlark_path: StarlarkPath = starlark_path_from_build_context(eval)?;
         Ok(eval.heap().alloc(TransitiveSetDefinition::new(

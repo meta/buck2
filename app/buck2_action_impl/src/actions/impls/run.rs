@@ -347,7 +347,7 @@ pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>>,
+    pub(crate) env: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -368,7 +368,7 @@ pub(crate) struct FrozenStarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>>,
+    pub(crate) env: ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -601,16 +601,14 @@ impl RunAction {
     ) -> buck2_error::Result<UnpackedRunActionValues<'v>> {
         let exe: &dyn CommandLineArgLike = values.exe.as_ref();
         let args: &dyn CommandLineArgLike = values.args.as_ref();
-        let env = match values.env {
-            None => Vec::new(),
-            Some(env) => env
-                .iter()
-                .map(|entry| {
-                    let (k, v) = entry?;
-                    Ok((k.as_str(), v.get()))
-                })
-                .collect::<buck2_error::Result<Vec<_>>>()?,
-        };
+        let env = values
+            .env
+            .iter()
+            .map(|entry| {
+                let (k, v) = entry?;
+                Ok((k.as_str(), v.get()))
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()?;
         let worker: Option<&WorkerInfo> = values.worker()?.map(|v| v.as_ref());
 
         let worker = worker

@@ -52,13 +52,13 @@ pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
     fn read_config<'v>(
         section: StringValue,
         key: StringValue,
-        default: Option<Value<'v>>,
+        #[starlark(default = NoneType)] default: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let buckconfigs = &BuildContext::from_context(eval)?.buckconfigs;
         match buckconfigs.current_cell_get(section, key, eval)? {
             Some(v) => Ok(v.to_value()),
-            None => Ok(default.unwrap_or_else(Value::new_none)),
+            None => Ok(default),
         }
     }
 

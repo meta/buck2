@@ -805,9 +805,9 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
     /// in each argument with replacement strings.
     fn cmd_args(
         #[starlark(args)] args: CmdArgsPositional<'v>,
-        hidden: Option<StarlarkCommandLineValueUnpack<'v>>,
+        #[starlark(default = EmptyList)] hidden: StarlarkCommandLineValueUnpack<'v>,
         delimiter: Option<StringValue<'v>>,
-        format: Option<StringValue<'v>>,
+        #[starlark(default = "{}")] format: StringValue<'v>,
         prepend: Option<StringValue<'v>>,
         quote: Option<&str>,
         #[starlark(default = false)] ignore_artifacts: bool,
@@ -825,7 +825,8 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkCmdArgsView<'v>>> {
-        let format = format.filter(|format| format.as_str() != "{}");
+        // `{}` formats an argument as itself.
+        let format = (format.as_str() != "{}").then_some(format);
         let quote = quote.map(QuoteStyle::parse).transpose()?;
         let mut builder = StarlarkCommandLineData::default();
         if delimiter.is_some()
@@ -867,9 +868,7 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
         for v in args.0.try_items::<StarlarkCommandLineValueUnpack>() {
             builder.add_value_typed(v?)?;
         }
-        if let Some(hidden) = hidden {
-            builder.add_hidden(hidden)?;
-        }
+        builder.add_hidden(hidden)?;
         Ok(heap.alloc(StarlarkCmdArgs(RefCell::new(builder))))
     }
 

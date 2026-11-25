@@ -26,6 +26,7 @@ use starlark::environment::GlobalsBuilder;
 use starlark::environment::Module;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::FreezeErrorContext;
 use starlark::values::OwnedFrozen;
 use starlark::values::Value;
@@ -39,7 +40,7 @@ pub(crate) fn tset_factory(builder: &mut GlobalsBuilder) {
     fn make_tset<'v>(
         definition: TransitiveSetDefinitionView<'v>,
         value: Option<Value<'v>>,
-        children: Option<Value<'v>>, // An iterable.
+        #[starlark(default = EmptyList)] children: Value<'v>, // An iterable.
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, TransitiveSet<'v>>> {
         let definition = definition.frozen()?;
@@ -61,7 +62,7 @@ pub(crate) fn tset_factory(builder: &mut GlobalsBuilder) {
             TransitiveSetKey::new(DeferredHolderKey::testing_new("cell//more:tsets"), tset_id),
             definition,
             value,
-            children,
+            Some(children),
             eval,
         )?;
 

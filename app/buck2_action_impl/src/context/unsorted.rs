@@ -21,6 +21,7 @@ use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyList;
 use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOf;
@@ -53,7 +54,7 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] prefix: &str,
         #[starlark(require = pos)] filename: Option<&str>,
         #[starlark(require = named, default = false)] dir: bool,
-        #[starlark(require = named)] has_content_based_path: Option<bool>,
+        #[starlark(require = named, default = true)] has_content_based_path: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         // We take either one or two positional arguments, namely (filename) or (prefix, filename).
@@ -69,7 +70,6 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         } else {
             OutputType::FileOrDirectory
         };
-        let has_content_based_path = has_content_based_path.unwrap_or(true);
         let path_resolution_method = if has_content_based_path {
             BuckOutPathKind::ContentHash
         } else {
@@ -96,12 +96,15 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] definition: TransitiveSetDefinitionView<'v>,
         #[starlark(require = named)] value: Option<Value<'v>>,
-        #[starlark(require = named)] children: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
+        #[starlark(require = named, default = EmptyList)] children: ValueOf<
+            'v,
+            StarlarkIter<Value<'v>>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, TransitiveSet<'v>>> {
         let definition = definition.frozen()?;
         let mut this = this.state()?;
-        this.create_transitive_set(definition, value, children.map(|v| v.to_value()), eval)
+        this.create_transitive_set(definition, value, Some(children.to_value()), eval)
     }
 
     /// Create a unique artifact tag for tracking input dependencies with dependency files.

@@ -50,6 +50,7 @@ use mini_vec::MiniBoxSlice;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::EmptyDict;
 use starlark::values::EmptyList;
 use starlark::values::StringValue;
 use starlark::values::ValueOf;
@@ -261,8 +262,9 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = pos)] arguments: StarlarkCommandLineValueUnpack<'v>,
         #[starlark(require = named)] category: StringValue<'v>,
         #[starlark(require = named, default = NoneType)] identifier: NoneOr<StringValue<'v>>,
-        #[starlark(require = named)] env: Option<
-            ValueOf<'v, StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>>,
+        #[starlark(require = named, default = EmptyDict)] env: ValueOf<
+            'v,
+            StarlarkDict<'v, StarlarkStr, StarlarkCmdArgsLike>,
         >,
         #[starlark(require = named, default = false)] local_only: bool,
         #[starlark(require = named, default = false)] prefer_local: bool,
@@ -271,8 +273,9 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] always_print_stderr: bool,
         #[starlark(require = named)] weight: Option<u32>,
         #[starlark(require = named)] weight_percentage: Option<u32>,
-        #[starlark(require = named)] dep_files: Option<
-            ValueOf<'v, StarlarkDict<'v, StarlarkStr, ArtifactTag>>,
+        #[starlark(require = named, default = EmptyDict)] dep_files: ValueOf<
+            'v,
+            StarlarkDict<'v, StarlarkStr, ArtifactTag>,
         >,
         #[starlark(require = named, default = EmptyList)] dep_file_fingerprints: ValueOf<
             'v,
@@ -342,17 +345,18 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         impl<'v> RunCommandArtifactVisitor<'v> {
             fn new(
-                dep_files: Option<ValueOf<'v, StarlarkDict<'v, StarlarkStr, ArtifactTag>>>,
+                dep_files: ValueOf<'v, StarlarkDict<'v, StarlarkStr, ArtifactTag>>,
             ) -> buck2_error::Result<Self> {
-                let dep_file_artifact_tags = if let Some(dep_files) = dep_files {
+                // Without dep files no input is looked up in the set, which is most actions.
+                let dep_file_artifact_tags = if dep_files.dict().is_empty() {
+                    None
+                } else {
                     let mut tags = BuckMutInsertionSet::with_capacity(dep_files.dict().len());
                     for entry in dep_files.iter() {
                         let (_key, tag) = entry?;
                         tags.insert(tag.as_ref());
                     }
                     Some(tags)
-                } else {
-                    None
                 };
                 Ok(Self {
                     inner: SimpleCommandLineArtifactVisitor::new(),
@@ -482,15 +486,9 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             }
         };
 
-        let starlark_env = match env {
-            None => None,
-            Some(env) => {
-                for entry in env.iter() {
-                    entry?.1.get().visit_artifacts(&mut artifact_visitor)?;
-                }
-                Some(env)
-            }
-        };
+        for entry in env.iter() {
+            entry?.1.get().visit_artifacts(&mut artifact_visitor)?;
+        }
 
         let RunCommandArtifactVisitor {
             inner: artifacts,
@@ -506,37 +504,35 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         let mut dep_file_labels: BuckMutInsertionMap<ArtifactTag, Arc<str>> =
             BuckMutInsertionMap::new();
 
-        if let Some(dep_files) = dep_files {
-            for entry in dep_files.iter() {
-                let (key, tag) = entry?;
-                let key = key.as_str();
-                let tag = tag.as_ref();
-                let tagged = tagged_outputs.get(tag);
-                let count = tagged.map_or(0, |t| t.len());
+        for entry in dep_files.iter() {
+            let (key, tag) = entry?;
+            let key = key.as_str();
+            let tag = tag.as_ref();
+            let tagged = tagged_outputs.get(tag);
+            let count = tagged.map_or(0, |t| t.len());
 
-                if count != 1 {
+            if count != 1 {
+                return Err(
+                    buck2_error::Error::from(RunActionError::InvalidDepFileOutputs {
+                        key: (*key).to_owned(),
+                        count,
+                    })
+                    .into(),
+                );
+            }
+
+            match dep_file_labels.entry(tag.dupe()) {
+                small_map::Entry::Vacant(v) => {
+                    v.insert(Arc::from(key));
+                }
+                small_map::Entry::Occupied(o) => {
                     return Err(
-                        buck2_error::Error::from(RunActionError::InvalidDepFileOutputs {
-                            key: (*key).to_owned(),
-                            count,
+                        buck2_error::Error::from(RunActionError::ConflictingDepFiles {
+                            first: (**o.get()).to_owned(),
+                            second: (*key).to_owned(),
                         })
                         .into(),
                     );
-                }
-
-                match dep_file_labels.entry(tag.dupe()) {
-                    small_map::Entry::Vacant(v) => {
-                        v.insert(Arc::from(key));
-                    }
-                    small_map::Entry::Occupied(o) => {
-                        return Err(buck2_error::Error::from(
-                            RunActionError::ConflictingDepFiles {
-                                first: (**o.get()).to_owned(),
-                                second: (*key).to_owned(),
-                            },
-                        )
-                        .into());
-                    }
                 }
             }
         }
@@ -602,7 +598,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             exe: heap.alloc_representation(starlark_exe),
             args: heap.alloc_representation(starlark_args),
             dep_file_fingerprints: MiniBoxSlice::from(dep_file_fingerprints),
-            env: starlark_env,
+            env,
             worker: starlark_worker,
             remote_worker: starlark_remote_worker,
             category: {

@@ -162,7 +162,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Takes a string from the user, supplies a string to the rule.
     fn string<'v>(
         #[starlark(require = named)] default: Option<Value<'v>>,
-        #[starlark(require = named)] validate: Option<Value<'v>>,
+        #[starlark(require = named, default = NoneType)] validate: Value<'v>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkAttribute>> {

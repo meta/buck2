@@ -34,7 +34,7 @@ const SEED2: u64 = 0x13198a2e03707344;
 const PREVENT_TRIVIAL_ZERO_COLLAPSE: u64 = 0xa4093822299f31d0;
 
 #[inline]
-fn multiply_mix(x: u64, y: u64) -> u64 {
+const fn multiply_mix(x: u64, y: u64) -> u64 {
     // The middle bits of the full 128-bit product fluctuate the most with small
     // changes in the input: the top bits of `lo` and the bottom bits of `hi`,
     // so XOR the halves. Unlike upstream, use this path on every architecture:
@@ -95,6 +95,63 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
     }
 
     multiply_mix(s0, s1) ^ (len as u64)
+}
+
+const fn read_u32(bytes: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+}
+
+const fn read_u64(bytes: &[u8], at: usize) -> u64 {
+    (read_u32(bytes, at) as u64) | ((read_u32(bytes, at + 4) as u64) << 32)
+}
+
+/// [`hash_bytes`] for a constant. It is a second copy, because the slice conversions
+/// `hash_bytes` is written with cannot run at compile time, and written with byte reads it
+/// would be the hot path of every string hash; `const_agrees` holds the two together.
+const fn hash_bytes_const(bytes: &[u8]) -> u64 {
+    let len = bytes.len();
+    let mut s0 = SEED1;
+    let mut s1 = SEED2;
+
+    if len <= 16 {
+        if len >= 8 {
+            s0 ^= read_u64(bytes, 0);
+            s1 ^= read_u64(bytes, len - 8);
+        } else if len >= 4 {
+            s0 ^= read_u32(bytes, 0) as u64;
+            s1 ^= read_u32(bytes, len - 4) as u64;
+        } else if len > 0 {
+            let lo = bytes[0];
+            let mid = bytes[len / 2];
+            let hi = bytes[len - 1];
+            s0 ^= lo as u64;
+            s1 ^= ((hi as u64) << 8) | mid as u64;
+        }
+    } else {
+        let mut at = 0;
+        while at + 16 < len {
+            let x = read_u64(bytes, at);
+            let y = read_u64(bytes, at + 8);
+            let t = multiply_mix(s0 ^ x, PREVENT_TRIVIAL_ZERO_COLLAPSE ^ y);
+            s0 = s1;
+            s1 = t;
+            at += 16;
+        }
+        s0 ^= read_u64(bytes, len - 16);
+        s1 ^= read_u64(bytes, len - 8);
+    }
+
+    multiply_mix(s0, s1) ^ (len as u64)
+}
+
+/// What an [`Fx64Hasher`] finishes with after `str::hash`, for a constant.
+pub(crate) const fn hash_str_const(s: &str) -> u64 {
+    // `str::hash` writes the bytes and then `0xff`.
+    let hash = 0u64
+        .wrapping_add(hash_bytes_const(s.as_bytes()))
+        .wrapping_mul(K);
+    let hash = hash.wrapping_add(0xff).wrapping_mul(K);
+    hash.rotate_left(26)
 }
 
 #[derive(Default, Clone)]
@@ -175,6 +232,25 @@ mod tests {
             );
         }
         inputs
+    }
+
+    #[test]
+    fn const_agrees() {
+        for input in test_inputs() {
+            assert_eq!(hash_bytes(&input), hash_bytes_const(&input), "{input:?}");
+        }
+        for s in [
+            "",
+            "a",
+            "get",
+            "startswith",
+            "a name of more than sixteen bytes",
+            "ünïcödé",
+        ] {
+            let mut hasher = Fx64Hasher::default();
+            s.hash(&mut hasher);
+            assert_eq!(hasher.finish(), hash_str_const(s), "{s:?}");
+        }
     }
 
     const UPSTREAM_DRIFT: &str = "\

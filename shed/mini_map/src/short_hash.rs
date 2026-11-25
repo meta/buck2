@@ -47,6 +47,14 @@ impl ShortHash {
         hasher.finish_short()
     }
 
+    /// [`new`](Self::new) of a `str`, for a constant: the hash a table is built with at
+    /// compile time is the one a lookup computes at run time.
+    pub const fn new_str_const(key: &str) -> Self {
+        // As `FastHasher::finish_short` folds it.
+        let hash = crate::fx64::hash_str_const(key);
+        ShortHash((hash ^ (hash >> 32)) as u32)
+    }
+
     /// Directly create a [`ShortHash`] from a hash.
     ///
     /// The caller is expected to pass something well swizzled; anything else will collide a lot.
@@ -91,6 +99,15 @@ impl ShortHash {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_str_const_agrees_with_new() {
+        const GET: ShortHash = ShortHash::new_str_const("get");
+        assert_eq!(GET, ShortHash::new("get"));
+        for s in ["", "a", "startswith", "a name of more than sixteen bytes"] {
+            assert_eq!(ShortHash::new_str_const(s), ShortHash::new(s), "{s:?}");
+        }
+    }
 
     #[test]
     fn new_agrees_with_new_unchecked() {

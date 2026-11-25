@@ -232,10 +232,6 @@ pub(crate) enum StarFunSource {
 }
 
 impl StarArg {
-    pub fn is_option(&self) -> bool {
-        is_type_name(&self.param.ty, "Option")
-    }
-
     pub fn is_value(&self) -> bool {
         is_type_name(&self.param.ty, "Value")
     }

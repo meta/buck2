@@ -112,7 +112,7 @@ impl<'a> ParamSpec<'a> {
                 }
             }
 
-            let optional = arg.default.is_some() || arg.is_option();
+            let optional = arg.default.is_some();
 
             if last_param_style <= CurrentParamStyle::PosOrNamed {
                 if seen_optional && !optional {

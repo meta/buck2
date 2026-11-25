@@ -259,6 +259,9 @@ pub(crate) fn unpack_then<'v, T: UnpackValue<'v>, R>(
 ///     }
 /// }
 /// ```
+#[diagnostic::on_unimplemented(
+    note = "an optional parameter of a native function is, in order of preference: a parameter with a default (`#[starlark(default = 0)] x: i32`); a `NoneOr<T>` with `default = NoneType`; an `Option<T>` with `default = Absent`, where `None` must not be accepted (see `starlark::values::Absent`)"
+)]
 pub trait UnpackValue<'v>: Sized {
     /// The Starlark type converted from: what a parameter of this Rust type accepts.
     type Type: StarlarkTypeExpr<'v>;

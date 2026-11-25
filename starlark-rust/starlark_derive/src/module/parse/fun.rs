@@ -497,7 +497,7 @@ fn resolve_args(args: &mut [StarArg]) -> syn::Result<StarFunSource> {
                 }
                 x.source = StarArgSource::Kwargs;
                 kwargs = true;
-            } else if optional == 0 && x.default.is_none() && !x.is_option() {
+            } else if optional == 0 && x.default.is_none() {
                 x.source = StarArgSource::Required(required);
                 required += 1;
             } else {

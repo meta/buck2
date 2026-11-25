@@ -39,6 +39,7 @@ use crate::environment::Globals;
 use crate::environment::GlobalsBuilder;
 use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
+use crate::values::EmptyList;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
@@ -170,7 +171,7 @@ fn module(builder: &mut GlobalsBuilder) {
     }
 
     fn with_defaults<'v>(
-        #[starlark(default = ValueOf::empty_list())] explicit_default: ValueOf<
+        #[starlark(default = EmptyList)] explicit_default: ValueOf<
             'v,
             StarlarkList<'v, StarlarkStr>,
         >,

@@ -36,6 +36,7 @@ use crate::values::ValueOf;
 use crate::values::list::AllocList;
 use crate::values::list::StarlarkList;
 use crate::values::none::NoneOr;
+use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
 use crate::values::string::dot_format;
 use crate::values::tuple::StarlarkTuple;
@@ -249,8 +250,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn count(
         this: &str,
         #[starlark(require = pos)] needle: &str,
-        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
-        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] end: NoneOr<i32>,
     ) -> anyhow::Result<i32> {
         if let Some(StrIndices { haystack, .. }) =
             convert_str_indices(this, start.into_option(), end.into_option())
@@ -279,8 +280,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn endswith(
         this: &str,
         #[starlark(require = pos)] suffix: StringOrTuple,
-        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
-        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] end: NoneOr<i32>,
     ) -> anyhow::Result<bool> {
         let haystack = match convert_str_indices(this, start.into_option(), end.into_option()) {
             Some(StrIndices { haystack, .. }) => haystack,
@@ -317,8 +318,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn find(
         this: &str,
         #[starlark(require = pos)] needle: &str,
-        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
-        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] end: NoneOr<i32>,
     ) -> anyhow::Result<i32> {
         if let Some(StrIndices { start, haystack }) =
             convert_str_indices(this, start.into_option(), end.into_option())
@@ -418,8 +419,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn index(
         this: &str,
         #[starlark(require = pos)] needle: &str,
-        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
-        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] end: NoneOr<i32>,
     ) -> anyhow::Result<i32> {
         if let Some(StrIndices { start, haystack }) =
             convert_str_indices(this, start.into_option(), end.into_option())
@@ -876,8 +877,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn rfind(
         this: &str,
         #[starlark(require = pos)] needle: &str,
-        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
-        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] end: NoneOr<i32>,
     ) -> anyhow::Result<i32> {
         if let Some(StrIndices { start, haystack }) =
             convert_str_indices(this, start.into_option(), end.into_option())
@@ -911,8 +912,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn rindex(
         this: &str,
         #[starlark(require = pos)] needle: &str,
-        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
-        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] end: NoneOr<i32>,
     ) -> anyhow::Result<i32> {
         if let Some(StrIndices { start, haystack }) =
             convert_str_indices(this, start.into_option(), end.into_option())
@@ -984,8 +985,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn rsplit<'v>(
         this: &str,
-        #[starlark(require = pos, default = NoneOr::None)] sep: NoneOr<&str>,
-        #[starlark(require = pos, default = NoneOr::None)] maxsplit: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] sep: NoneOr<&str>,
+        #[starlark(require = pos, default = NoneType)] maxsplit: NoneOr<i32>,
         heap: Heap<'v>,
     ) -> anyhow::Result<ValueOf<'v, StarlarkList<'v, StarlarkStr>>> {
         if sep.into_option() == Some("") {
@@ -1087,8 +1088,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn split<'v>(
         this: &str,
-        #[starlark(require = pos, default = NoneOr::None)] sep: NoneOr<&str>,
-        #[starlark(require = pos, default = NoneOr::None)] maxsplit: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] sep: NoneOr<&str>,
+        #[starlark(require = pos, default = NoneType)] maxsplit: NoneOr<i32>,
         heap: Heap<'v>,
     ) -> anyhow::Result<ValueOf<'v, StarlarkList<'v, StarlarkStr>>> {
         if sep.into_option() == Some("") {
@@ -1207,8 +1208,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn startswith(
         this: &str,
         #[starlark(require = pos)] prefix: StringOrTuple,
-        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
-        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] end: NoneOr<i32>,
     ) -> anyhow::Result<bool> {
         let haystack = match convert_str_indices(this, start.into_option(), end.into_option()) {
             Some(StrIndices { haystack, .. }) => haystack,

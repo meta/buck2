@@ -162,8 +162,8 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     fn index<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] needle: Value<'v>,
-        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
-        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneType)] end: NoneOr<i32>,
     ) -> starlark::Result<i32> {
         let list = <StarlarkList>::unpack_value_err(this)?;
         // `equals` runs no Starlark code, so the list does not change under the slice.

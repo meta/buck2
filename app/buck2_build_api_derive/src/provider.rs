@@ -348,13 +348,15 @@ impl ProviderCodegen {
         let provider_docstring = self.get_docstring_impl(&self.input.attrs);
         let create_func = &self.args.creator_func;
         if self.args.methods_func.is_some() {
-            let methods_static_name = self.methods_static_name()?;
+            let name = self.name()?;
             return Ok(syn::parse_quote_spanned! {self.span=>
                 fn documentation(_this: &Self) -> starlark::docs::DocItem {
                     let docstring = #provider_docstring;
                     buck2_build_api::interpreter::rule_defs::provider::doc::provider_callable_documentation(
                         Some(#create_func),
-                        buck2_build_api::interpreter::rule_defs::provider::doc::ProviderMembersSource::FromMethods(#methods_static_name.methods()),
+                        buck2_build_api::interpreter::rule_defs::provider::doc::ProviderMembersSource::FromType(
+                            starlark::docs::DocType::from_starlark_value::<#name<'static>>(),
+                        ),
                         BUILTIN_PROVIDER_TY.instance(),
                         &docstring,
                     )
@@ -455,47 +457,41 @@ impl ProviderCodegen {
         let field_names = self.field_names()?;
         let self_values = self.field_values(syn::parse_quote_spanned! { self.span=> this })?;
         let other_values = self.field_values(syn::parse_quote_spanned! { self.span=> other })?;
-        let starlark_value_attr: syn::Attribute = syn::parse_quote_spanned! { self.span=>
-            #[starlark::values::starlark_value(type = #name_str)]
+        let (starlark_value_attr, attrs): (syn::Attribute, Vec<syn::ImplItemFn>) = match &self
+            .args
+            .methods_func
+        {
+            Some(methods_func) => (
+                syn::parse_quote_spanned! { self.span=>
+                    #[starlark::values::starlark_value(type = #name_str, methods = #methods_func)]
+                },
+                Vec::new(),
+            ),
+            None => (
+                syn::parse_quote_spanned! { self.span=>
+                    #[starlark::values::starlark_value(type = #name_str)]
+                },
+                vec![
+                    syn::parse_quote_spanned! { self.span=>
+                        fn get_attr(
+                            this: &Self,
+                            attribute: &str,
+                            _heap: starlark::values::Heap<'v>,
+                        ) -> Option<starlark::values::Value<'v>> {
+                            match attribute {
+                                #(#field_names => Some(#self_values),)*
+                                _ => None,
+                            }
+                        }
+                    },
+                    syn::parse_quote_spanned! { self.span=>
+                        fn dir_attr(_this: &Self) -> Vec<String> {
+                            vec![#(#field_names.to_owned()),*]
+                        }
+                    },
+                ],
+            ),
         };
-        let (methods_static, attrs): (Option<syn::Item>, Vec<syn::ImplItemFn>) =
-            match &self.args.methods_func {
-                Some(methods_func) => {
-                    let methods_static_name = self.methods_static_name()?;
-                    (
-                        Some(syn::parse_quote_spanned! { self.span=>
-                            starlark::methods_static!(#methods_static_name = #methods_func);
-                        }),
-                        vec![syn::parse_quote_spanned! { self.span=>
-                            fn get_methods() -> Option<&'static starlark::environment::Methods> {
-                                Some(#methods_static_name.methods())
-                            }
-                        }],
-                    )
-                }
-                None => (
-                    None,
-                    vec![
-                        syn::parse_quote_spanned! { self.span=>
-                            fn get_attr(
-                                this: &Self,
-                                attribute: &str,
-                                _heap: starlark::values::Heap<'v>,
-                            ) -> Option<starlark::values::Value<'v>> {
-                                match attribute {
-                                    #(#field_names => Some(#self_values),)*
-                                    _ => None,
-                                }
-                            }
-                        },
-                        syn::parse_quote_spanned! { self.span=>
-                            fn dir_attr(_this: &Self) -> Vec<String> {
-                                vec![#(#field_names.to_owned()),*]
-                            }
-                        },
-                    ],
-                ),
-            };
         // The provider has one representation, so its handle to a predicate type is the
         // provider itself as the trait object. Every provider is a `Provider`.
         let provider: syn::Path = syn::parse_quote_spanned! { self.span=>
@@ -519,7 +515,6 @@ impl ProviderCodegen {
             starlark::starlark_complex_value!(#vis #name);
         }]
         .into_iter()
-        .chain(methods_static)
         .chain([syn::parse_quote_spanned! { self.span=>
             #starlark_value_attr
             impl<'v> starlark::values::StarlarkValue<'v> for #name<'v> {
@@ -539,19 +534,6 @@ impl ProviderCodegen {
             }
         }])
         .collect())
-    }
-
-    /// The `methods_static!` holding a custom methods table.
-    fn methods_static_name(&self) -> syn::Result<syn::Ident> {
-        Ok(format_ident!(
-            "{}_PROVIDER_STATICS",
-            self.args
-                .methods_func
-                .as_ref()
-                .expect("only with custom methods")
-                .to_string()
-                .to_uppercase()
-        ))
     }
 
     fn impl_serializable_value(&self) -> syn::Result<syn::Item> {

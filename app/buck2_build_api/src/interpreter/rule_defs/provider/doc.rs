@@ -16,17 +16,20 @@ use starlark::docs::DocProperty;
 use starlark::docs::DocString;
 use starlark::docs::DocType;
 use starlark::environment::GlobalsBuilder;
-use starlark::environment::Methods;
 use starlark::typing::Ty;
 
 /// Source for provider member documentation.
 ///
 /// This enum represents the two mutually exclusive ways to obtain
 /// documentation for a provider's members (fields and methods).
+#[expect(
+    clippy::large_enum_variant,
+    reason = "made once for a provider's documentation and consumed at once"
+)]
 pub enum ProviderMembersSource<'a> {
-    /// Extract documentation from the provider's methods table.
+    /// The members that the provider's type documents: those of its methods module.
     /// Used when `#[internal_provider(..., methods = custom_methods)]` is specified.
-    FromMethods(&'static Methods),
+    FromType(DocType),
 
     /// Use documentation derived from struct fields.
     /// Used when no custom methods builder is provided.
@@ -46,24 +49,20 @@ pub fn provider_callable_documentation(
     overall: &Option<DocString>,
 ) -> DocItem {
     let members = match members_source {
-        ProviderMembersSource::FromMethods(methods) => {
-            let methods_doc = methods.documentation(self_ty.clone());
-
-            methods_doc
-                .members
-                .into_iter()
-                .map(|(name, member)| {
-                    let prop = match member {
-                        DocMember::Property(p) => p,
-                        DocMember::Function(f) => DocProperty {
-                            docs: f.docs,
-                            typ: f.ret.typ,
-                        },
-                    };
-                    (name, prop)
-                })
-                .collect::<Vec<_>>()
-        }
+        ProviderMembersSource::FromType(ty_doc) => ty_doc
+            .members
+            .into_iter()
+            .map(|(name, member)| {
+                let prop = match member {
+                    DocMember::Property(p) => p,
+                    DocMember::Function(f) => DocProperty {
+                        docs: f.docs,
+                        typ: f.ret.typ,
+                    },
+                };
+                (name, prop)
+            })
+            .collect::<Vec<_>>(),
         ProviderMembersSource::FromFields {
             fields,
             field_docs,

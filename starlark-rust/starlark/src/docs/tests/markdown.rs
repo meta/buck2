@@ -37,7 +37,6 @@ use crate::docs::multipage::DocModuleInfo;
 use crate::docs::multipage::render_markdown_multipage;
 use crate::environment::Globals;
 use crate::environment::GlobalsBuilder;
-use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::values::EmptyList;
 use crate::values::Heap;
@@ -239,14 +238,8 @@ struct Obj;
 
 starlark_simple_value!(Obj);
 
-starlark::methods_static!(OBJ_METHODS = object);
-
-#[starlark_value(type = "obj")]
-impl<'v> StarlarkValue<'v> for Obj {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(OBJ_METHODS.methods())
-    }
-}
+#[starlark_value(type = "obj", methods = object)]
+impl<'v> StarlarkValue<'v> for Obj {}
 
 /// These are where the module docs go
 #[starlark_module]

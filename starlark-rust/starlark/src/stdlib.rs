@@ -169,7 +169,6 @@ mod tests {
     use crate::any::ProvidesStaticType;
     use crate::assert::Assert;
     use crate::environment::GlobalsBuilder;
-    use crate::environment::Methods;
     use crate::environment::MethodsBuilder;
     use crate::starlark_simple_value;
     use crate::values::Heap;
@@ -210,14 +209,8 @@ mod tests {
         struct Bool2(bool);
         starlark_simple_value!(Bool2);
 
-        starlark::methods_static!(BOOL2_METHODS = methods);
-
-        #[starlark_value(type = "bool2")]
+        #[starlark_value(type = "bool2", methods = methods)]
         impl<'v> StarlarkValue<'v> for Bool2 {
-            fn get_methods() -> Option<&'static Methods> {
-                Some(BOOL2_METHODS.methods())
-            }
-
             fn equals(this: &Self, other: Value<'v>) -> crate::Result<bool> {
                 match other.downcast_ref::<Bool2>() {
                     None => Ok(false),

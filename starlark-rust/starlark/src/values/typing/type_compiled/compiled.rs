@@ -38,7 +38,6 @@ use thiserror::Error;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::pagable::static_value::TypeCompiledStaticRegistered;
 use crate::pagable::static_value::static_type_compiled;
@@ -208,8 +207,6 @@ impl TypeMatcher for DummyTypeMatcher {
 // `Canonical` points here.
 crate::register_ty_starlark_value!(TypeCompiledImplAsStarlarkValue<DummyTypeMatcher>);
 
-starlark::methods_static!(TYPE_COMPILED_METHODS = type_compiled_methods);
-
 impl<'v> From<TypeCompiled<'v>> for Value<'v> {
     #[inline]
     fn from(x: TypeCompiled<'v>) -> Value<'v> {
@@ -228,7 +225,7 @@ impl<'v> UnpackValue<'v> for TypeCompiled<'v> {
 }
 
 /// The behaviour of a compiled type, whose representations are one per matcher.
-#[starlark_value(type = "type")]
+#[starlark_value(type = "type", methods = type_compiled_methods)]
 impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
     type Get = Self;
 
@@ -260,13 +257,6 @@ impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
         // but implement this function to make proc-macro generate `bit_or`.
         // Also safer to be explicit here.
         Some(this.as_ty().clone())
-    }
-
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        Some(TYPE_COMPILED_METHODS.methods())
     }
 }
 

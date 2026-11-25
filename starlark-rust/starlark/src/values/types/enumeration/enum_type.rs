@@ -35,7 +35,6 @@ use starlark_map::small_map::SmallMap;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
@@ -330,8 +329,6 @@ impl<'v, V: EnumVariant + ?Sized> EnumTypeGen<'v, V> {
     }
 }
 
-starlark::methods_static!(ENUM_TYPE_METHODS = enum_type_methods);
-
 /// An enum type in either of its representations.
 #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
 pub(crate) enum EnumTypeView<'v> {
@@ -351,7 +348,7 @@ impl<'v> EnumTypeView<'v> {
     }
 }
 
-#[starlark_value(type = FUNCTION_TYPE)]
+#[starlark_value(type = FUNCTION_TYPE, methods = enum_type_methods)]
 impl<'v> StarlarkType<'v> for EnumTypeView<'v> {
     // TODO(nga): replace `Color("RED")` with `Color.RED`.
     //   https://www.internalfb.com/tasks/?t=183515013
@@ -413,10 +410,6 @@ impl<'v> StarlarkType<'v> for EnumTypeView<'v> {
     }
 
     unsafe fn iter_stop(_this: Self) {}
-
-    fn get_methods() -> Option<&'static Methods> {
-        Some(ENUM_TYPE_METHODS.methods())
-    }
 
     fn eval_type(this: Self) -> Option<Ty> {
         this.as_dyn().ty_enum_data().map(|t| t.ty_enum_value.dupe())

@@ -29,7 +29,6 @@ use starlark_map::StarlarkHasher;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::starlark_complex_value;
 use crate::typing::Ty;
@@ -99,19 +98,10 @@ impl<'v> EnumValue<'v> {
     }
 }
 
-starlark::methods_static!(ENUM_VALUE_METHODS = enum_value_methods);
-
-#[starlark_value(type = EnumValue::TYPE)]
+#[starlark_value(type = EnumValue::TYPE, methods = enum_value_methods)]
 impl<'v> StarlarkValue<'v> for EnumValue<'v> {
     fn write_hash(this: &Self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
         this.value.write_hash(hasher)
-    }
-
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        Some(ENUM_VALUE_METHODS.methods())
     }
 
     fn typechecker_ty(this: &Self) -> Option<Ty> {

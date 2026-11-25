@@ -30,7 +30,6 @@ use crate::docs::DocItem;
 use crate::docs::DocMember;
 use crate::docs::DocParam;
 use crate::environment::GlobalsBuilder;
-use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
@@ -175,14 +174,8 @@ def with_arguments(*args, **kwargs) -> int: pass
 #[display("obj")]
 struct Obj;
 
-starlark::methods_static!(OBJ_METHODS = object);
-
-#[starlark_value(type = "obj")]
-impl<'v> StarlarkValue<'v> for Obj {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(OBJ_METHODS.methods())
-    }
-}
+#[starlark_value(type = "obj", methods = object)]
+impl<'v> StarlarkValue<'v> for Obj {}
 
 /// These are where the module docs go
 #[starlark_module]

@@ -35,7 +35,6 @@ use starlark_map::small_map::SmallMap;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
@@ -289,8 +288,6 @@ impl<'v, V: RecordVariant> RecordTypeGen<'v, V> {
     }
 }
 
-starlark::methods_static!(RECORD_TYPE_METHODS = record_type_methods);
-
 /// A record type in either of its representations.
 #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
 pub enum RecordTypeView<'v> {
@@ -332,7 +329,7 @@ impl<'v> RecordTypeView<'v> {
     }
 }
 
-#[starlark_value(type = FUNCTION_TYPE)]
+#[starlark_value(type = FUNCTION_TYPE, methods = record_type_methods)]
 impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
     fn write_hash(this: Self, hasher: &mut StarlarkHasher) {
         // Record types compare by identity, so the identity is enough, and unlike the fields it
@@ -386,13 +383,6 @@ impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
                 Ok(eval.heap().alloc_record(this.into(), values))
             })
         })
-    }
-
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        Some(RECORD_TYPE_METHODS.methods())
     }
 
     fn eval_type(this: Self) -> Option<Ty> {

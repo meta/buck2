@@ -30,7 +30,6 @@ use starlark_derive::starlark_value;
 use starlark_map::StarlarkHasher;
 
 use crate as starlark;
-use crate::environment::Methods;
 use crate::starlark_simple_value;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
@@ -167,14 +166,8 @@ impl Serialize for StarlarkBytes {
     }
 }
 
-starlark::methods_static!(BYTES_METHODS = crate::values::types::bytes::methods::bytes_methods);
-
-#[starlark_value(type = BYTES_TYPE)]
+#[starlark_value(type = BYTES_TYPE, methods = crate::values::types::bytes::methods::bytes_methods)]
 impl<'v> StarlarkValue<'v> for StarlarkBytes {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(BYTES_METHODS.methods())
-    }
-
     /// repr(b"...") — byte literal syntax.
     fn collect_repr(this: &Self, collector: &mut String) {
         write!(collector, "{}", this).unwrap()

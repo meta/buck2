@@ -32,7 +32,6 @@ use crate::docs::DocMember;
 use crate::docs::DocString;
 use crate::docs::DocStringKind;
 use crate::docs::DocType;
-use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::starlark_complex_value;
 use crate::starlark_simple_value;
@@ -61,17 +60,8 @@ struct TestExample {}
 
 starlark_simple_value!(TestExample);
 
-starlark::methods_static!(TEST_EXAMPLE_METHODS = object_docs_1);
-
-#[starlark_value(type = "TestExample")]
-impl<'v> StarlarkValue<'v> for TestExample {
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        Some(TEST_EXAMPLE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "TestExample", methods = object_docs_1)]
+impl<'v> StarlarkValue<'v> for TestExample {}
 
 #[derive(
     Clone,
@@ -97,20 +87,8 @@ impl<'v> Serialize for ComplexTestExample<'v> {
 
 starlark_complex_value!(ComplexTestExample);
 
-starlark::methods_static!(COMPLEX_TEST_EXAMPLE_METHODS = object_docs_1);
-
-#[starlark_value(type = "ComplexTestExample", alloc = by_hand)]
-impl<'v> StarlarkValue<'v> for ComplexTestExample<'v>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        Some(COMPLEX_TEST_EXAMPLE_METHODS.methods())
-    }
-}
+#[starlark_value(type = "ComplexTestExample", alloc = by_hand, methods = object_docs_1)]
+impl<'v> StarlarkValue<'v> for ComplexTestExample<'v> where Self: ProvidesStaticType<'v> {}
 
 #[test]
 fn test_derive_docs() {

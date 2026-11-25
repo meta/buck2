@@ -27,7 +27,6 @@ use starlark_syntax::codemap::FileSpan;
 
 use crate as starlark;
 use crate::environment::GlobalsBuilder;
-use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::eval::Evaluator;
 use crate::values::NoSerialize;
@@ -57,14 +56,8 @@ struct StackFrame {
     location: Option<FileSpan>,
 }
 
-starlark::methods_static!(STACK_FRAME_METHODS = stack_frame_methods);
-
-#[starlark_value(type = "StackFrame", no_freeze)]
-impl<'v> StarlarkValue<'v> for StackFrame {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(STACK_FRAME_METHODS.methods())
-    }
-}
+#[starlark_value(type = "StackFrame", no_freeze, methods = stack_frame_methods)]
+impl<'v> StarlarkValue<'v> for StackFrame {}
 
 impl Display for StackFrame {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

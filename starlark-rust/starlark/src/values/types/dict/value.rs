@@ -41,7 +41,6 @@ use crate::any::ProvidesStaticType;
 use crate::cast::transmute;
 use crate::collections::Hashed;
 use crate::collections::SmallMap;
-use crate::environment::Methods;
 use crate::hint::unlikely;
 use crate::static_starlark_value;
 use crate::typing::Ty;
@@ -434,8 +433,6 @@ impl<'v> DictLike<'v> for Dict<'v> {
     }
 }
 
-starlark::methods_static!(DICT_METHODS = crate::values::types::dict::methods::dict_methods);
-
 /// Which of its representations a `dict` is.
 #[derive(Debug, Clone, Copy, Dupe)]
 pub(crate) enum DictRepr<'v> {
@@ -524,12 +521,8 @@ fn cannot_mutate(error: ValueError) -> crate::Error {
     crate::Error::new_other(error)
 }
 
-#[starlark_value(type = Dict::TYPE, type_expr = by_hand)]
+#[starlark_value(type = Dict::TYPE, type_expr = by_hand, methods = crate::values::types::dict::methods::dict_methods)]
 impl<'v> StarlarkType<'v> for StarlarkDict<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(DICT_METHODS.methods())
-    }
-
     fn collect_repr(this: Self, r: &mut String) {
         // Fast path as repr() for dicts is quite hot
         r.push('{');

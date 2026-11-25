@@ -24,7 +24,6 @@ use starlark_derive::starlark_value;
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::assert::Assert;
-use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
@@ -62,14 +61,8 @@ fn methods(builder: &mut MethodsBuilder) {
     }
 }
 
-starlark::methods_static!(APPLAUD_METHODS = methods);
-
-#[starlark_value(type = "applaud")]
+#[starlark_value(type = "applaud", methods = methods)]
 impl<'v> StarlarkValue<'v> for Applaud {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(APPLAUD_METHODS.methods())
-    }
-
     fn invoke(
         _this: &Self,
         args: &Arguments<'v, '_>,

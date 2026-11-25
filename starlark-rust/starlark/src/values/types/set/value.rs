@@ -34,7 +34,6 @@ use starlark_map::small_set::SmallSet;
 use super::refs::SetMut;
 use super::refs::SetRef;
 use crate as starlark;
-use crate::environment::Methods;
 use crate::typing::Ty;
 use crate::util::refcell::unleak_borrow;
 use crate::values::AllocValue;
@@ -225,8 +224,6 @@ impl<'v> SetLike<'v> for SetData<'v> {
     }
 }
 
-starlark::methods_static!(SET_METHODS = methods::set_methods);
-
 /// Which of its representations a `set` is.
 #[derive(Debug, Clone, Copy, Dupe)]
 pub(crate) enum SetRepr<'v> {
@@ -313,7 +310,7 @@ fn cannot_mutate(error: ValueError) -> crate::Error {
     crate::Error::new_other(error)
 }
 
-#[starlark_value(type = "set", type_expr = by_hand)]
+#[starlark_value(type = "set", type_expr = by_hand, methods = methods::set_methods)]
 impl<'v> StarlarkType<'v> for StarlarkSet<'v> {
     /// Returns the length of the value, if this value is a sequence.
     fn length(this: Self) -> i32 {
@@ -340,10 +337,6 @@ impl<'v> StarlarkType<'v> for StarlarkSet<'v> {
             )),
             None => Ok(false),
         }
-    }
-
-    fn get_methods() -> Option<&'static Methods> {
-        Some(SET_METHODS.methods())
     }
 
     unsafe fn iterate(this: Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {

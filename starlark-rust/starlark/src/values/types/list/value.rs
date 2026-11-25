@@ -36,7 +36,6 @@ use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::environment::Methods;
 use crate::hint::likely;
 use crate::hint::unlikely;
 use crate::private::Private;
@@ -367,8 +366,6 @@ pub(crate) fn display_list(xs: &[Value], f: &mut fmt::Formatter<'_>) -> fmt::Res
     fmt_container(f, "[", "]", xs.iter())
 }
 
-starlark::methods_static!(LIST_METHODS = crate::values::types::list::methods::list_methods);
-
 /// Which of its representations a list is, with the representation.
 #[derive(Debug, Clone, Copy, Dupe)]
 pub(crate) enum ListRepr<'v> {
@@ -436,12 +433,8 @@ fn repeated<'v>(
     heap.alloc_list(&result)
 }
 
-#[starlark_value(type = ListData::TYPE, type_expr = by_hand)]
+#[starlark_value(type = ListData::TYPE, type_expr = by_hand, methods = crate::values::types::list::methods::list_methods)]
 impl<'v> StarlarkType<'v> for StarlarkList<'v> {
-    fn get_methods() -> Option<&'static Methods> {
-        Some(LIST_METHODS.methods())
-    }
-
     fn collect_repr(this: Self, s: &mut String) {
         // Fast path as repr() for lists is quite hot
         s.push('[');

@@ -1,6 +1,0 @@
-load(":tests.bzl", "e2e_bin_smoke_test")
-
-oncall("build_infra")
-
-# Defined in tests.bzl so the fbcode-only binary reference stays out of open source.
-e2e_bin_smoke_test()

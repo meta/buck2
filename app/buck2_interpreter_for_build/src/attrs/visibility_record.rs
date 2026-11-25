@@ -10,62 +10,7 @@
 
 use buck2_node::visibility::StarlarkTargetNameGlob;
 use starlark::environment::GlobalsBuilder;
-use starlark::starlark_module;
-use starlark::values::EmptyList;
-use starlark::values::Heap;
-use starlark::values::ValueOf;
-use starlark::values::list_or_tuple::StarlarkListOrTuple;
-use starlark::values::string::StarlarkStr;
 
-#[starlark_module]
 pub(crate) fn register_target_name_glob(builder: &mut GlobalsBuilder) {
-    /// Creates a target-name glob pattern used inside `visibility` /
-    /// `within_view` attribute lists.
-    ///
-    /// `name_globs` is a non-empty list of glob patterns (`*` is the only
-    /// wildcard) that match against target names. A target matches the
-    /// `target_name_glob` if **any** glob in the list matches its name. A glob
-    /// consisting solely of `*` is rejected — use `"PUBLIC"` for unrestricted
-    /// visibility instead.
-    ///
-    /// The optional `within` parameter is a list of package or recursive
-    /// package patterns (e.g. `["//pkg:", "//other/..."]`) that scope the
-    /// match: a target matches only if its package falls inside **any** of the
-    /// `within` scopes. If omitted or empty, the globs match targets in any
-    /// package.
-    ///
-    /// Each `within` pattern is parsed when the enclosing target's `visibility`
-    /// / `within_view` attribute is coerced, using the cell aliases of the file
-    /// that target is defined in. `"PUBLIC"` is not a valid `within` scope (it is
-    /// a target name, not a package); omit `within` to match any package.
-    ///
-    /// Example usage:
-    /// ```python
-    /// visibility = [
-    ///     target_name_glob(["*-deprecated"]),
-    ///     target_name_glob(["*-test", "*-bench"], within = ["//pkg/..."]),
-    /// ]
-    /// ```
-    #[starlark(as_type = StarlarkTargetNameGlob)]
-    fn target_name_glob<'v>(
-        #[starlark(require = pos)] name_globs: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
-        #[starlark(require = named, default = EmptyList)] within: ValueOf<
-            'v,
-            StarlarkListOrTuple<'v, StarlarkStr>,
-        >,
-        heap: Heap<'v>,
-    ) -> starlark::Result<ValueOf<'v, StarlarkTargetNameGlob>> {
-        let name_globs = name_globs
-            .try_items::<&str>()
-            .map(|s| s.map(str::to_owned))
-            .collect::<starlark::Result<_>>()?;
-        let within = within
-            .try_items::<&str>()
-            .map(|s| s.map(str::to_owned))
-            .collect::<starlark::Result<_>>()?;
-        Ok(ValueOf::alloc(
-            heap,
-            StarlarkTargetNameGlob::try_new(name_globs, within)?,
-        ))
-    }
+    builder.type_symbol::<StarlarkTargetNameGlob>();
 }

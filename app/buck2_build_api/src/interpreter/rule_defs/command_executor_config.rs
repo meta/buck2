@@ -113,40 +113,7 @@ pub struct StarlarkCommandExecutorConfig(
 starlark_simple_value!(StarlarkCommandExecutorConfig);
 
 #[starlark_value(type = "CommandExecutorConfig")]
-impl<'v> StarlarkValue<'v> for StarlarkCommandExecutorConfig {}
-
-fn parse_remote_execution_properties(
-    value: Value,
-) -> buck2_error::Result<Option<RePlatformFields>> {
-    if value.is_none() {
-        return Ok(None);
-    }
-
-    let properties = StarlarkDict::from_value(value.to_value()).ok_or_else(|| {
-        buck2_error::Error::from(CommandExecutorConfigErrors::RePropertiesNotADict(
-            value.to_repr(),
-            value.get_type().to_owned(),
-        ))
-    })?;
-
-    Ok(Some(RePlatformFields {
-        properties: Arc::new(
-            properties
-                .entries()
-                .map(|(name, value)| {
-                    let values = StarlarkList::from_value(value).map_or_else(
-                        || vec![value.to_str()],
-                        |values| values.values().map(Value::to_str).collect(),
-                    );
-                    (name.to_str(), values)
-                })
-                .collect(),
-        ),
-    }))
-}
-
-#[starlark_module]
-pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
+impl<'v> StarlarkValue<'v> for StarlarkCommandExecutorConfig {
     /// Contains configurations for how actions should be executed
     ///
     /// * `local_enabled` : Whether to use local execution for this execution platform.
@@ -194,8 +161,8 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
     /// * `priority`: The priority for remote execution requests. The exact interpretation is up
     ///   to the RE server. See the Bazel Remote Execution API for recommended interpretation:
     ///   https://github.com/bazelbuild/remote-apis/blob/main/build/bazel/remote/execution/v2/remote_execution.proto#L1499
-    #[starlark(as_type = StarlarkCommandExecutorConfig)]
-    fn CommandExecutorConfig<'v>(
+    #[starlark(constructor)]
+    fn CommandExecutorConfig(
         #[starlark(require = named)] local_enabled: bool,
         #[starlark(require = named)] remote_enabled: bool,
         #[starlark(default = NoneType, require = named)] remote_cache_enabled: NoneOr<bool>,
@@ -451,6 +418,40 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
             StarlarkCommandExecutorConfig(Arc::new(command_executor_config)),
         ))
     }
+}
+
+fn parse_remote_execution_properties(
+    value: Value,
+) -> buck2_error::Result<Option<RePlatformFields>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+
+    let properties = StarlarkDict::from_value(value.to_value()).ok_or_else(|| {
+        buck2_error::Error::from(CommandExecutorConfigErrors::RePropertiesNotADict(
+            value.to_repr(),
+            value.get_type().to_owned(),
+        ))
+    })?;
+
+    Ok(Some(RePlatformFields {
+        properties: Arc::new(
+            properties
+                .entries()
+                .map(|(name, value)| {
+                    let values = StarlarkList::from_value(value).map_or_else(
+                        || vec![value.to_str()],
+                        |values| values.values().map(Value::to_str).collect(),
+                    );
+                    (name.to_str(), values)
+                })
+                .collect(),
+        ),
+    }))
+}
+
+pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
+    builder.type_symbol::<StarlarkCommandExecutorConfig>();
 }
 
 pub fn parse_custom_re_image(

@@ -705,6 +705,174 @@ impl<'v> StarlarkCmdArgsView<'v> {
 
 #[starlark_value(type = "cmd_args", methods = cmd_args_methods)]
 impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
+    #[starlark(constructor)]
+    /// The `cmd_args` type is created by this function and is consumed by `ctx.actions.run`.
+    /// The type is a mutable collection of strings and artifact values.
+    /// In general, command lines, artifacts, strings, `RunInfo` and lists thereof can be added to or used to construct a `cmd_args` value.
+    ///
+    /// The arguments are:
+    ///
+    /// * `*args` - a list of things to add to the command line, each of which must be coercible to a command line. Further items can be added with `cmd.add`.
+    /// * `format` - a string that provides a format to apply to the argument. for example, `cmd_args(x, format="--args={}")` would prepend `--args=` before `x`, or if `x` was a list, before each element in `x`.
+    /// * `delimiter` - added between arguments to join them together. For example, `cmd_args(["--args=",x], delimiter="")` would produce a single argument to the underlying tool.
+    /// * `prepend` - added as a separate argument before each argument.
+    /// * `quote` - indicates whether quoting is to be applied to each argument. The only current valid value is `"shell"`.
+    /// * `ignore_artifacts` - if `True`, artifacts contribute only their paths: nothing is materialized for them. Artifacts with content-based-paths are built, so that the content hash embedded in the path can be rendered.
+    /// * `hidden` - artifacts not present on the command line, but added as dependencies.
+    /// * `absolute_prefix` and `absolute_suffix` - added to the start and end of each artifact.
+    /// * `parent` - for all the artifacts use their `parent`th directory (e.g. `parent = 1` for the directory the artifact is located, `parent = 2` for that directory's parent, etc.).
+    /// * `relative_to` - make all artifact paths relative to a given location.
+    /// * `replace_regex` - replaces arguments with a regular expression.
+    ///
+    /// ### `ignore_artifacts`
+    ///
+    /// `ignore_artifacts=True` declares that the command records the paths of the referenced
+    /// artifacts but never reads their contents, so none of them is materialized for it.
+    /// An artifact whose path is independent of its contents introduces no dependency at all.
+    /// An artifact whose path embeds its content hash is built before the command runs,
+    /// since the path cannot be rendered otherwise, but is still not materialized; its
+    /// content reaches the command only through the rendered path.
+    ///
+    /// Artifacts in the `hidden` list of such a scope still introduce no dependency, and
+    /// a content-based one there is an error: nothing renders it, so nothing would carry
+    /// its content to the action.
+    ///
+    /// As an example where this can be useful, consider passing a dependency that is only accessed at runtime, but whose path
+    /// must be baked into the binary. As an example:
+    ///
+    /// ```python
+    /// resources = cmd_args(resource_file, format = "-DFOO={}", ignore_artifacts=True)
+    /// ctx.actions.run(cmd_args("gcc", "-c", source_file, resources))
+    /// ```
+    ///
+    /// Note that `ignore_artifacts` sets all artifacts referenced by this `cmd_args` to be ignored, including those added afterwards,
+    /// so generally create a special `cmd_args` and scope it quite tightly.
+    ///
+    /// If you actually do use the inputs referenced by this command,
+    /// you will either error out due to missing dependencies (if running actions remotely)
+    /// or have untracked dependencies that will fail to rebuild when it should.
+    ///
+    /// ### `hidden`
+    ///
+    /// Things to add to the command line which do not show up but are added as dependencies.
+    /// The values can be anything normally permissible to pass to `add`.
+    ///
+    /// Typically used if the command you are running implicitly depends on files that are not
+    /// passed on the command line, e.g. headers in the case of a C compilation.
+    ///
+    /// ### `absolute_prefix` and `absolute_suffix`
+    ///
+    /// Adds a prefix to the start or end of every artifact.
+    ///
+    /// Prefix is often used if you have a `$ROOT` variable
+    /// in a shell script and want to use it to make files absolute.
+    ///
+    /// Suffix is often used in conjunction with `absolute_prefix`
+    /// to wrap artifacts in function calls.
+    ///
+    /// ```python
+    /// cmd_args(script, absolute_prefix = "$ROOT/")
+    /// cmd_args(script, absolute_prefix = "call", absolute_suffix = ")")
+    /// ```
+    ///
+    /// ### `parent`
+    ///
+    /// For all the artifacts use their parent directory.
+    ///
+    /// Typically used when the file name is passed one way, and the directory another,
+    /// e.g. `cmd_args(artifact, format="-L{}", parent=1)`.
+    ///
+    /// ### `relative_to=dir` or `relative_to=(dir, parent)`
+    ///
+    /// Make all artifact paths relative to a given location. Typically used when the command
+    /// you are running changes directory.
+    ///
+    /// By default, the paths are relative to the artifacts themselves (equivalent to
+    /// parent equals to `0`). Use `parent` to make the paths relative to an ancestor directory.
+    /// For example parent equals to `1` would make all paths relative to the containing dirs
+    /// of any artifacts in the `cmd_args`.
+    ///
+    /// ```python
+    /// dir = symlinked_dir(...)
+    /// script = [
+    ///     cmd_args(dir, format = "cd {}", relative_to=dir),
+    /// ]
+    /// ```
+    ///
+    /// ### `replace_regex`
+    ///
+    /// Replaces all parts matching pattern regular expression (or regular expressions)
+    /// in each argument with replacement strings.
+    fn cmd_args(
+        #[starlark(args)] args: CmdArgsPositional<'v>,
+        hidden: Option<StarlarkCommandLineValueUnpack<'v>>,
+        delimiter: Option<StringValue<'v>>,
+        format: Option<StringValue<'v>>,
+        prepend: Option<StringValue<'v>>,
+        quote: Option<&str>,
+        #[starlark(default = false)] ignore_artifacts: bool,
+        #[starlark(default = false, require = named, doc_hidden = true)]
+        experimental_salt_hidden: bool,
+        absolute_prefix: Option<StringValue<'v>>,
+        absolute_suffix: Option<StringValue<'v>>,
+        #[starlark(default = 0)] parent: u32,
+        relative_to: Option<
+            Either<ValueOf<'v, RelativeOrigin<'v>>, (ValueOf<'v, RelativeOrigin<'v>>, u32)>,
+        >,
+        #[starlark(default = EmptyList)] replace_regex: Either<
+            (CmdArgsRegex<'v>, StringValue<'v>),
+            ValueOf<'v, StarlarkList<'v, (CmdArgsRegex<'v>, StarlarkStr)>>,
+        >,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCmdArgsView<'v>>> {
+        let format = format.filter(|format| format.as_str() != "{}");
+        let quote = quote.map(QuoteStyle::parse).transpose()?;
+        let mut builder = StarlarkCommandLineData::default();
+        if delimiter.is_some()
+            || format.is_some()
+            || prepend.is_some()
+            || quote.is_some()
+            || ignore_artifacts
+            || experimental_salt_hidden
+            || absolute_prefix.is_some()
+            || absolute_suffix.is_some()
+            || parent != 0
+            || relative_to.is_some()
+        {
+            let opts = builder.options_mut();
+            opts.delimiter = delimiter;
+            opts.format = format;
+            opts.prepend = prepend;
+            opts.quote = quote;
+            opts.ignore_artifacts = ignore_artifacts;
+            opts.salt_hidden = experimental_salt_hidden;
+            opts.absolute_prefix = absolute_prefix;
+            opts.absolute_suffix = absolute_suffix;
+            opts.parent = parent;
+            opts.relative_to = relative_to.map(|either| {
+                let (relative_to, parent) = either.map_left(|o| (o, 0)).into_inner();
+                (relative_to, parent)
+            });
+        }
+        let replace_regex: Vec<(CmdArgsRegex, StringValue)> = match replace_regex {
+            Either::Left(x) => vec![x],
+            Either::Right(xs) => xs.try_to_vec()?,
+        };
+        if !replace_regex.is_empty() {
+            for (pattern, _replacement) in &replace_regex {
+                pattern.validate()?;
+            }
+            builder.options_mut().replacements = replace_regex.into();
+        }
+        for v in args.0.try_items::<StarlarkCommandLineValueUnpack>() {
+            builder.add_value_typed(v?)?;
+        }
+        if let Some(hidden) = hidden {
+            builder.add_hidden(hidden)?;
+        }
+        Ok(heap.alloc(StarlarkCmdArgs(RefCell::new(builder))))
+    }
+
     #[starlark(implements = StarlarkCmdArgsLike)]
     fn cmd_args_like(this: Self) -> &'v dyn CommandLineArgLike<'v> {
         this.as_command_line_arg_like()
@@ -1212,173 +1380,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
     const CmdArgsLike: StarlarkValueAsType<StarlarkCmdArgsLike> = StarlarkCmdArgsLike::global();
     const CmdArgsInput: StarlarkValueAsType<StarlarkCmdArgsInput> = StarlarkCmdArgsInput::global();
 
-    #[starlark(as_type = FrozenStarlarkCmdArgs)]
-    /// The `cmd_args` type is created by this function and is consumed by `ctx.actions.run`.
-    /// The type is a mutable collection of strings and artifact values.
-    /// In general, command lines, artifacts, strings, `RunInfo` and lists thereof can be added to or used to construct a `cmd_args` value.
-    ///
-    /// The arguments are:
-    ///
-    /// * `*args` - a list of things to add to the command line, each of which must be coercible to a command line. Further items can be added with `cmd.add`.
-    /// * `format` - a string that provides a format to apply to the argument. for example, `cmd_args(x, format="--args={}")` would prepend `--args=` before `x`, or if `x` was a list, before each element in `x`.
-    /// * `delimiter` - added between arguments to join them together. For example, `cmd_args(["--args=",x], delimiter="")` would produce a single argument to the underlying tool.
-    /// * `prepend` - added as a separate argument before each argument.
-    /// * `quote` - indicates whether quoting is to be applied to each argument. The only current valid value is `"shell"`.
-    /// * `ignore_artifacts` - if `True`, artifacts contribute only their paths: nothing is materialized for them. Artifacts with content-based-paths are built, so that the content hash embedded in the path can be rendered.
-    /// * `hidden` - artifacts not present on the command line, but added as dependencies.
-    /// * `absolute_prefix` and `absolute_suffix` - added to the start and end of each artifact.
-    /// * `parent` - for all the artifacts use their `parent`th directory (e.g. `parent = 1` for the directory the artifact is located, `parent = 2` for that directory's parent, etc.).
-    /// * `relative_to` - make all artifact paths relative to a given location.
-    /// * `replace_regex` - replaces arguments with a regular expression.
-    ///
-    /// ### `ignore_artifacts`
-    ///
-    /// `ignore_artifacts=True` declares that the command records the paths of the referenced
-    /// artifacts but never reads their contents, so none of them is materialized for it.
-    /// An artifact whose path is independent of its contents introduces no dependency at all.
-    /// An artifact whose path embeds its content hash is built before the command runs,
-    /// since the path cannot be rendered otherwise, but is still not materialized; its
-    /// content reaches the command only through the rendered path.
-    ///
-    /// Artifacts in the `hidden` list of such a scope still introduce no dependency, and
-    /// a content-based one there is an error: nothing renders it, so nothing would carry
-    /// its content to the action.
-    ///
-    /// As an example where this can be useful, consider passing a dependency that is only accessed at runtime, but whose path
-    /// must be baked into the binary. As an example:
-    ///
-    /// ```python
-    /// resources = cmd_args(resource_file, format = "-DFOO={}", ignore_artifacts=True)
-    /// ctx.actions.run(cmd_args("gcc", "-c", source_file, resources))
-    /// ```
-    ///
-    /// Note that `ignore_artifacts` sets all artifacts referenced by this `cmd_args` to be ignored, including those added afterwards,
-    /// so generally create a special `cmd_args` and scope it quite tightly.
-    ///
-    /// If you actually do use the inputs referenced by this command,
-    /// you will either error out due to missing dependencies (if running actions remotely)
-    /// or have untracked dependencies that will fail to rebuild when it should.
-    ///
-    /// ### `hidden`
-    ///
-    /// Things to add to the command line which do not show up but are added as dependencies.
-    /// The values can be anything normally permissible to pass to `add`.
-    ///
-    /// Typically used if the command you are running implicitly depends on files that are not
-    /// passed on the command line, e.g. headers in the case of a C compilation.
-    ///
-    /// ### `absolute_prefix` and `absolute_suffix`
-    ///
-    /// Adds a prefix to the start or end of every artifact.
-    ///
-    /// Prefix is often used if you have a `$ROOT` variable
-    /// in a shell script and want to use it to make files absolute.
-    ///
-    /// Suffix is often used in conjunction with `absolute_prefix`
-    /// to wrap artifacts in function calls.
-    ///
-    /// ```python
-    /// cmd_args(script, absolute_prefix = "$ROOT/")
-    /// cmd_args(script, absolute_prefix = "call", absolute_suffix = ")")
-    /// ```
-    ///
-    /// ### `parent`
-    ///
-    /// For all the artifacts use their parent directory.
-    ///
-    /// Typically used when the file name is passed one way, and the directory another,
-    /// e.g. `cmd_args(artifact, format="-L{}", parent=1)`.
-    ///
-    /// ### `relative_to=dir` or `relative_to=(dir, parent)`
-    ///
-    /// Make all artifact paths relative to a given location. Typically used when the command
-    /// you are running changes directory.
-    ///
-    /// By default, the paths are relative to the artifacts themselves (equivalent to
-    /// parent equals to `0`). Use `parent` to make the paths relative to an ancestor directory.
-    /// For example parent equals to `1` would make all paths relative to the containing dirs
-    /// of any artifacts in the `cmd_args`.
-    ///
-    /// ```python
-    /// dir = symlinked_dir(...)
-    /// script = [
-    ///     cmd_args(dir, format = "cd {}", relative_to=dir),
-    /// ]
-    /// ```
-    ///
-    /// ### `replace_regex`
-    ///
-    /// Replaces all parts matching pattern regular expression (or regular expressions)
-    /// in each argument with replacement strings.
-    fn cmd_args<'v>(
-        #[starlark(args)] args: CmdArgsPositional<'v>,
-        hidden: Option<StarlarkCommandLineValueUnpack<'v>>,
-        delimiter: Option<StringValue<'v>>,
-        format: Option<StringValue<'v>>,
-        prepend: Option<StringValue<'v>>,
-        quote: Option<&str>,
-        #[starlark(default = false)] ignore_artifacts: bool,
-        #[starlark(default = false, require = named, doc_hidden = true)]
-        experimental_salt_hidden: bool,
-        absolute_prefix: Option<StringValue<'v>>,
-        absolute_suffix: Option<StringValue<'v>>,
-        #[starlark(default = 0)] parent: u32,
-        relative_to: Option<
-            Either<ValueOf<'v, RelativeOrigin<'v>>, (ValueOf<'v, RelativeOrigin<'v>>, u32)>,
-        >,
-        #[starlark(default = EmptyList)] replace_regex: Either<
-            (CmdArgsRegex<'v>, StringValue<'v>),
-            ValueOf<'v, StarlarkList<'v, (CmdArgsRegex<'v>, StarlarkStr)>>,
-        >,
-        heap: Heap<'v>,
-    ) -> starlark::Result<ValueOf<'v, StarlarkCmdArgsView<'v>>> {
-        let format = format.filter(|format| format.as_str() != "{}");
-        let quote = quote.map(QuoteStyle::parse).transpose()?;
-        let mut builder = StarlarkCommandLineData::default();
-        if delimiter.is_some()
-            || format.is_some()
-            || prepend.is_some()
-            || quote.is_some()
-            || ignore_artifacts
-            || experimental_salt_hidden
-            || absolute_prefix.is_some()
-            || absolute_suffix.is_some()
-            || parent != 0
-            || relative_to.is_some()
-        {
-            let opts = builder.options_mut();
-            opts.delimiter = delimiter;
-            opts.format = format;
-            opts.prepend = prepend;
-            opts.quote = quote;
-            opts.ignore_artifacts = ignore_artifacts;
-            opts.salt_hidden = experimental_salt_hidden;
-            opts.absolute_prefix = absolute_prefix;
-            opts.absolute_suffix = absolute_suffix;
-            opts.parent = parent;
-            opts.relative_to = relative_to.map(|either| {
-                let (relative_to, parent) = either.map_left(|o| (o, 0)).into_inner();
-                (relative_to, parent)
-            });
-        }
-        let replace_regex: Vec<(CmdArgsRegex, StringValue)> = match replace_regex {
-            Either::Left(x) => vec![x],
-            Either::Right(xs) => xs.try_to_vec()?,
-        };
-        if !replace_regex.is_empty() {
-            for (pattern, _replacement) in &replace_regex {
-                pattern.validate()?;
-            }
-            builder.options_mut().replacements = replace_regex.into();
-        }
-        for v in args.0.try_items::<StarlarkCommandLineValueUnpack>() {
-            builder.add_value_typed(v?)?;
-        }
-        if let Some(hidden) = hidden {
-            builder.add_hidden(hidden)?;
-        }
-        Ok(heap.alloc(StarlarkCmdArgs(RefCell::new(builder))))
-    }
+    builder.type_symbol::<StarlarkCmdArgsView>();
 }
 
 /// A wrapper for a [StarlarkCmdArgs]'s inputs. This is an opaque type that only allows

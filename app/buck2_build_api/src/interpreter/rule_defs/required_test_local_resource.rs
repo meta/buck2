@@ -47,12 +47,9 @@ pub struct StarlarkRequiredTestLocalResource {
 starlark_simple_value!(StarlarkRequiredTestLocalResource);
 
 #[starlark_value(type = "RequiredTestLocalResource", methods = required_test_local_resource_methods)]
-impl<'v> StarlarkValue<'v> for StarlarkRequiredTestLocalResource {}
-
-#[starlark_module]
-pub fn register_required_test_local_resource(builder: &mut GlobalsBuilder) {
-    #[starlark(as_type = StarlarkRequiredTestLocalResource)]
-    fn RequiredTestLocalResource<'v>(
+impl<'v> StarlarkValue<'v> for StarlarkRequiredTestLocalResource {
+    #[starlark(constructor)]
+    fn RequiredTestLocalResource(
         #[starlark(require = pos)] name: &str,
         #[starlark(require = named, default = true)] listing: bool,
         #[starlark(require = named, default = true)] execution: bool,
@@ -73,6 +70,10 @@ pub fn register_required_test_local_resource(builder: &mut GlobalsBuilder) {
             },
         ))
     }
+}
+
+pub fn register_required_test_local_resource(builder: &mut GlobalsBuilder) {
+    builder.type_symbol::<StarlarkRequiredTestLocalResource>();
 }
 
 #[starlark_module]

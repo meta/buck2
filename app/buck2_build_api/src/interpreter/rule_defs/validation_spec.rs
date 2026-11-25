@@ -141,7 +141,23 @@ fn validate_validation_spec<'v>(spec: &StarlarkValidationSpec<'v>) -> buck2_erro
 }
 
 #[starlark_value(type = "ValidationSpec", methods = validation_spec_methods)]
-impl<'v> StarlarkValue<'v> for StarlarkValidationSpec<'v> {}
+impl<'v> StarlarkValue<'v> for StarlarkValidationSpec<'v> {
+    #[starlark(constructor)]
+    fn ValidationSpec(
+        #[starlark(require = named)] name: StringValue<'v>,
+        #[starlark(require = named)] validation_result: ValueOf<'v, StarlarkArtifactView<'v>>,
+        #[starlark(require = named, default = false)] optional: bool,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkValidationSpec<'v>>> {
+        let result = StarlarkValidationSpec {
+            name,
+            validation_result,
+            optional,
+        };
+        validate_validation_spec(&result)?;
+        Ok(heap.alloc(result))
+    }
+}
 
 #[starlark_module]
 fn validation_spec_methods(builder: &mut MethodsBuilder) {
@@ -207,21 +223,6 @@ fn validation_spec_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[starlark_module]
 pub fn register_validation_spec(builder: &mut GlobalsBuilder) {
-    #[starlark(as_type = StarlarkValidationSpec<'static>)]
-    fn ValidationSpec<'v>(
-        #[starlark(require = named)] name: StringValue<'v>,
-        #[starlark(require = named)] validation_result: ValueOf<'v, StarlarkArtifactView<'v>>,
-        #[starlark(require = named, default = false)] optional: bool,
-        heap: Heap<'v>,
-    ) -> starlark::Result<ValueOf<'v, StarlarkValidationSpec<'v>>> {
-        let result = StarlarkValidationSpec {
-            name,
-            validation_result,
-            optional,
-        };
-        validate_validation_spec(&result)?;
-        Ok(heap.alloc(result))
-    }
+    builder.type_symbol::<StarlarkValidationSpec>();
 }

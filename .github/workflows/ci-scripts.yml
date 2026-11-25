@@ -1,0 +1,39 @@
+name: CI scripts
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/scripts/**
+      - .github/workflows/ci-scripts.yml
+  pull_request:
+    paths:
+      - .github/scripts/**
+      - .github/workflows/ci-scripts.yml
+  workflow_dispatch: # allows manual triggering
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-scripts-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The scripts of .github/scripts run in the steps of the other workflows:
+  # under bash 5 on Linux, bash 3.2 on macOS and Git Bash on Windows. A script
+  # that is wrong under one of them fails or hangs those steps. So their tests
+  # run here under each; the Windows images are those of the release build.
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v6
+    - name: Test report_failure.sh
+      run: bash .github/scripts/report_failure_test.sh
+      shell: bash

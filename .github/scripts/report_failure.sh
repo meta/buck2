@@ -20,10 +20,62 @@ source "$(dirname "${BASH_SOURCE[0]}")/annotations.sh"
 what=$1
 shift
 
-# Without a file to keep the output in there is no report; the command still runs.
-log=$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/report-failure.XXXXXX") || exec "$@"
-"$@" 2>&1 | tee "$log"
-status=${PIPESTATUS[0]}
+dir=
+rc=
+for sig in 1 2 3 13 15; do eval "trap 'exit $((sig + 128))' $sig"; done
+trap 'rc=$?; set +e; rm -rf "$dir"; exit $rc' EXIT
+
+# Without a place to keep the output in there is no report; the command still runs.
+dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/report-failure.XXXXXX") || exec "$@"
+log=$dir/log
+: > "$log"
+
+# Whether `tee` has ended, after at most $1 seconds.
+tee_ended() {
+  local deadline=$((SECONDS + $1))
+  while [[ ! -e $dir/done && $SECONDS -lt $deadline ]]; do
+    sleep 0.05
+  done
+  [[ -e $dir/done ]]
+}
+
+# Runs the command with `tee` beside it, not in a pipeline with it. A pipeline
+# ends only when `tee` does, and `tee` reads for as long as anything holds the
+# command's output open: also a process that the command left behind.
+run_beside_tee() {
+  exec 3> >(
+    tee "$log" <&0 &
+    echo $! > "$dir/tee"
+    wait 2> /dev/null
+    { : > "$dir/done"; } 2> /dev/null
+  ) || {
+    rm -rf "$dir"
+    exec "$@"
+  }
+  "$@" >&3 2>&1 3>&-
+  status=$?
+  exec 3>&-
+
+  # `tee` ends once nothing holds the output open. What the command left behind
+  # may hold it for hours, so `tee` gets 5 seconds to copy what is still on its
+  # way and is stopped then.
+  if ! tee_ended 5 && [[ -s $dir/tee ]] && read -r tee_pid < "$dir/tee"; then
+    kill "$tee_pid" 2> /dev/null
+    tee_ended 2
+  fi
+}
+
+# Git Bash keeps the pipeline: `tee` beside the command has not run there.
+case $OSTYPE in
+  msys* | cygwin*)
+    "$@" 2>&1 | tee "$log"
+    status=${PIPESTATUS[0]}
+    ;;
+  *)
+    run_beside_tee "$@"
+    ;;
+esac
+
 if [[ $status -eq 0 ]]; then
   exit 0
 fi
@@ -57,5 +109,9 @@ why() {
   ' "$1"
 }
 
+# An annotation is a command only at the start of a line.
+if [[ -s $log && $(tail -c 1 "$log" | wc -l) -eq 0 ]]; then
+  echo
+fi
 publish error "$what failed" "$(why "$log")"
 exit "$status"

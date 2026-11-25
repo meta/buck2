@@ -63,7 +63,7 @@ use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
-use starlark::values::set::SetType;
+use starlark::values::set::StarlarkSet;
 use starlark::values::starlark_value;
 use starlark::values::structs::Struct;
 use starlark::values::tuple::StarlarkTuple;
@@ -471,7 +471,7 @@ impl StarlarkOutputStream {
             EnsuredArtifactGroup(ValueOf<'v, EnsuredArtifactGroup<'v>>),
             List(ValueOf<'v, StarlarkList<'v>>),
             Tuple(ValueOf<'v, StarlarkTuple<'v>>),
-            Set(ValueOf<'v, SetType<Value<'v>>>),
+            Set(ValueOf<'v, StarlarkSet<'v>>),
             Dict(ValueOf<'v, StarlarkDict<'v>>),
             Struct(ValueOf<'v, Struct<'v>>),
             Record(ValueOf<'v, Record<'v>>),
@@ -531,7 +531,7 @@ impl StarlarkOutputStream {
                         serializer.collect_seq(x.values().map(|v| self.with_value(v)))
                     }
                     Some(SerializedHere::Set(x)) => {
-                        serializer.collect_seq(x.set().iter().map(|v| self.with_value(v)))
+                        serializer.collect_seq(x.values().map(|v| self.with_value(v)))
                     }
                     Some(SerializedHere::Dict(x)) => serializer.collect_map(
                         x.entries()

@@ -21,22 +21,19 @@ use dupe::Dupe;
 use pagable::StaticStr;
 use starlark_map::Hashed;
 
-use crate::__derive_refs::components::NativeCallableComponents;
 use crate::collections::symbol::map::SymbolMap;
 use crate::collections::symbol::symbol::Symbol;
 use crate::docs::DocType;
+use crate::environment::MemberTable;
 use crate::environment::common_documentation;
 use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::FrozenValueTyped;
-use crate::values::Heap;
 use crate::values::OwnedFrozen;
 use crate::values::OwnedFrozenHeap;
 use crate::values::OwnedFrozenRef;
 use crate::values::Value;
 use crate::values::function::NativeAttribute;
-use crate::values::function::NativeMethFn;
-use crate::values::function::NativeMethod;
 use crate::values::layout::heap::name::FrozenHeapName;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::types::unbound::UnboundValue;
@@ -231,56 +228,15 @@ impl MethodsBuilder {
         self.members.insert(name, attr);
     }
 
-    /// Set an attribute. Only used by `starlark_module` macro
+    /// Add the members of a table. Only used by `starlark_module` macro
     #[doc(hidden)]
-    pub fn set_attribute_fn(
-        &mut self,
-        name: &str,
-        speculative_exec_safe: bool,
-        docstring: Option<&'static str>,
-        typ: fn() -> Ty,
-        // The first argument is always `None`
-        f: for<'v> fn(Option<Value<'v>>, Value<'v>, Heap<'v>) -> crate::Result<Value<'v>>,
-    ) {
-        let attr = self.heap.with(|heap| {
-            let attr = heap.alloc_simple_typed(NativeAttribute::new(
-                speculative_exec_safe,
-                docstring,
-                typ,
-                None,
-                f,
-            ));
-            let attr = FrozenValueTyped::from_typed(attr).expect("allocated in a frozen heap");
-            // SAFETY: Allocated in `self.heap` just above.
-            unsafe { erase_member(UnboundValue::Attr(attr)) }
-        });
-        self.members.insert(name, attr);
-    }
-
-    /// Set a method. Only used by `starlark_module` macro
-    ///
-    /// `components` says what the method's parameters and result are. It is called whenever
-    /// the method's type or documentation is asked for.
-    #[doc(hidden)]
-    pub fn set_method(
-        &mut self,
-        name: &'static str,
-        speculative_exec_safe: bool,
-        components: fn() -> NativeCallableComponents,
-        f: NativeMethFn,
-    ) {
-        let method = self.heap.with(|heap| {
-            let method = heap.alloc_simple_typed(NativeMethod::new(
-                name,
-                speculative_exec_safe,
-                components,
-                f,
-            ));
-            let method = FrozenValueTyped::from_typed(method).expect("allocated in a frozen heap");
-            // SAFETY: Allocated in `self.heap` just above.
-            unsafe { erase_member(UnboundValue::Method(method)) }
-        });
-        self.members.insert(name, method);
+    pub fn extend(&mut self, table: &'static MemberTable) {
+        for member in table.members() {
+            self.members.insert(member.name(), member.unbound());
+        }
+        if let Some(docstring) = table.docstring() {
+            self.set_docstring(docstring);
+        }
     }
 }
 

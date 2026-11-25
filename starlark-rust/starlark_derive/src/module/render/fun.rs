@@ -145,8 +145,10 @@ impl StarFun {
         ident_string(&self.name)
     }
 
-    /// Globals builder call to register the function.
-    fn builder_set(&self) -> syn::Result<syn::Stmt> {
+    /// What declares the function to its module. For a global, the call that registers it
+    /// with the builder. For a method, the static that is the method's value and, as the
+    /// value of the enclosing block, the `Member` for the module's table.
+    fn builder_set(&self, module_name: &str) -> syn::Result<TokenStream> {
         let name_str = self.name_str();
         let components = render_native_callable_components(self)?;
         let param_spec = render_signature(self)?;
@@ -167,18 +169,28 @@ impl StarFun {
                 ));
             }
             let speculative_exec_safe = self.speculative_exec_safe;
-            Ok(syn::parse_quote! {
-                globals_builder.set_method(
-                    #name_str,
-                    #speculative_exec_safe,
-                    || #components,
-                    __starlark_invoke_outer,
-                );
+            let registered_as = format!("{module_name}::{name_str}");
+            Ok(quote! {
+                static __STARLARK_MEMBER: starlark::environment::MethodStatic =
+                    starlark::environment::MethodStatic::new(
+                        #name_str,
+                        #speculative_exec_safe,
+                        || #components,
+                        __starlark_invoke_outer,
+                    );
+                starlark::__derive_refs::inventory::submit! {
+                    starlark::__derive_refs::StaticValueEntry::new(
+                        concat!(file!(), "::", #registered_as),
+                        line!(),
+                        || __STARLARK_MEMBER.value(),
+                    )
+                }
+                starlark::environment::Member::method(#name_str, &__STARLARK_MEMBER)
             })
         } else {
             let as_type = self.as_type_expr();
             let ty_custom = self.ty_custom_expr();
-            Ok(syn::parse_quote! {
+            Ok(quote! {
                 #[allow(clippy::redundant_closure)]
                 globals_builder.set_function(
                     #name_str,
@@ -194,13 +206,15 @@ impl StarFun {
     }
 }
 
-pub(crate) fn render_fun(x: StarFun) -> syn::Result<syn::Stmt> {
+/// A block with the function's items in it. For a global it registers the function and has
+/// no value; for a method its value is the `Member`.
+pub(crate) fn render_fun(x: StarFun, module_name: &str) -> syn::Result<syn::Expr> {
     let (this_outer_param, this_inner_param, this_prepare, this_arg) = x.this_param_arg();
     let (eval_param, eval_arg) = x.eval_param_arg();
     let (heap_param, heap_arg) = x.heap_param_arg();
     let (binding_params, prepare, binding_args) = x.binding_params_arg()?;
 
-    let builder_set = x.builder_set()?;
+    let builder_set = x.builder_set(module_name)?;
     let is_method = x.is_method();
     let binds_through_signature = matches!(x.source, StarFunSource::Signature { .. });
     let method_signature = render_signature(&x)?;

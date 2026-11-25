@@ -82,6 +82,7 @@
 //! A slot that has not been assigned is empty, which is how a use before assignment is caught.
 
 mod globals;
+mod members;
 mod methods;
 mod module_dump;
 mod modules;
@@ -89,6 +90,7 @@ pub(crate) mod names;
 pub(crate) mod slots;
 
 pub use globals::*;
+pub use members::*;
 pub use methods::*;
 pub use modules::*;
 use thiserror::Error;

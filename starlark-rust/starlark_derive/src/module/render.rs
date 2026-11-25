@@ -24,6 +24,7 @@ use quote::ToTokens;
 use quote::format_ident;
 use quote::quote;
 
+use crate::module::parse::ModuleKind;
 use crate::module::render::fun::render_fun;
 use crate::module::simple_param::SimpleParam;
 use crate::module::typ::SpecialParam;
@@ -100,9 +101,13 @@ fn render_impl(x: StarModule) -> syn::Result<TokenStream> {
         starlark_types,
     } = x;
     let statics_macro = format_ident!("{}", module_kind.statics_macro_name());
+    let module_name = input.sig.ident.to_string();
+    if module_kind == ModuleKind::Methods {
+        return render_methods(input, docstring, stmts, &generics, &module_name);
+    }
     let stmts: Vec<_> = stmts
         .into_iter()
-        .map(|s| render_stmt(s, &generics))
+        .map(|s| render_stmt(s, &generics, &module_name))
         .collect::<syn::Result<_>>()?;
     let set_docstring = docstring.map(|ds| quote!(globals_builder.set_docstring(#ds);));
 
@@ -124,7 +129,7 @@ fn render_impl(x: StarModule) -> syn::Result<TokenStream> {
             {
                 #set_docstring
                 #( #type_set_stmts )*
-                #( #stmts )*
+                #( #stmts; )*
                 // Mute warning if stmts is empty.
                 let _ = globals_builder;
             }
@@ -148,19 +153,89 @@ fn render_impl(x: StarModule) -> syn::Result<TokenStream> {
     })
 }
 
-fn render_stmt(x: StarStmt, generics: &StarGenerics) -> syn::Result<syn::Stmt> {
+/// The number of slots of the table of `members` members: a power of two that leaves the table
+/// at most half full, and emptier for a large table, so that the compiler finds a multiplier
+/// in a few dozen tries whatever the size.
+fn member_table_slots(members: usize) -> usize {
+    (2 * members)
+        .max(members * members / 8)
+        .max(2)
+        .next_power_of_two()
+}
+
+/// A module of methods is a `static` table of its members. The function the author wrote is
+/// kept, as what adds the table to a `MethodsBuilder`.
+fn render_methods(
+    mut input: syn::ItemFn,
+    docstring: Option<String>,
+    stmts: Vec<StarStmt>,
+    generics: &StarGenerics,
+    module_name: &str,
+) -> syn::Result<TokenStream> {
+    if !input.sig.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &input.sig.generics,
+            "a module of methods is a `static`, so it cannot be generic",
+        ));
+    }
+    let members: Vec<syn::Expr> = stmts
+        .into_iter()
+        .map(|s| render_stmt(s, generics, module_name))
+        .collect::<syn::Result<_>>()?;
+    let slots = member_table_slots(members.len());
+    let docstring: syn::Expr = match docstring {
+        Some(d) => render_some(syn::parse_quote! { #d }),
+        None => render_none(),
+    };
+
+    let vis = &input.vis;
+    let fn_name = &input.sig.ident;
+    let table_name = format_ident!("{}_MEMBERS", module_name.to_uppercase());
+    let statics_name = format_ident!("{}_STATICS", module_name.to_uppercase());
+    let builder = match input.sig.inputs.first() {
+        Some(syn::FnArg::Typed(arg)) => arg.pat.clone(),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                fn_name,
+                "expected a builder parameter",
+            ));
+        }
+    };
+    input.block = syn::parse_quote! {
+        {
+            #statics_name.populate(#builder);
+        }
+    };
+
+    Ok(quote! {
+        #vis static #table_name:
+            starlark::environment::MemberTable<[starlark::environment::Member; #slots]> =
+            starlark::environment::MemberTable::new(#docstring, [ #( #members ),* ]);
+
+        starlark::methods_static!(#statics_name = {
+            fn build(builder: &mut starlark::environment::MethodsBuilder) {
+                builder.extend(&#table_name);
+            }
+            build
+        });
+
+        #input
+    })
+}
+
+fn render_stmt(x: StarStmt, generics: &StarGenerics, module_name: &str) -> syn::Result<syn::Expr> {
     match x {
         StarStmt::Const(x) => Ok(render_const(x)),
-        StarStmt::Attr(x) => Ok(render_attr(x, generics)),
-        StarStmt::Fun(x) => render_fun(x),
+        StarStmt::Attr(x) => Ok(render_attr(x, generics, module_name)),
+        StarStmt::Fun(x) => render_fun(x, module_name),
     }
 }
 
-fn render_const(x: StarConst) -> syn::Stmt {
+fn render_const(x: StarConst) -> syn::Expr {
     let StarConst { name, ty, value } = x;
     let name_str = ident_string(&name);
     syn::parse_quote! {
-        globals_builder.set::<#ty>(#name_str, #value);
+        globals_builder.set::<#ty>(#name_str, #value)
     }
 }
 
@@ -177,7 +252,8 @@ fn render_starlark_type_set(entry: &StarTypeEntry) -> syn::Stmt {
     }
 }
 
-fn render_attr(x: StarAttr, generics: &StarGenerics) -> syn::Stmt {
+/// A block with the attribute's items in it, whose value is the `Member`.
+fn render_attr(x: StarAttr, generics: &StarGenerics, module_name: &str) -> syn::Expr {
     let StarAttr {
         name,
         this,
@@ -242,18 +318,27 @@ fn render_attr(x: StarAttr, generics: &StarGenerics) -> syn::Stmt {
         }
     };
 
+    let registered_as = format!("{module_name}::{name_str}");
     syn::parse_quote! {
         {
             #inner
             #outer
 
-            globals_builder.set_attribute_fn(
-                #name_str,
-                #speculative_exec_safe,
-                #docstring,
-                || starlark::values::type_expr::type_repr_from_attr_impl(#name_inner #turbofish),
-                #name #turbofish
-            );
+            static __STARLARK_MEMBER: starlark::environment::AttributeStatic =
+                starlark::environment::AttributeStatic::new(
+                    #speculative_exec_safe,
+                    #docstring,
+                    || starlark::values::type_expr::type_repr_from_attr_impl(#name_inner #turbofish),
+                    #name #turbofish,
+                );
+            starlark::__derive_refs::inventory::submit! {
+                starlark::__derive_refs::StaticValueEntry::new(
+                    concat!(file!(), "::", #registered_as),
+                    line!(),
+                    || __STARLARK_MEMBER.value(),
+                )
+            }
+            starlark::environment::Member::attribute(#name_str, &__STARLARK_MEMBER)
         }
     }
 }

@@ -77,12 +77,14 @@ cxx_internal_tools(
 
 prelude.python_bootstrap_binary(
     name = "check_nonempty_output",
+    has_content_based_path = True,
     main = "check_nonempty_output.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "hmap_wrapper.py",
+    has_content_based_path = True,
     main = "hmap_wrapper.py",
 )
 
@@ -98,12 +100,14 @@ prelude.command_alias(
 
 prelude.python_bootstrap_binary(
     name = "make_comp_db",
+    has_content_based_path = True,
     main = "make_comp_db.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "dep_file_processor",
+    has_content_based_path = True,
     main = "dep_file_processor.py",
     visibility = ["PUBLIC"],
     deps = [
@@ -135,48 +139,56 @@ prelude.python_library(
 
 prelude.python_bootstrap_binary(
     name = "linker_wrapper",
+    has_content_based_path = True,
     main = "linker_wrapper.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "remap_cwd",
+    has_content_based_path = True,
     main = "remap_cwd.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "shlib_interface_link_wrapper",
+    has_content_based_path = True,
     main = "shlib_interface_link_wrapper.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "stub_header_unit",
+    has_content_based_path = True,
     main = "stub_header_unit.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "simple_ar",
+    has_content_based_path = True,
     main = "simple_ar.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "clang_tidy_wrapper",
+    has_content_based_path = True,
     main = "clang_tidy_wrapper.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "concatenate_diagnostics",
+    has_content_based_path = True,
     main = "concatenate_diagnostics.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "stderr_to_file",
+    has_content_based_path = True,
     main = "stderr_to_file.py",
     visibility = ["PUBLIC"],
 )
@@ -189,6 +201,7 @@ prelude.sh_binary(
 
 prelude.python_bootstrap_binary(
     name = "filter_argsfile",
+    has_content_based_path = True,
     main = "filter_argsfile.py",
     visibility = ["PUBLIC"],
 )

@@ -9,5 +9,6 @@ prelude = native  # Avoid warnings and auto-formatters
 prelude.export_file(
     name = "hmaptool",
     src = "hmaptool",
+    has_content_based_path = True,
     visibility = ["PUBLIC"],
 )

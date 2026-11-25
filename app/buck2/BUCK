@@ -159,8 +159,7 @@ _BUCK2_BIN_DEPS = (
     )
 )
 
-buck_rust_binary(
-    name = "buck2-bin",
+_BUCK2_BIN_ATTRS = dict(
     srcs = ["bin/buck2.rs"],
     allow_cache_upload = True,
     crate = "buck2",
@@ -176,10 +175,10 @@ buck_rust_binary(
         "BUCK2_WIN_INTERNAL_VERSION": read_config("buck", "win_internal_version", ""),
     },
     # @oss-disable[end= ]: pgo = "//buck2/facebook/pgo:pgo",
-    rustc_flags = _BUCK2_BIN_RUSTC_FLAGS,
     unittests = False,
-    deps = _BUCK2_BIN_DEPS,
 )
+
+buck_rust_binary(name = "buck2-bin", rustc_flags = _BUCK2_BIN_RUSTC_FLAGS, deps = _BUCK2_BIN_DEPS, **_BUCK2_BIN_ATTRS)
 
 platform_utils = None # @oss-enable
 

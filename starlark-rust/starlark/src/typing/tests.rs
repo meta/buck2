@@ -264,11 +264,6 @@ impl StarlarkCallableParamSpec for NamedXy {
 }
 
 #[starlark_module]
-#[starlark_types(
-    MyCustomType as MyCustomType,
-    EveryOperator as EveryOperator,
-    WithSignatures as WithSignatures
-)]
 fn register_typecheck_globals(globals: &mut GlobalsBuilder) {
     fn accepts_iterable<'v>(
         #[starlark(require = pos)] xs: ValueOf<'v, StarlarkIter<Value<'v>>>,
@@ -290,6 +285,10 @@ fn register_typecheck_globals(globals: &mut GlobalsBuilder) {
         let _ignore = f;
         Ok(NoneType)
     }
+
+    globals.type_symbol_as::<MyCustomType>("MyCustomType");
+    globals.type_symbol_as::<EveryOperator>("EveryOperator");
+    globals.type_symbol_as::<WithSignatures>("WithSignatures");
 }
 
 impl TypeCheck {

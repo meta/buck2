@@ -465,7 +465,6 @@ mod tests {
     }
 
     #[starlark_module]
-    #[starlark_types(AbstractPlant as Plant)]
     fn globals(globals: &mut GlobalsBuilder) {
         fn fruit<'v>(name: &str, heap: Heap<'v>) -> starlark::Result<ValueOf<'v, FruitCallable>> {
             let ty_fruit = Ty::custom(TyUser::new(
@@ -506,6 +505,8 @@ mod tests {
         fn mk_coin<'v>() -> anyhow::Result<ValueOf<'v, Coin>> {
             panic!("not needed in test")
         }
+
+        globals.type_symbol_as::<AbstractPlant>("Plant");
     }
 
     #[test]

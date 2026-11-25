@@ -124,7 +124,6 @@ impl<'v> StarlarkValue<'v> for Magic {}
 
 /// These are where the module docs go
 #[starlark_module]
-#[starlark_types(Obj as Obj)]
 fn module(builder: &mut GlobalsBuilder) {
     const MAGIC: i32 = 42;
 
@@ -191,6 +190,8 @@ fn module(builder: &mut GlobalsBuilder) {
         let _unused = (a, b, c, undocumented);
         Ok(ValueOf::alloc(heap, Magic))
     }
+
+    builder.type_symbol_as::<Obj>("Obj");
 }
 
 #[starlark_module]

@@ -76,7 +76,6 @@ impl<'v> StarlarkValue<'v> for InputTypeRepr {}
 impl<'v> StarlarkValue<'v> for OutputTypeRepr {}
 
 #[starlark_module]
-#[starlark_types(InputTypeRepr as Input, OutputTypeRepr as Output)]
 fn globals(builder: &mut GlobalsBuilder) {
     #[allow(unused_variables)]
     fn simple<'v>(
@@ -123,6 +122,9 @@ fn globals(builder: &mut GlobalsBuilder) {
     fn with_arguments(args: &Arguments) -> anyhow::Result<i32> {
         unimplemented!()
     }
+
+    builder.type_symbol_as::<InputTypeRepr>("Input");
+    builder.type_symbol_as::<OutputTypeRepr>("Output");
 }
 
 /// Test that a Rust starlark_module produces the right documentation.

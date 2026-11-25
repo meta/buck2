@@ -198,7 +198,6 @@ starlark_simple_value!(Cloud);
 impl<'v> StarlarkValue<'v> for Cloud {}
 
 #[starlark_module]
-#[starlark_types(Crate as Crate, Parcel as Parcel, Cloud as Cloud)]
 fn scale(builder: &mut GlobalsBuilder) {
     const Weighable: StarlarkValueAsType<StarlarkWeighable> = StarlarkWeighable::global();
 
@@ -219,6 +218,10 @@ fn scale(builder: &mut GlobalsBuilder) {
         let _unused = thing;
         Err(starlark::Error::new_other(anyhow::anyhow!("not packed")))
     }
+
+    builder.type_symbol_as::<Crate>("Crate");
+    builder.type_symbol_as::<Parcel>("Parcel");
+    builder.type_symbol_as::<Cloud>("Cloud");
 }
 
 fn link(path: &str, type_name: &str) -> String {

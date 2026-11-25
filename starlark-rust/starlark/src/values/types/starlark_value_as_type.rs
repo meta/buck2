@@ -429,11 +429,12 @@ mod tests {
     impl<'v> StarlarkValue<'v> for StarlarkCompilerArgs {}
 
     #[starlark_module]
-    #[starlark_types(StarlarkCompilerArgs as CompilerArgs)]
     fn compiler_args_globals(globals: &mut GlobalsBuilder) {
         fn compiler_args(x: &str) -> anyhow::Result<StarlarkCompilerArgs> {
             Ok(tests::StarlarkCompilerArgs(x.to_owned()))
         }
+
+        globals.type_symbol_as::<StarlarkCompilerArgs>("CompilerArgs");
     }
 
     #[test]

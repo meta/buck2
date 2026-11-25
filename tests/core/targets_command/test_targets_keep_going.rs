@@ -213,3 +213,24 @@ async fn test_streaming_keep_going_with_single_failing_target_and_one_other_targ
     );
     Ok(())
 }
+
+/// `--console=none` hides the console, not what the command prints to stdout.
+async fn console_none_prints_stdout(buck: &Buck, args: &[&str]) -> anyhow::Result<()> {
+    let simple = buck
+        .targets(&[args, &["--console=simple"]].concat())
+        .await?;
+    let none = buck.targets(&[args, &["--console=none"]].concat()).await?;
+    assert_eq!(simple.stdout.lines().count(), 5);
+    assert_eq!(none.stdout, simple.stdout);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_console_none_prints_stdout(buck: &Buck) -> anyhow::Result<()> {
+    console_none_prints_stdout(buck, &["//a:"]).await
+}
+
+#[buck_test]
+async fn test_streaming_console_none_prints_stdout(buck: &Buck) -> anyhow::Result<()> {
+    console_none_prints_stdout(buck, &["//a:", "--streaming"]).await
+}

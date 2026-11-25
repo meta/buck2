@@ -1095,3 +1095,14 @@ async fn test_query_attribute_text(buck: &Buck) -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `--console=none` hides the console, not the result of the query.
+#[buck_test(data_dir = "bxl_simple")]
+async fn test_uquery_console_none_prints_stdout(buck: &Buck) -> anyhow::Result<()> {
+    let query = "deps(root//lib:lib1)";
+    let simple = buck.uquery(&[query, "--console=simple"]).await?;
+    let none = buck.uquery(&[query, "--console=none"]).await?;
+    assert_eq!(simple.stdout, "root//lib:file1\nroot//lib:lib1\n");
+    assert_eq!(none.stdout, simple.stdout);
+    Ok(())
+}

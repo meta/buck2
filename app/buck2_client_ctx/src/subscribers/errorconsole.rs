@@ -12,13 +12,19 @@ use async_trait::async_trait;
 
 use crate::subscribers::subscriber::EventSubscriber;
 
-/// This console is what is used for `--console none` and only prints errors.
+/// This console is what is used for `--console none` and only prints errors. The stdout that a
+/// command sends as partial results is not console output: it is still written.
 ///
 /// It is also used as a part of simpleconsole's implementation.
 pub struct ErrorConsole;
 
 #[async_trait]
 impl EventSubscriber for ErrorConsole {
+    async fn handle_output(&mut self, raw_output: &[u8]) -> buck2_error::Result<()> {
+        crate::stdio::print_bytes(raw_output)?;
+        crate::stdio::flush()
+    }
+
     async fn handle_command_result(
         &mut self,
         result: &buck2_cli_proto::CommandResult,

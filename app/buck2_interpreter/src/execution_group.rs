@@ -69,8 +69,6 @@ impl<'v> StarlarkValue<'v> for StarlarkExecutionGroup {
     type Type = StarlarkExecutionGroupView<'v>;
 }
 
-starlark::declare_starlark_value_as_type!(pub EXEC_GROUP_TYPE, StarlarkExecutionGroup);
-
 const DEFAULT_EXECUTION_GROUP_NAME: &str = "DefaultExecGroup";
 
 #[derive(Debug, buck2_error::Error)]

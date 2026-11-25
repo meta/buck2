@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter::execution_group::EXEC_GROUP_TYPE;
 use buck2_interpreter::execution_group::FrozenStarlarkExecutionGroup;
 use buck2_interpreter::execution_group::StarlarkExecutionGroup;
 use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
@@ -16,14 +15,11 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::ValueOf;
-use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 
 use crate::interpreter::build_context::BuildContext;
 
 #[starlark_module]
 fn register_execution_group_globals(r: &mut GlobalsBuilder) {
-    const ExecGroup: StarlarkValueAsType<StarlarkExecutionGroup> = EXEC_GROUP_TYPE;
-
     /// Create a new execution group.
     ///
     /// The value returned must be immediately bound to a global, which names the group:
@@ -67,6 +63,8 @@ fn register_execution_group_globals(r: &mut GlobalsBuilder) {
     /// execution groups must list it in `exec_groups` to use it, and must name it on exec deps,
     /// toolchain deps and args that refer to tools.
     const DefaultExecGroup: FrozenStarlarkExecutionGroup = FrozenStarlarkExecutionGroup::DEFAULT;
+
+    r.type_symbol::<StarlarkExecutionGroup>();
 }
 
 pub(crate) fn register_execution_group(globals: &mut GlobalsBuilder) {

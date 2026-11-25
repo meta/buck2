@@ -219,7 +219,7 @@ mod tests {
     use crate::values::layout::heap::repr::AValueHeader;
     use crate::values::layout::value_alloc_size::ValueAllocSize;
     use crate::values::list::AllocList;
-    use crate::values::list::ListRef;
+    use crate::values::list::StarlarkList;
     use crate::wasm::is_wasm;
 
     #[test]
@@ -285,7 +285,7 @@ mod tests {
     fn test_frozen_list_larger_than_chunk_cap() {
         FrozenHeap::temp(|heap| {
             let value = heap.alloc(AllocList(0..1_000_000i32)).to_value();
-            let list = ListRef::from_value(value).unwrap();
+            let list = StarlarkList::from_value(value).unwrap();
             assert_eq!(1_000_000, list.content().len());
             for (i, value) in list.content().iter().enumerate() {
                 assert_eq!(Some(i as i32), value.unpack_i32());

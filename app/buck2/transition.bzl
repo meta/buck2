@@ -10,18 +10,24 @@ load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 
 def _transition_impl(platform: PlatformInfo, refs: struct) -> PlatformInfo:
     val = refs.val[ConstraintValueInfo]
-    new_cfg = ConfigurationInfo(
-        constraints = platform.configuration.constraints | {val.setting.label: val},
-        values = platform.configuration.values,
-    )
+    constraints = platform.configuration.constraints | {val.setting.label: val}
+
+    # A PGO build applies the daemon's profile. The client-only binary is a different program,
+    # and that profile would tell the compiler that everything only the client runs is cold.
+    # @oss-disable[end= ]: pgo_off = refs.pgo_off[ConstraintValueInfo]
+    # @oss-disable[end= ]: constraints[pgo_off.setting.label] = pgo_off
     return PlatformInfo(
         label = platform.label,
-        configuration = new_cfg,
+        configuration = ConfigurationInfo(
+            constraints = constraints,
+            values = platform.configuration.values,
+        ),
     )
 
 _transition_func = transition(
     impl = _transition_impl,
     refs = {
+        # @oss-disable[end= ]: "pgo_off": "ovr_config//build_mode/constraints:llvm-ir-pgo[off]",
         "val": translate_target("//buck2/app/buck2:buck2_client_only_setting[build]"),
     },
 )

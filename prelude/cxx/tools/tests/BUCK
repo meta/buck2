@@ -13,3 +13,11 @@ prelude.python_test(
         "prelude//cxx/tools:dep_file_processors_lib",
     ],
 )
+
+prelude.python_test(
+    name = "test_linker_wrapper",
+    srcs = ["test_linker_wrapper.py"],
+    deps = [
+        "prelude//cxx/tools:linker_wrapper_lib",
+    ],
+)

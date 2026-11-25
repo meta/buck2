@@ -137,6 +137,13 @@ prelude.python_library(
     visibility = ["prelude//cxx/tools/..."],
 )
 
+prelude.python_library(
+    name = "linker_wrapper_lib",
+    srcs = ["linker_wrapper.py"],
+    base_module = "",
+    visibility = ["prelude//cxx/tools/..."],
+)
+
 prelude.python_bootstrap_binary(
     name = "linker_wrapper",
     has_content_based_path = True,

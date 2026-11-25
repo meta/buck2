@@ -1005,3 +1005,15 @@ class Buck(Executable):
 
     def get_settings_home_dir(self) -> Path:
         return Path(self._env["BUCK2_TEST_SETTINGS_HOME_DIR"])
+
+    def set_test_settings(self, settings: str) -> None:
+        """
+        Sets Buck settings from TOML for every later command, above every settings file and below
+        `--setting`. Unlike those, it can set any setting, including ones that allow no overrides.
+
+        Only buck2 built for e2e tests (`fbcode//buck2:buck2_e2e`) allows that; any other buck2
+        holds these settings to the same policy as a `.bucksettings.local.toml`.
+        """
+        path = self.get_settings_home_dir().parent / "test.bucksettings.toml"
+        path.write_text(settings)
+        self.set_env("BUCK2_SETTINGS_OVERRIDE", str(path))

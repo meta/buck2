@@ -208,7 +208,7 @@ special_module_name = { level = "deny", priority = -2 }
 stable_features = { level = "deny", priority = -2 }
 suspicious_double_ref_op = { level = "allow", priority = -2 }
 unconditional_recursion = { level = "deny", priority = -2 }
-unexpected_cfgs = { level = "allow", check-cfg = ["cfg(fbcode_build)", "cfg(buck_build)", "cfg(client_only)", "cfg(tokio_unstable)", "cfg(mini_vec_no_ptr_packing)", "cfg(buck2_memfrag)", "cfg(buck2_test_settings)"]}
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(fbcode_build)", "cfg(buck_build)", "cfg(client_only)", "cfg(tokio_unstable)", "cfg(mini_vec_no_ptr_packing)", "cfg(buck2_memfrag)"]}
 unfulfilled_lint_expectations = { level = "allow" }
 unknown_lints = { level = "allow" }
 unreachable_code = { level = "warn", priority = -2 }

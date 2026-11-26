@@ -102,7 +102,6 @@ pub use package_visibility::PackageVisibilityDefaultIntersection;
 pub use parser::ResolvedSettings;
 pub use parser::SettingOrigin;
 pub use parser::SettingsLayerReport;
-pub use parser::enable_test_settings_layer;
 pub use paths::Paths;
 pub use remote_execution::RemoteExecution;
 pub use report::SettingsReport;

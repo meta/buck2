@@ -155,8 +155,10 @@ async fn test_text_report(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test(meta_only = "open source builds allow every override, so there is no policy to bypass")]
-async fn test_test_settings_bypass_override_policy(buck: &mut Buck) -> anyhow::Result<()> {
+#[buck_test(
+    meta_only = "open source builds allow every override, so there is no policy to enforce"
+)]
+async fn test_non_overridable_setting_rejected_from_setting(buck: &Buck) -> anyhow::Result<()> {
     // `default_intersection` allows no overrides.
     let failed = buck
         .audit(&[
@@ -173,13 +175,5 @@ async fn test_test_settings_bypass_override_policy(buck: &mut Buck) -> anyhow::R
         "unexpected stderr: {}",
         failed.stderr
     );
-
-    buck.set_test_settings("[package_visibility]\ndefault_intersection = \"enforce\"\n")?;
-    let result = buck.audit(&["settings", "--json"]).await?;
-    let report: Value = serde_json::from_str(&result.stdout)?;
-    let entries = entries(&report);
-    let entry = entries["package_visibility.default_intersection"];
-    assert_eq!(entry["value"], "enforce");
-    assert_eq!(entry["origin"]["kind"], "test");
     Ok(())
 }

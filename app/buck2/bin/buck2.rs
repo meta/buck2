@@ -34,8 +34,6 @@ use buck2_core::logging::LogConfigurationReloadHandle;
 use buck2_core::logging::init_tracing_for_writer;
 use buck2_core::logging::log_file::TracingLogFile;
 use buck2_fs::working_dir::AbsWorkingDir;
-#[cfg(buck2_test_settings)]
-use buck2_settings::enable_test_settings_layer;
 use buck2_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use superconsole::Stdin;
@@ -157,10 +155,6 @@ fn exec_with_logging(
 // will start up their own tokio runtime.
 fn main() -> ! {
     buck2_wrapper_common::restore_process_name_after_exec();
-
-    // Compiled into the end-to-end test build only (`--cfg=buck2_test_settings`).
-    #[cfg(buck2_test_settings)]
-    enable_test_settings_layer();
 
     // Enable sampling early so the side table exists before the daemon forks
     // (fork copies the heap). The dump watcher is started later, post-fork, in

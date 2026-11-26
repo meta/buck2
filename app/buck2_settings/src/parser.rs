@@ -11,8 +11,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 use buck2_core::buck2_env;
 use buck2_core::fs::project::ProjectRoot;
@@ -50,14 +48,9 @@ pub enum SettingOrigin {
     /// The repository's `.bucksettings.toml`.
     #[display("repository settings file `{_0}`")]
     Repository(AbsPathBuf),
-    /// A `.bucksettings.local.toml`, or the `BUCK2_SETTINGS_OVERRIDE` file
-    /// when the test settings layer is not enabled.
+    /// A `.bucksettings.local.toml`.
     #[display("local settings file `{_0}`")]
     Local(AbsPathBuf),
-    /// The `BUCK2_SETTINGS_OVERRIDE` file when the test settings layer is
-    /// enabled; see [`enable_test_settings_layer`].
-    #[display("test settings file `{_0}`")]
-    Test(AbsPathBuf),
     /// The wrapper's rollout cache.
     #[display("rollout cache `{_0}`")]
     Rollout(AbsPathBuf),
@@ -74,7 +67,6 @@ impl SettingOrigin {
         match self {
             Self::Repository(_) => SettingSource::Base,
             Self::Rollout(_) => SettingSource::Rollout,
-            Self::Test(_) => SettingSource::Test,
             Self::Local(_) => SettingSource::Override(OverrideSource::LocalSettings),
             Self::CommandLine => SettingSource::Override(OverrideSource::CommandLine),
             // Never merged as a layer, so never checked against a policy.
@@ -153,50 +145,11 @@ impl ResolvedSettings {
 enum SettingsError {
     #[error("Error parsing buck settings: {0}")]
     Parse(toml::de::Error),
-    #[error("BUCK2_SETTINGS_OVERRIDE file `{0}` does not exist")]
-    OverrideFileMissing(String),
     #[error("Buck setting `{key}` cannot be overridden from {origin}")]
     InvalidOverride {
         key: String,
         origin: Arc<SettingOrigin>,
     },
-}
-
-static TEST_SETTINGS_LAYER_ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// Lets the `BUCK2_SETTINGS_OVERRIDE` file set any setting, regardless of the
-/// setting's `overridable_in`. Without this call the file is held to the same
-/// policy as a `.bucksettings.local.toml`.
-///
-/// Only binaries built with `--cfg=buck2_test_settings` call this, at
-/// startup. The file is read from an environment variable, so a binary
-/// shipped to users must never enable the bypass.
-pub fn enable_test_settings_layer() {
-    TEST_SETTINGS_LAYER_ENABLED.store(true, Ordering::Relaxed);
-}
-
-/// The `BUCK2_SETTINGS_OVERRIDE` file, and which policy its values are held to.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum OverrideFile<'a> {
-    /// Held to each setting's `overridable_in(LocalSettings)`.
-    Local(&'a AbsPath),
-    /// May set any setting.
-    Test(&'a AbsPath),
-}
-
-impl<'a> OverrideFile<'a> {
-    fn path(self) -> &'a AbsPath {
-        match self {
-            Self::Local(path) | Self::Test(path) => path,
-        }
-    }
-
-    fn origin(self) -> SettingOrigin {
-        match self {
-            Self::Local(path) => SettingOrigin::Local(path.to_owned()),
-            Self::Test(path) => SettingOrigin::Test(path.to_owned()),
-        }
-    }
 }
 
 /// Settings parsed from a single source.
@@ -576,58 +529,24 @@ pub fn resolve_settings(
         .map(PathBuf::from)
         .or_else(dirs::home_dir);
     let home_dir = home_dir.map(AbsPathBuf::new).transpose()?;
-    let override_file = buck2_env!("BUCK2_SETTINGS_OVERRIDE", applicability = testing)?
-        .map(|path| {
-            // Absolute only: this parses in the daemon, whose cwd is not the
-            // caller's, so a relative path has nothing sound to resolve
-            // against.
-            AbsPathBuf::new(PathBuf::from(path))
-                .buck_error_context("`BUCK2_SETTINGS_OVERRIDE` must be an absolute path")
-        })
-        .transpose()?;
-    let override_file = override_file.as_deref().map(|path| {
-        if TEST_SETTINGS_LAYER_ENABLED.load(Ordering::Relaxed) {
-            OverrideFile::Test(path)
-        } else {
-            OverrideFile::Local(path)
-        }
-    });
-    resolve_settings_with_home(repo_root, home_dir.as_deref(), override_file, settings_args)
+    resolve_settings_with_home(repo_root, home_dir.as_deref(), settings_args)
 }
 
 #[cfg(test)]
 fn parse_settings_with_home(
     repo_root: &AbsPath,
     home_dir: Option<&AbsPath>,
-    override_file: Option<OverrideFile<'_>>,
     settings_args: &[toml::Table],
 ) -> buck2_error::Result<BuckSettings> {
-    Ok(resolve_settings_with_home(repo_root, home_dir, override_file, settings_args)?.settings)
+    Ok(resolve_settings_with_home(repo_root, home_dir, settings_args)?.settings)
 }
 
 pub(crate) fn resolve_settings_with_home(
     repo_root: &AbsPath,
     home_dir: Option<&AbsPath>,
-    override_file: Option<OverrideFile<'_>>,
     settings_args: &[toml::Table],
 ) -> buck2_error::Result<ResolvedSettings> {
     let (mut layers, mut reports) = parse_layers(repo_root, home_dir, rollout_layer(home_dir))?;
-    // Outranks every on-disk layer so a harness can pin settings; only
-    // per-command `--setting` flags are more specific.
-    if let Some(override_file) = override_file {
-        let path = override_file.path();
-        // Unlike ordinary layers, missing is an error: the caller asked for
-        // this file by name, so running without it is the silent wrong answer.
-        let table = parse_table(path)?
-            .ok_or_else(|| SettingsError::OverrideFileMissing(path.display().to_string()))?;
-        let origin = override_file.origin();
-        reports.push(SettingsLayerReport {
-            origin: origin.clone(),
-            applied: true,
-            ignored: Vec::new(),
-        });
-        layers.push(SettingsLayer::new(origin, table));
-    }
     for table in settings_args {
         reports.push(SettingsLayerReport {
             origin: SettingOrigin::CommandLine,
@@ -649,8 +568,6 @@ mod tests {
     use buck2_core::fs::project::ProjectRootTemp;
 
     use super::*;
-    #[cfg(fbcode_build)]
-    use crate::PackageVisibilityDefaultIntersection;
     use crate::args::SettingOverride;
     use crate::args::parse_setting_flag_arg;
     use crate::buckconfig::NoBuckconfig;
@@ -790,7 +707,6 @@ mod tests {
             parse_settings_with_home(
                 repo.path().root().as_abs_path(),
                 Some(home.path().root().as_abs_path()),
-                None,
                 &[],
             )
         }
@@ -810,7 +726,7 @@ mod tests {
             let repo_root = repo.path().root().as_abs_path();
             let home_dir = home.path().root().as_abs_path();
 
-            let settings = parse_settings_with_home(repo_root, Some(home_dir), None, &[])?;
+            let settings = parse_settings_with_home(repo_root, Some(home_dir), &[])?;
             assert_eq!(
                 settings
                     .daemon
@@ -824,7 +740,7 @@ mod tests {
                 DOT_BUCKSETTINGS_LOCAL,
                 "[log_download]\nlog_url = \"https://home-local/\"\n",
             );
-            let settings = parse_settings_with_home(repo_root, Some(home_dir), None, &[])?;
+            let settings = parse_settings_with_home(repo_root, Some(home_dir), &[])?;
             assert_eq!(
                 settings
                     .daemon
@@ -838,7 +754,7 @@ mod tests {
                 DOT_BUCKSETTINGS_LOCAL,
                 "[log_download]\nlog_url = \"https://repo-local/\"\n",
             );
-            let settings = parse_settings_with_home(repo_root, Some(home_dir), None, &[])?;
+            let settings = parse_settings_with_home(repo_root, Some(home_dir), &[])?;
             assert_eq!(
                 settings
                     .daemon
@@ -848,38 +764,8 @@ mod tests {
                 Some("https://repo-local/")
             );
 
-            let override_dir = ProjectRootTemp::new()?;
-            override_dir.write_file(
-                "override.toml",
-                "[log_download]\nlog_url = \"https://override/\"\n",
-            );
-            let override_file = override_dir
-                .path()
-                .root()
-                .as_abs_path()
-                .join("override.toml");
-            let settings = parse_settings_with_home(
-                repo_root,
-                Some(home_dir),
-                Some(OverrideFile::Local(&override_file)),
-                &[],
-            )?;
-            assert_eq!(
-                settings
-                    .daemon
-                    .log_download
-                    .log_url(&mut NoBuckconfig)?
-                    .as_deref(),
-                Some("https://override/")
-            );
-
             let settings_args = [table("[log_download]\nlog_url = \"https://command-line/\"")];
-            let settings = parse_settings_with_home(
-                repo_root,
-                Some(home_dir),
-                Some(OverrideFile::Local(&override_file)),
-                &settings_args,
-            )?;
+            let settings = parse_settings_with_home(repo_root, Some(home_dir), &settings_args)?;
             assert_eq!(
                 settings
                     .daemon
@@ -887,19 +773,6 @@ mod tests {
                     .log_url(&mut NoBuckconfig)?
                     .as_deref(),
                 Some("https://command-line/")
-            );
-
-            // A missing override file is an error, not an absent layer.
-            let missing = override_dir.path().root().as_abs_path().join("nope.toml");
-            let result = parse_settings_with_home(
-                repo_root,
-                Some(home_dir),
-                Some(OverrideFile::Local(&missing)),
-                &[],
-            );
-            assert!(
-                result.is_err(),
-                "a missing BUCK2_SETTINGS_OVERRIDE file must refuse, not fall through"
             );
             Ok(())
         }
@@ -946,7 +819,6 @@ mod tests {
             let resolved = resolve_settings_with_home(
                 repo.path().root().as_abs_path(),
                 Some(home.path().root().as_abs_path()),
-                None,
                 &[],
             )?;
             assert_eq!(
@@ -989,7 +861,6 @@ mod tests {
             let settings = parse_settings_with_home(
                 repo.path().root().as_abs_path(),
                 Some(home.path().root().as_abs_path()),
-                None,
                 &[],
             )?;
             assert_eq!(
@@ -1020,7 +891,6 @@ mod tests {
             parse_settings_with_home(
                 repo.path().root().as_abs_path(),
                 Some(home.path().root().as_abs_path()),
-                None,
                 &[],
             )
         }
@@ -1106,7 +976,6 @@ mod tests {
         let settings = parse_settings_with_home(
             repo.path().root().as_abs_path(),
             Some(home.path().root().as_abs_path()),
-            None,
             &[],
         )?;
         assert_eq!(
@@ -1377,64 +1246,6 @@ mod tests {
             TEST_FLAG_NOT_OVERRIDABLE,
         )?;
         assert_eq!(resolved.test_section.unwrap().test_flag, Some(true));
-        Ok(())
-    }
-
-    #[test]
-    fn test_test_settings_file_bypasses_override_policy() -> buck2_error::Result<()> {
-        let dir = ProjectRootTemp::new()?;
-        let resolved = resolve_with_metadata::<TestBuckSettingsData>(
-            vec![SettingsLayer::new(
-                SettingOrigin::Test(dir.path().root().as_abs_path().join("override.toml")),
-                table("[test_section]\ntest_flag = true"),
-            )],
-            TEST_FLAG_NOT_OVERRIDABLE,
-        )?;
-        assert_eq!(resolved.test_section.unwrap().test_flag, Some(true));
-        Ok(())
-    }
-
-    #[cfg(fbcode_build)]
-    #[test]
-    fn test_override_file_policy_follows_its_kind() -> buck2_error::Result<()> {
-        let repo = ProjectRootTemp::new()?;
-        let home = ProjectRootTemp::new()?;
-        let override_dir = ProjectRootTemp::new()?;
-        // `default_intersection` allows no overrides, so only a test file can set it.
-        override_dir.write_file(
-            "override.toml",
-            "[package_visibility]\ndefault_intersection = \"enforce\"\n",
-        );
-        let path = override_dir
-            .path()
-            .root()
-            .as_abs_path()
-            .join("override.toml");
-        let resolve = |override_file| {
-            parse_settings_with_home(
-                repo.path().root().as_abs_path(),
-                Some(home.path().root().as_abs_path()),
-                Some(override_file),
-                &[],
-            )
-        };
-
-        let error = resolve(OverrideFile::Local(&path)).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "Buck setting `package_visibility.default_intersection` cannot be overridden from local settings file `{}`",
-                path.display()
-            ),
-            "a local override file must be held to the setting's policy"
-        );
-
-        let settings = resolve(OverrideFile::Test(&path))?;
-        assert_eq!(
-            settings.daemon.package_visibility.default_intersection(),
-            PackageVisibilityDefaultIntersection::Enforce,
-            "a test override file may set a setting that allows no overrides"
-        );
         Ok(())
     }
 

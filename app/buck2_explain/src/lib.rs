@@ -13,7 +13,6 @@ use std::io::Cursor;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use buck2_core::buck2_env;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -100,10 +99,6 @@ pub fn inline_fbs(
     let base64 = STANDARD.encode(fbs);
     // For dev purposes, dump the base64 encoded flatbuffer to a file
     if let Some(fbs_dump) = fbs_dump {
-        fs::write(fbs_dump, &base64)?;
-    }
-    let env = buck2_env!("BUCK2_DUMP_FBS", applicability = testing)?;
-    if let Some(fbs_dump) = env {
         fs::write(fbs_dump, &base64)?;
     }
     if !html_in.contains(HTML_PLACEHOLDER) {

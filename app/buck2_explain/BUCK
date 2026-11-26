@@ -15,6 +15,7 @@ rust_library(
         ":schema_rust[explain_generated.rs]": "src/explain_generated.rs",
     },
     test_deps = [
+        "//buck2/app/buck2_core:buck2_core",
         "//buck2/app/buck2_interpreter_for_build:buck2_interpreter_for_build",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/gazebo/dupe:dupe",
@@ -24,7 +25,6 @@ rust_library(
         "fbsource//third-party/rust:base64",
         "fbsource//third-party/rust:flatbuffers",
         "//buck2/app/buck2_common:buck2_common",
-        "//buck2/app/buck2_core:buck2_core",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_fs:buck2_fs",
         "//buck2/app/buck2_hash:buck2_hash",

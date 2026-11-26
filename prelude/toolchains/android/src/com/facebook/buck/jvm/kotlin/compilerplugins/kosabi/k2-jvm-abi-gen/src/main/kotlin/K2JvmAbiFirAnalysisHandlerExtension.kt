@@ -96,6 +96,7 @@ import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtAnnotationEntry
 import org.jetbrains.kotlin.psi.KtClass
+import org.jetbrains.kotlin.psi.KtClassLiteralExpression
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtTreeVisitorVoid
 import org.jetbrains.kotlin.types.ConstantValueKind
@@ -929,9 +930,16 @@ class K2JvmAbiFirAnalysisHandlerExtension(
       // For @Annotation(param = VALUE), we want "VALUE", not "param = VALUE"
       // For array expressions like [A, B], extract individual elements
       annotationEntry.valueArgumentList?.arguments?.forEachIndexed { index, argument ->
-        val expressionText = argument.getArgumentExpression()?.text ?: return@forEachIndexed
+        val expression = argument.getArgumentExpression() ?: return@forEachIndexed
+        // A class literal names a class, never a constant: synthesising one for `Nested.X::class`
+        // declares a top-level class named after the qualifier.
+        if (expression is KtClassLiteralExpression) return@forEachIndexed
+        val expressionText = expression.text
         val parameterName = argument.getArgumentName()?.asName?.asString()
         fun record(text: String) {
+          // Array elements are split from the text below, so their class literals are matched by
+          // text.
+          if (text.endsWith("::class")) return
           usedConstants.add(text)
           usageSites.add(ConstUsageSite(text, annotationShortName, parameterName, index))
         }
@@ -1193,6 +1201,7 @@ class K2JvmAbiFirAnalysisHandlerExtension(
     // Split 0 (root package + full nested path) finds root-packaged nested classes, and
     // no split is skipped for source packages: the dependencies provider cannot see
     // sources, so a hit always means the constant resolves from dependencies.
+    var foundQualifier: ClassId? = null
     for (splitPoint in segments.size - 1 downTo 0) {
       val packageFqName = FqName.fromSegments(segments.take(splitPoint).map { it.asString() })
       val classNameParts = segments.drop(splitPoint)
@@ -1308,7 +1317,17 @@ class K2JvmAbiFirAnalysisHandlerExtension(
           }
         }
         // Class exists but doesn't have the property/entry - continue probing
+        if (foundQualifier == null) foundQualifier = classId
       }
+    }
+
+    // The qualifier is a class of the classpath. A constant synthesised for it would be a second,
+    // top-level declaration of that name, never the member, so nothing is synthesised. The member
+    // may still be inherited; the record lets a fleet run count these cases (T299538734).
+    foundQualifier?.let {
+      session.jvmAbiGenService.state.undeclaredConstantMembers +=
+          UndeclaredConstantMember(it.asString(), propertyName)
+      return null
     }
 
     // No class found in dependencies with the property - generate a stub using heuristic
@@ -1345,24 +1364,42 @@ class K2JvmAbiFirAnalysisHandlerExtension(
           ClassId(packageFqName, FqName.fromSegments(classNameParts.map { it.asString() }), false)
         }
 
-    // If the class already exists in dependencies but doesn't have the property,
-    // the property might be in its Companion object. Check if a Companion exists
-    // and if so, generate the stub for the Companion class instead to avoid conflicts.
-    val existingClass = session.dependenciesSymbolProvider.getClassLikeSymbolByClassId(baseClassId)
-    if (existingClass != null) {
-      val companionClassId = baseClassId.createNestedClassId(Name.identifier("Companion"))
-      val existingCompanion =
-          session.dependenciesSymbolProvider.getClassLikeSymbolByClassId(companionClassId)
-      if (existingCompanion != null) {
-        // Companion exists but doesn't have the property - generate stub in Companion
-        return companionClassId
-      }
-      // Class exists but no Companion - can't generate stub without conflict
-      // Return null to avoid generating conflicting class
+    // The heuristic split reads the qualifier's first `originalImportLength - 1` names as the
+    // package. If those names are a class of the classpath (an imported nested class whose own
+    // name the classpath lacks), the synthesised class would put a package of that name next to
+    // the class, and kotlinc would bind the import to it. Refuse instead.
+    val classAtPackage = classNamed(packageFqName, session)
+    if (classAtPackage != null) {
+      session.jvmAbiGenService.state.refusedConstants +=
+          "Kosabi source-only ABI: the constant `${baseClassId.asSingleFqName()}.$propertyName` " +
+              "is not available: `$packageFqName` is a class on the source-only ABI classpath " +
+              "(`${classAtPackage.asString()}`), and it does not declare " +
+              "`${baseClassId.relativeClassName}`. To fix, add the target that declares " +
+              "`${baseClassId.asSingleFqName()}` to THIS target's `source_only_abi_deps`."
       return null
     }
 
     return baseClassId
+  }
+
+  /**
+   * The classpath class whose qualified name is [fqName], read under every split. Only the
+   * dependencies provider is asked: the session's provider includes this plugin's generated
+   * classes, whose set is computed on first use and must not be read before it is filled.
+   */
+  private fun classNamed(fqName: FqName, session: FirSession): ClassId? {
+    val segments = fqName.pathSegments()
+    for (splitPoint in segments.size - 1 downTo 0) {
+      val classId = ClassId(
+          FqName.fromSegments(segments.take(splitPoint).map { it.asString() }),
+          FqName.fromSegments(segments.drop(splitPoint).map { it.asString() }),
+          false,
+      )
+      if (session.dependenciesSymbolProvider.getClassLikeSymbolByClassId(classId) != null) {
+        return classId
+      }
+    }
+    return null
   }
 
   // A frontend entry point for Kosabi.
@@ -1443,6 +1480,19 @@ class K2JvmAbiFirAnalysisHandlerExtension(
   }
 
   private fun reportFabricatedConstants(state: AbiGenState, configuration: CompilerConfiguration) {
+    for (message in state.refusedConstants) {
+      configuration.messageCollector.report(CompilerMessageSeverity.ERROR, message)
+    }
+    pipeline.repairLog.undeclaredConstantMembers.addAll(state.undeclaredConstantMembers)
+    // INFO never fails a build under `-Werror`; the KOSABI_ prefix keeps the lines greppable.
+    for (member in state.undeclaredConstantMembers) {
+      configuration.messageCollector.report(
+          CompilerMessageSeverity.INFO,
+          "KOSABI_UNDECLARED_CONSTANT_MEMBER class=`${member.classId}` member=`${member.name}`: " +
+              "the class is on the source-only ABI classpath and declares no such property, " +
+              "field or enum entry, so no constant was synthesised.",
+      )
+    }
     if (state.fabricatedConstants.isEmpty()) return
     pipeline.repairLog.fabricatedConstants.addAll(state.fabricatedConstants)
 
@@ -1902,6 +1952,12 @@ class AbiGenState {
 
   /** Constants whose usages disagreed about the type; treated the same as having no hint. */
   val ambiguousConstantTypeHints: MutableSet<String> = mutableSetOf()
+
+  /** Errors for constants that cannot be synthesised without a wrong class name. */
+  val refusedConstants: MutableSet<String> = linkedSetOf()
+
+  /** Constants whose qualifier is a classpath class that does not declare them. */
+  val undeclaredConstantMembers: MutableSet<UndeclaredConstantMember> = linkedSetOf()
 
   /** Every constant synthesised during this compilation. See [AbiGenRepairLog]. */
   val fabricatedConstants: MutableList<FabricatedConstant> = mutableListOf()

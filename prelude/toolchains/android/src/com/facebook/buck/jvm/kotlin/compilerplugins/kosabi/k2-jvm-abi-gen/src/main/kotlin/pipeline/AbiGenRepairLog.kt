@@ -74,6 +74,12 @@ data class FabricatedConstant(
 )
 
 /**
+ * An annotation constant whose qualifier resolves to a classpath class that declares no member of
+ * that name. Nothing is synthesised for it; the member may be inherited or truly missing.
+ */
+data class UndeclaredConstantMember(val classId: String, val name: String)
+
+/**
  * An initializer that was discarded because it could not be resolved.
  *
  * [isConst] and [consumerVisible] exist so [ValidationStage] can tell the defect it is looking for
@@ -165,6 +171,7 @@ data class UncomputedApplier(
  */
 class AbiGenRepairLog {
   val fabricatedConstants: MutableList<FabricatedConstant> = mutableListOf()
+  val undeclaredConstantMembers: MutableList<UndeclaredConstantMember> = mutableListOf()
   val clearedPropertyInitializers: MutableList<DiscardedInitializer> = mutableListOf()
   val replacedFieldInitializers: MutableList<DiscardedInitializer> = mutableListOf()
   val strippedSupertypes: MutableList<DiscardedInitializer> = mutableListOf()
@@ -281,5 +288,6 @@ class AbiGenRepairLog {
           " unknown_return_value_statuses=${unknownReturnValueStatuses.size}" +
           " error_typed_api_members=${errorTypedApiMembers.size}" +
           " uncomputed_appliers=${uncomputedAppliers.size}" +
+          " undeclared_constant_members=${undeclaredConstantMembers.size}" +
           " failed_repairs=${failedRepairs.size}"
 }

@@ -162,7 +162,10 @@ impl ArtifactValue {
                 ContentBasedPathHash::new(d.fingerprint().data().raw_digest().as_bytes())
             }
             ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => {
-                ContentBasedPathHash::new(f.digest.data().raw_digest().as_bytes())
+                file_content_based_path_hash(
+                    f.digest.data().raw_digest().as_bytes(),
+                    f.is_executable,
+                )
             }
             ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(s)) => {
                 let mut hasher = Blake3StrongHasher::new();
@@ -182,5 +185,49 @@ impl ArtifactValue {
 impl TracedBuckOutValue for ArtifactValue {
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// The content-based path hash of a file with digest `raw_digest`. Two files with the same bytes
+/// and different executable bits are different values, so they get different paths: a
+/// non-executable file is named by its digest, an executable one by a hash of the digest. A site
+/// that names a possibly executable file's path before its `ArtifactValue` exists, as `write`
+/// does, must use this to agree with the value.
+pub fn file_content_based_path_hash(
+    raw_digest: &[u8],
+    is_executable: bool,
+) -> buck2_error::Result<ContentBasedPathHash> {
+    if !is_executable {
+        return ContentBasedPathHash::new(raw_digest);
+    }
+    let mut hasher = Blake3StrongHasher::new();
+    std::hash::Hasher::write(&mut hasher, b"executable file\0");
+    std::hash::Hasher::write(&mut hasher, raw_digest);
+    ContentBasedPathHash::new(hasher.finalize().as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_common::cas_digest::CasDigestConfig;
+    use buck2_common::file_ops::metadata::FileMetadata;
+    use buck2_common::file_ops::metadata::TrackedFileDigest;
+
+    use super::*;
+
+    #[test]
+    fn executable_bit_changes_only_executable_paths() {
+        let digest = TrackedFileDigest::from_content(b"bytes", CasDigestConfig::testing_default());
+        let path = |is_executable| {
+            ArtifactValue::file(FileMetadata {
+                digest: digest.dupe(),
+                is_executable,
+            })
+            .content_based_path_hash()
+        };
+        assert_eq!(
+            path(false),
+            ContentBasedPathHash::new(digest.raw_digest().as_bytes()).unwrap()
+        );
+        assert_ne!(path(false), path(true));
     }
 }

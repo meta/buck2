@@ -1258,6 +1258,7 @@ impl RunAction {
             cmdline_digest_for_dep_files,
             &prepared_run_action.paths,
             prepared_run_action.worker.as_ref().map(|w| &w.input_paths),
+            self.inner.executor_preference,
         )?;
         let prepare_command = Instant::now() - prepare_start;
 

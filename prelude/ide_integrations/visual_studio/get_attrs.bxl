@@ -155,9 +155,16 @@ def _get_exported_preprocessor_flags(attrs) -> list:
 def _get_srcs(attrs) -> dict:
     """Returns list of source associated with its src property"""
 
-    # take_values as genrule target src properties can be a map of target location to source
-    # location, and this function is defined to always return the source location.
-    raw_srcs = get_unified_value(attrs, "srcs", take_values = True)
+    # A genrule maps output names to sources. A map keyed by sources, such as
+    # source-to-patch, keeps its keys.
+    srcs_attr = attrs.get("srcs")
+    take_values = True
+    if isinstance(srcs_attr, dict):
+        for key in srcs_attr:
+            if not isinstance(key, str):
+                take_values = False
+                break
+    raw_srcs = get_unified_value(attrs, "srcs", take_values = take_values)
 
     srcs = {}
 

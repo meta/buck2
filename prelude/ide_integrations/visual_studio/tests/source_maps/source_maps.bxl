@@ -1,0 +1,33 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load("@prelude//ide_integrations/visual_studio:get_attrs.bxl", "get_attrs")
+
+_PACKAGE = "prelude//ide_integrations/visual_studio/tests/source_maps:"
+
+def _source_paths(ctx, actions, name: str) -> dict[str, typing.Any]:
+    node = ctx.configured_targets(_PACKAGE + name, modifiers = ctx.modifiers)
+    attrs = get_attrs(node, ctx)
+    ctx.output.ensure(actions.write_json(name + ".attrs.json", attrs, has_content_based_path = False))
+    return {src.short_path if isinstance(src, Artifact) else repr(src): obj for src, obj in attrs["srcs"].items()}
+
+def _check(ctx):
+    actions = ctx.bxl_actions().actions
+    source_keyed = _source_paths(ctx, actions, "source_keyed_srcs")
+    expected = {"source_a.c": "source_a.c.o", "source_b.c": "source_b.c.o"}
+    if source_keyed != expected:
+        fail("Source-keyed srcs: expected {}, got {}".format(expected, source_keyed))
+
+    named = _source_paths(ctx, actions, "named_srcs")
+    expected = {"source_a.c": "source_a.c.o"}
+    if named != expected:
+        fail("Named srcs: expected {}, got {}".format(expected, named))
+
+    ctx.output.print("PASS: source-keyed and named srcs serialize with their sources")
+
+check = bxl_main(impl = _check, cli_args = {"log_level": cli_args.int(default = 30)})

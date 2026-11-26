@@ -1,0 +1,27 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load("@prelude//utils:source_listing.bzl", "source_listing")
+load(":source_maps.bzl", "named_srcs", "source_keyed_srcs")
+
+oncall("windows_ide_support")
+
+source_listing()
+
+source_keyed_srcs(
+    name = "source_keyed_srcs",
+    srcs = {
+        "source_a.c": None,
+        "source_b.c": "source_b.patch",
+    },
+)
+
+named_srcs(
+    name = "named_srcs",
+    srcs = {"renamed.c": "source_a.c"},
+)

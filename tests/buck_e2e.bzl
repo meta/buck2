@@ -332,8 +332,8 @@ def buck2_e2e_test(
         Default is False.
     use_e2e_binary:
         Whether tests with the compiled buck2 run the e2e test build (`buck2_e2e`) instead of
-        the production build (`buck2`). The builds currently match; core tests use the e2e
-        build so future test-only behavior has a single place to diverge.
+        the production build (`buck2`). The e2e build sets `--cfg=buck2_test_settings`;
+        core tests use it so future test-only behavior has a single place to diverge.
         Default is False; `buck2_core_tests` sets it for core tests.
     skip_deployed_buck2_version_dep:
         A boolean for whether to skip adding the dependency on tools/buck2-versions:stable when

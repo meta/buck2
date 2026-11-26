@@ -322,7 +322,9 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
   // override the parent enum class's abstract methods (which themselves implement
   // a stripped private interface).
   private fun convertPublicFakeOverridesOfNonPublicMethods(irClass: IrClass) {
-    for (decl in irClass.declarations) {
+    // Snapshot: materialization may remove the declaration from the class (private
+    // implementers), which must not mutate the list under iteration.
+    for (decl in irClass.declarations.toList()) {
       if (decl !is IrSimpleFunction) continue
       if (!decl.isFakeOverride) continue
       if (!decl.visibility.isPublicAPI) continue
@@ -386,6 +388,16 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
     // them would add methods the library jar does not have (and consumers flag the
     // mismatch). Leave the fake, which the backend skips as in the class ABI.
     if (decl.isAnyMethod()) return
+    // An effectively-private implementer (private, local, or nested in a private class)
+    // must never gain a materialized method: kotlinc emits nothing here. Leaving the
+    // fake in place is not enough — its super-implementation was abstracted with the
+    // shell, and the backend emits the orphaned fake. Remove it: the nest keeps the
+    // supertype edge and nothing else (T300416948).
+    val implementer = decl.parent as? IrClass
+    if (implementer != null && isClassEffectivelyPrivate(implementer)) {
+      implementer.declarations.remove(decl)
+      return
+    }
     decl.isFakeOverride = false
     // Keep the FIR modality: forcing FINAL breaks subclasses of open classes.
     decl.origin = IrDeclarationOrigin.DEFINED
@@ -401,7 +413,9 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
       irClass: IrClass,
       signatures: Set<MethodSignature>,
   ) {
-    for (decl in irClass.declarations) {
+    // Snapshot: materialization may remove the declaration from the class (private
+    // implementers), which must not mutate the list under iteration.
+    for (decl in irClass.declarations.toList()) {
       if (decl !is IrSimpleFunction) continue
       if (!decl.isFakeOverride) continue
       if (!decl.visibility.isPublicAPI) continue
@@ -449,6 +463,22 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
       }
       current = outer
     }
+  }
+
+  // True when no consumer can reference this class: it is private or local itself, or nested
+  // in a class that is. Unlike [isClassAbsentFromAbi] this ignores must-keep membership: a
+  // must-keep shell stays in the jar, but its private visibility still hides it (and anything
+  // nested in it) from consumers, so a materialized method on it would be a phantom no
+  // consumer resolves and no comparison sees.
+  private fun isClassEffectivelyPrivate(irClass: IrClass): Boolean {
+    var current: IrClass? = irClass
+    while (current != null) {
+      // Enum entries are transparent: their overrides stay reachable through the enum
+      // type, so they inherit the enum's effective visibility.
+      if (current.kind != ClassKind.ENUM_ENTRY && current.isPrivateOrLocal()) return true
+      current = current.parent as? IrClass
+    }
+    return false
   }
 
   override fun visitField(declaration: IrField): IrStatement {

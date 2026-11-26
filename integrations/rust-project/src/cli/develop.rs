@@ -27,6 +27,7 @@ use crate::buck::to_project_json;
 use crate::path::safe_canonicalize;
 use crate::project_json::ProjectJson;
 use crate::project_json::Sysroot;
+use crate::sysroot::RequestedWorkspaceTargets;
 use crate::sysroot::SysrootConfig;
 use crate::sysroot::resolve_buckconfig_sysroot;
 use crate::sysroot::resolve_rustup_sysroot;
@@ -297,17 +298,24 @@ impl Develop {
         } = self;
 
         info!(kind = "progress", "finding std source code");
-        let sysroot = match &sysroot {
-            SysrootConfig::Sysroot(path) => Sysroot {
-                sysroot: safe_canonicalize(&expand_tilde(path)?),
-                sysroot_src: None,
-                sysroot_project: None,
-            },
+        let (sysroot, project_targets) = match &sysroot {
+            SysrootConfig::Sysroot(path) => {
+                let sysroot = Sysroot {
+                    sysroot: safe_canonicalize(&expand_tilde(path)?),
+                    sysroot_src: None,
+                    sysroot_project: None,
+                };
+                (sysroot, targets)
+            }
             SysrootConfig::BuckConfig => {
                 let project_root = buck.resolve_project_root()?;
-                resolve_buckconfig_sysroot(buck, &project_root, &targets)?
+                let sysroot_src = buck.resolve_sysroot_src()?;
+                let requested = RequestedWorkspaceTargets::new(targets, sysroot_src.as_deref());
+                let sysroot =
+                    resolve_buckconfig_sysroot(buck, &project_root, sysroot_src, &requested)?;
+                (sysroot, requested.project)
             }
-            SysrootConfig::Rustup => resolve_rustup_sysroot()?,
+            SysrootConfig::Rustup => (resolve_rustup_sysroot()?, targets),
         };
 
         let exclude_workspaces =
@@ -328,7 +336,7 @@ impl Develop {
 
         develop_with_sysroot(
             buck,
-            targets,
+            project_targets,
             sysroot,
             exclude_workspaces,
             *check_cycles,

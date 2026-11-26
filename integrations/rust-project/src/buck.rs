@@ -696,6 +696,10 @@ impl Buck {
         targets: &[Target],
         universe_targets: &[Target],
     ) -> anyhow::Result<FxHashMap<Target, AliasedTargetInfo>> {
+        if targets.is_empty() {
+            return Ok(FxHashMap::default());
+        }
+
         let mut alias_map = self.query_aliased_dependencies(targets, universe_targets)?;
 
         info!("resolving aliased targets");

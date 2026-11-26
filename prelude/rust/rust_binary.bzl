@@ -29,7 +29,6 @@ load(
 load("@prelude//cxx:cxx_link_utility.bzl", "executable_shared_lib_arguments")
 load(
     "@prelude//cxx:cxx_toolchain_types.bzl",
-    "PicBehavior",
     "RuntimeDependencyHandling",
 )
 load("@prelude//cxx:cxx_utility.bzl", "cxx_attrs_get_allow_cache_upload")
@@ -62,15 +61,14 @@ load(
 )
 load(
     "@prelude//linking:link_info.bzl",
-    "LibOutputStyle",
     "LinkStrategy",
-    "get_lib_output_style",
     "process_link_strategy_for_pic_behavior",
     "unpack_link_args",
 )
 load(
     "@prelude//linking:linkable_graph.bzl",
     "create_linkable_graph",
+    "get_runtime_shared_libraries",
 )
 load(
     "@prelude//linking:shared_libraries.bzl",
@@ -452,13 +450,7 @@ def _rust_binary_common(
         for graphs in linkable_graphs_tset.traverse():
             all_graphs.extend(graphs)
         linkable_graph = create_linkable_graph(ctx, deps = all_graphs)
-        for linkable_node in linkable_graph.nodes.traverse():
-            if linkable_node.linkable == None:
-                continue
-            preferred_linkage = linkable_node.linkable.preferred_linkage
-            output_style = get_lib_output_style(link_strategy, preferred_linkage, PicBehavior("supported"))
-            if output_style == LibOutputStyle("shared_lib") and not linkable_node.linkable.stub:
-                shlib_deps.append(merge_shared_libraries(ctx.actions, node = linkable_node.linkable.shared_libs))
+        shlib_deps = get_runtime_shared_libraries(ctx.actions, linkable_graph, link_strategy)
 
     shlib_info = merge_shared_libraries(ctx.actions, deps = shlib_deps)
 

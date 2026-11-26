@@ -26,6 +26,7 @@ load(
     "LinkStrategy",
     "LinkerFlags",
     "MergedLinkInfo",
+    "SharedLibLinkable",
     "get_lib_output_style",
     "get_output_styles_for_linkage",
     _get_link_info = "get_link_info",
@@ -33,6 +34,8 @@ load(
 load(
     ":shared_libraries.bzl",
     "SharedLibraries",
+    "SharedLibraryInfo",
+    "merge_shared_libraries",
 )
 
 # A provider with information used to link a rule into a shared library.
@@ -366,6 +369,66 @@ def get_deps_for_link(
         return node.all_deps
     else:
         return node.exported_deps
+
+def _has_shared_link_boundary(node: LinkableNode, output_style: LibOutputStyle) -> bool:
+    if output_style != LibOutputStyle("shared_lib") or node.stub:
+        return False
+    if node.shared_libs.libraries or node.shared_libs.flavored_libraries:
+        return True
+    for linkable in get_link_info(node, output_style).linkables:
+        if isinstance(linkable, SharedLibLinkable):
+            return True
+    return False
+
+def get_runtime_shared_libraries(
+    actions: AnalysisActions,
+    graph: LinkableGraph,
+    link_strategy: LinkStrategy,
+) -> list[SharedLibraryInfo]:
+    """Preserve caller-selected runtime libraries and add their native link dependencies."""
+    nodes = []
+    variants_by_label = {}
+    libraries = []
+    selected = set()
+    for entry in graph.nodes.traverse():
+        if entry.linkable == None:
+            continue
+        node = entry.linkable
+        index = len(nodes)
+        nodes.append(node)
+        # Linkage views of one target share a label but retain distinct graph nodes.
+        variants_by_label.setdefault(entry.label, []).append(index)
+        output_style = get_lib_output_style(link_strategy, node.preferred_linkage, PicBehavior("supported"))
+        if output_style == LibOutputStyle("shared_lib") and not node.stub:
+            libraries.append(merge_shared_libraries(actions, node = node.shared_libs))
+            selected.add(index)
+
+    # Only shared boundaries add link strategies beyond the flat scan.
+    pending = [(index, link_strategy) for index in selected if _has_shared_link_boundary(nodes[index], LibOutputStyle("shared_lib"))]
+    visited = set(pending)
+    for _ in range(len(nodes) * len(LinkStrategy.values())):
+        if not pending:
+            break
+        index, strategy = pending.pop()
+        node = nodes[index]
+        output_style = get_lib_output_style(strategy, node.preferred_linkage, PicBehavior("supported"))
+        if output_style == LibOutputStyle("shared_lib") and not node.stub and index not in selected:
+            libraries.append(merge_shared_libraries(actions, node = node.shared_libs))
+            selected.add(index)
+        if _has_shared_link_boundary(node, output_style):
+            dependency_states = [(dependency, node.default_link_strategy) for dependency in node.all_deps]
+            dependency_states.extend([(dependency, strategy) for dependency in node.exported_deps])
+        else:
+            dependency_states = [(dependency, strategy) for dependency in get_deps_for_link(node, strategy, PicBehavior("supported"))]
+        for dependency, dependency_strategy in dependency_states:
+            for dependency_index in variants_by_label.get(dependency, []):
+                state = (dependency_index, dependency_strategy)
+                if state not in visited:
+                    visited.add(state)
+                    pending.append(state)
+    if pending:
+        fail("Runtime shared-library traversal exceeded the finite link-strategy graph")
+    return libraries
 
 def get_transitive_deps(link_infos: dict[Label, LinkableNode], roots: list[Label]) -> list[Label]:
     """

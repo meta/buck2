@@ -98,6 +98,7 @@ load(
     "LinkableGraph",
     "create_linkable_graph",
     "get_linkable_graph_node_map_func",
+    "get_runtime_shared_libraries",
     "reduce_linkable_graph",
 )
 load(
@@ -1185,14 +1186,7 @@ def _get_shared_library_symlink_deps(
         # Do not create a shared library symlink tree alongside the executable.
         pass
     elif impl_params.runtime_dependency_handling == RuntimeDependencyHandling("symlink"):
-        # Include all transitive runtime shared library deps in a symlink tree.
-        for linkable_node in linkable_graph.nodes.traverse():
-            if linkable_node.linkable == None:
-                continue
-            preferred_linkage = linkable_node.linkable.preferred_linkage
-            output_style = get_lib_output_style(link_strategy, preferred_linkage, PicBehavior("supported"))
-            if output_style == LibOutputStyle("shared_lib") and not linkable_node.linkable.stub:
-                shlib_deps.append(merge_shared_libraries(ctx.actions, node = linkable_node.linkable.shared_libs))
+        shlib_deps = get_runtime_shared_libraries(ctx.actions, linkable_graph, link_strategy)
     elif impl_params.runtime_dependency_handling == RuntimeDependencyHandling("symlink_single_level_only"):
         # Include only first-level (direct) runtime shared library deps in a symlink tree.
         for d in link_deps + impl_params.extra_link_roots:

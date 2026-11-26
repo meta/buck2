@@ -15,7 +15,6 @@ use std::time::SystemTime;
 use async_trait::async_trait;
 use buck2_action_metadata_proto::REMOTE_DEP_FILE_KEY;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::buck2_env;
 use buck2_core::execution_types::executor_config::RePlatformFields;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
@@ -57,15 +56,6 @@ use remote_execution::TTimestamp;
 
 use crate::executors::action_cache_upload_permission_checker::ActionCacheUploadPermissionChecker;
 use crate::executors::to_re_platform::RePlatformFieldsToRePlatform;
-
-// Whether to throw errors when cache uploads fail (primarily for tests).
-fn error_on_cache_upload() -> buck2_error::Result<bool> {
-    buck2_env!(
-        "BUCK2_TEST_ERROR_ON_CACHE_UPLOAD",
-        bool,
-        applicability = testing
-    )
-}
 
 /// A PreparedCommandExecutor that will write to cache after invoking the inner executor
 pub struct CacheUploader {
@@ -565,8 +555,6 @@ impl UploadCache for CacheUploader {
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         action_digest_and_blobs: &ActionDigestAndBlobs,
     ) -> buck2_error::Result<CacheUploadResults> {
-        let error_on_cache_upload = error_on_cache_upload().buck_error_context("cache_upload")?;
-
         // A result RE produced is published already. A local one needs the action's
         // permission, and must be the run the command was configured for: a hybrid executor's
         // fallback or won race would publish, from one build and not the next, what remote
@@ -596,7 +584,7 @@ impl UploadCache for CacheUploader {
                 info,
                 res,
                 action_digest_and_blobs,
-                error_on_cache_upload,
+                false,
                 dep_file_bundle.is_some(),
             )
             .boxed()
@@ -632,7 +620,7 @@ impl UploadCache for CacheUploader {
                             action_result,
                             dep_file_bundle,
                             &remote_dep_file_action,
-                            error_on_cache_upload,
+                            false,
                         )
                         .await?,
                     ),

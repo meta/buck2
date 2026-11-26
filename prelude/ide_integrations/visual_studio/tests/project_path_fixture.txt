@@ -1,0 +1,1 @@
+Shared source fixture for target labels with colliding sanitized names.

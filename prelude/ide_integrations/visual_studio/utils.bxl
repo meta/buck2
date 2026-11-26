@@ -154,7 +154,8 @@ def get_project_file_path(target_label, extension):
     else:
         # config can be unbound (https://buck2.build/docs/rule_authors/configurations/#configurationinfo-platform-analysis-and-more)
         config_hash = "unbound_config"
-    return config_hash + "/" + path + sanitize(target_label.name) + extension
+    project_name = "{}-{}".format(sanitize(target_label.name), sha256(target_label.name)[:32])
+    return config_hash + "/" + path + project_name + extension
 
 def get_mode_config_path(mode_name):
     if mode_name.startswith("//"):

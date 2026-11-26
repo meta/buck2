@@ -1,0 +1,18 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("windows_ide_support")
+
+source_listing()
+
+export_file(name = "caffe2.pb.h", src = "project_path_fixture.txt")
+export_file(name = "caffe2_pb.h", src = "project_path_fixture.txt")
+export_file(name = "caffe2/pb.h", src = "project_path_fixture.txt")
+export_file(name = "Caffe2_pb.h", src = "project_path_fixture.txt")

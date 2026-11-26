@@ -1,0 +1,33 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load("@prelude//ide_integrations/visual_studio:utils.bxl", "get_project_file_path")
+
+def _check(ctx):
+    labels = ["prelude//ide_integrations/visual_studio/tests:" + name for name in ["caffe2.pb.h", "caffe2_pb.h", "caffe2/pb.h", "Caffe2_pb.h"]]
+    nodes = ctx.configured_targets(labels, modifiers = ctx.modifiers)
+    paths = {}
+    outputs = []
+    actions = ctx.bxl_actions().actions
+    for node in nodes:
+        for extension in [".attrs.json", ".vcxproj", ".vcxproj.filters", ".sln"]:
+            path = get_project_file_path(node.label, extension)
+            if path != get_project_file_path(node.label, extension):
+                fail("Project output path is not deterministic for {}".format(node.label))
+            key = path.lower()
+            if key in paths:
+                fail("Project output collision: {} and {} map to {}".format(paths[key], node.label, path))
+            paths[key] = node.label
+            outputs.append(actions.write_json(path, {"label": str(node.label)}, has_content_based_path = False))
+    if len(paths) != 16:
+        fail("Expected all four target labels and all four project extensions")
+    for output in outputs:
+        ctx.output.ensure(output)
+    ctx.output.print("PASS: 4 actual configured labels x 4 extensions; distinct case-insensitive stable project outputs")
+
+check = bxl_main(impl = _check, cli_args = {})

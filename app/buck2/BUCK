@@ -34,7 +34,7 @@ rust_library(
             },
             "extra_check_cfgs": [
                 "cfg(buck2_memfrag)",
-                "cfg(buck2_test_settings)",
+                "cfg(buck2_e2e_test)",
             ],
         },
     },
@@ -98,7 +98,7 @@ rust_library(
     }),
 )
 
-# `buck2-bin` and `buck2_e2e-bin` differ only in the `buck2_test_settings` cfg:
+# `buck2-bin` and `buck2_e2e-bin` differ only in the `buck2_e2e_test` cfg:
 # the libraries are built once and shared by both.
 _BUCK2_BIN_RUSTC_FLAGS = (["--cfg=buck2_memfrag"] if _memfrag else []) + select({
     ":buck2_client_only_setting[build]": ["--cfg=client_only"],
@@ -195,7 +195,7 @@ buck_rust_binary(
     deps = _BUCK2_BIN_DEPS,
 )
 
-# The binary buck2's own end-to-end tests run. It sets `--cfg=buck2_test_settings`
+# The binary buck2's own end-to-end tests run. It sets `--cfg=buck2_e2e_test`
 # so future test-only behavior has a compile-time place to diverge. Never ship it.
 buck_rust_binary(
     name = "buck2_e2e-bin",
@@ -206,7 +206,7 @@ buck_rust_binary(
     crate_root = _BUCK2_BIN_ATTRS["crate_root"],
     env = _BUCK2_BIN_ATTRS["env"],
     # @oss-disable[end= ]: pgo = _BUCK2_BIN_ATTRS["pgo"],
-    rustc_flags = _BUCK2_BIN_RUSTC_FLAGS + ["--cfg=buck2_test_settings"],
+    rustc_flags = _BUCK2_BIN_RUSTC_FLAGS + ["--cfg=buck2_e2e_test"],
     unittests = _BUCK2_BIN_ATTRS["unittests"],
     deps = _BUCK2_BIN_DEPS,
 )

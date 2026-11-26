@@ -18,7 +18,7 @@ pub fn derive_copy_(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let name = &input.ident;
     let generated = quote! {
-        impl #impl_generics ::std::marker::Copy for #name #ty_generics #where_clause {
+        impl #impl_generics ::core::marker::Copy for #name #ty_generics #where_clause {
         }
     };
     generated.into()

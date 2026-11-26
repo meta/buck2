@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use std::iter::Cloned;
+use core::iter::Cloned;
 
 use crate::Dupe;
 
@@ -19,15 +19,15 @@ pub trait IterDupedExt: Sized {
     /// optimisations.
     ///
     /// ```
+    /// # #[cfg(feature = "alloc")] {
     /// use std::rc::Rc;
     ///
     /// use dupe::IterDupedExt;
     /// let inputs = vec![Rc::new("Hello"), Rc::new("World")];
     /// let outputs = inputs.iter().duped().collect::<Vec<_>>();
     /// assert_eq!(inputs, outputs);
+    /// # }
     /// ```
-    /// use gazebo::prelude::*;
-    /// use std::cmp::Ordering;
     fn duped(self) -> Cloned<Self>;
 }
 

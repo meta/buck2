@@ -14,7 +14,7 @@ rust_library(
                 "categories": ["rust-patterns"],
                 "description": "Derive Dupe",
                 "documentation": "https://docs.rs/dupe",
-                "version": "0.9.1",
+                "version": "0.9.2",
             },
         },
     },

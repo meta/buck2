@@ -17,12 +17,14 @@ pub trait OptionDupedExt {
     /// Like `cloned`, but with a `Dupe` constraint.
     ///
     /// ```
+    /// # #[cfg(feature = "alloc")] {
     /// use std::rc::Rc;
     ///
     /// use dupe::OptionDupedExt;
     /// let rc = Rc::new("test");
     /// assert_eq!(Some(&rc).duped(), Some(rc));
     /// assert_eq!(None::<&Rc<String>>.duped(), None);
+    /// # }
     /// ```
     fn duped(self) -> Option<Self::Item>
     where

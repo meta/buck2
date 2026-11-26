@@ -316,6 +316,7 @@ def create_jar_artifact_kotlincd(
             language_version = language_version,
             source_only_abi_applicability_classpath = cmd_args(),
             kosabi_jvm_abi_gen_options = kotlin_toolchain.kosabi_jvm_abi_gen_options + _kosabi_member_order_options(kotlin_toolchain, extra_kotlinc_arguments),
+            source_only_abi_ksp_options = _source_only_abi_ksp_options(kotlin_toolchain, annotation_processor_properties),
         )
 
         # kotlincd does not support source abi
@@ -471,6 +472,7 @@ def _encode_kotlin_extra_params(
     language_version: str,
     source_only_abi_applicability_classpath: cmd_args = cmd_args(),
     kosabi_jvm_abi_gen_options: list[str] = [],
+    source_only_abi_ksp_options: list[str] = [],
 ):
     kosabiPluginOptionsMap = {}
 
@@ -491,6 +493,9 @@ def _encode_kotlin_extra_params(
     # Excluded from main-compile -Xplugin args in KosabiPluginOptions.
     if kotlin_toolchain.rokoko_stubgen_so != None:
         kosabiPluginOptionsMap["rokoko_stubgen_so"] = kotlin_toolchain.rokoko_stubgen_so[DefaultInfo].default_outputs[0]
+
+    # Only a non-empty list is encoded, so an action without such options keeps its key.
+    optional_params = {"sourceOnlyAbiKspOptions": source_only_abi_ksp_options} if source_only_abi_ksp_options else {}
 
     return struct(
         extraClassPaths = bootclasspath_entries,
@@ -518,7 +523,19 @@ def _encode_kotlin_extra_params(
         javaBinary = cmd_args(kotlin_toolchain.java_binary_for_kotlincd[RunInfo], delimiter = " ") if kotlin_toolchain.java_binary_for_kotlincd else "",
         applicabilityClasspath = source_only_abi_applicability_classpath,
         shouldTrackIncrementalInputs = kotlin_toolchain.incremental_input_tracking,
+        **optional_params,
     )
+
+def _source_only_abi_ksp_options(kotlin_toolchain: KotlinToolchainInfo, annotation_processor_properties: AnnotationProcessorProperties) -> list[str]:
+    """The toolchain's source-only ABI KSP options for the processors this target runs."""
+    by_processor = kotlin_toolchain.source_only_abi_ksp_options
+    if not by_processor:
+        return []
+    options = []
+    for annotation_processor in annotation_processor_properties.annotation_processors:
+        for name in annotation_processor.processors:
+            options.extend(by_processor.get(name, []))
+    return options
 
 def _command_builder(
     label: Label,

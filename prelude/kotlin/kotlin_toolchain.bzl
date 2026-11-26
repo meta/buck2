@@ -63,6 +63,9 @@ KotlinToolchainInfo = provider(
         "rokoko_stubgen_so": provider_field(typing.Any, default = None),
         "semanticdb_kotlinc": provider_field(typing.Any, default = None),
         "semanticdb_sourceroot": provider_field(typing.Any, default = None),
+        # KSP processor name (`KSP:<provider class>`) -> `option=value` pairs given to KSP only in the
+        # source-only ABI action of a target that runs that processor. Empty by default.
+        "source_only_abi_ksp_options": provider_field(dict[str, list[str]], default = {}),
         "track_class_usage_plugin": provider_field(typing.Any, default = None),
         "track_files_which_skipped_compilation": provider_field(bool, default = False),
         "typechecker_cli": provider_field(typing.Any, default = None),

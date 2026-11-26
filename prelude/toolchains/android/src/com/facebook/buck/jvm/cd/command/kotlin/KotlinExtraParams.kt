@@ -47,6 +47,7 @@ data class KotlinExtraParams(
     val disableKosabiKeptBodyStubCheck: Boolean = false,
     val shouldTrackIncrementalInputs: Boolean = false,
     val shouldReclaimReadOnlyOutputs: Boolean = false,
+    val sourceOnlyAbiKspOptions: ImmutableList<String> = ImmutableList.of(),
 ) : CompileToJarStepFactory.ExtraParams {
 
   val shouldActionRunIncrementally: Boolean = shouldKotlincRunIncrementally

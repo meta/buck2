@@ -7,13 +7,14 @@
  * of this source tree. You may select, at your option, one of the
  * above-listed licenses.
  */
-
+//! Client to Manifold blob storage.
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use allocative::Allocative;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_http::HttpClient;
 use buck2_http::HttpClientBuilder;
@@ -27,11 +28,15 @@ use dupe::Dupe;
 use futures::stream::BoxStream;
 use futures::stream::StreamExt;
 use hyper::Response;
+use serde::Deserialize;
+use serde::Serialize;
 use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::sync::OnceCell;
 
 use crate::chunk_reader::ChunkReader;
+use crate::legacy_configs::configs::LegacyBuckConfig;
+use crate::legacy_configs::key::BuckconfigKeyRef;
 
 #[derive(Copy, Clone, Dupe)]
 pub struct Ttl {
@@ -175,13 +180,68 @@ impl Bucket {
     }
 }
 
-fn manifold_explorer_url(bucket: &Bucket, filename: String) -> String {
-    let full_path = format!("{}/{}", bucket.name, filename);
-    format!("https://www.internalfb.com/manifold/explorer/{full_path}")
+/// Configuration for accessing a Manifold-like API for logs and other bucket-using features.
+#[derive(Allocative, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BucketsConfig {
+    /// Base URL for the uploads API. If not set, the uploads API is not used.
+    pub upload_url: String,
+    /// URL at which one can view a file `:bucketname/:filename` in a Web browser.
+    pub file_view_url: String,
+    /// Command that, when invoked, will retrieve a file from the given bucket,
+    /// for interactive use.
+    pub file_get_command: Option<String>,
 }
 
-/// Return the scheme+host manifold endpoint to upload to manifold, or None to not upload at all.
-fn upload_endpoint_url(use_vpnless: bool) -> Option<&'static str> {
+impl BucketsConfig {
+    pub fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Option<BucketsConfig>> {
+        let upload_url = config.parse(BuckconfigKeyRef {
+            section: "buckets",
+            property: "upload_url",
+        })?;
+
+        let file_view_url: Option<String> = config.parse(BuckconfigKeyRef {
+            section: "buckets",
+            property: "file_view_url",
+        })?;
+
+        let file_get_command = config.parse(BuckconfigKeyRef {
+            section: "buckets",
+            property: "file_get_command",
+        })?;
+
+        if upload_url.is_none() != file_view_url.is_none() {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Only one of buckets.upload_url and buckets.file_view_url is set"
+            ));
+        }
+
+        if let Some(upload_url) = upload_url
+            && let Some(file_view_url) = file_view_url
+        {
+            Ok(Some(BucketsConfig {
+                file_view_url,
+                upload_url,
+                file_get_command,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Infers an appropriate configuration at Meta.
+    fn infer_config(supports_vpnless: bool) -> Option<BucketsConfig> {
+        let upload_url = internal_upload_url(supports_vpnless)?;
+
+        Some(BucketsConfig {
+            upload_url: upload_url.to_owned(),
+            file_view_url: "https://interncache-all.fbcdn.net/manifold".to_owned(),
+            file_get_command: Some("manifold get".to_owned()),
+        })
+    }
+}
+
+fn internal_upload_url(use_vpnless: bool) -> Option<&'static str> {
     #[cfg(fbcode_build)]
     if hostcaps::is_prod() {
         Some("https://manifold.facebook.net")
@@ -197,29 +257,40 @@ fn upload_endpoint_url(use_vpnless: bool) -> Option<&'static str> {
     }
 }
 
+async fn build_http_client() -> buck2_error::Result<HttpClient> {
+    #[cfg(fbcode_build)]
+    let mut builder = HttpClientBuilder::internal().await?;
+    #[cfg(not(fbcode_build))]
+    let mut builder = HttpClientBuilder::oss().await?;
+
+    Ok(builder.with_absolute_dns_names().build())
+}
+
 pub struct ManifoldClient {
     client: HttpClient,
-    manifold_url: Option<String>,
+    config: Option<BucketsConfig>,
 }
 
 impl ManifoldClient {
-    pub async fn new() -> buck2_error::Result<Self> {
-        let client = HttpClientBuilder::internal()
-            .await?
-            .with_absolute_dns_names()
-            .build();
-        Ok(Self::from_client(&client))
+    pub async fn new_with_config(config: Option<BucketsConfig>) -> buck2_error::Result<Self> {
+        let client = build_http_client().await?;
+        Ok(Self::from_client(&client, config))
     }
 
     /// Shares a caller-provided client so uploads reuse its pooled connections
     /// instead of building a client per upload.
-    pub fn from_client(client: &HttpClient) -> Self {
-        let manifold_url = upload_endpoint_url(client.supports_vpnless()).map(|s| s.to_owned());
+    pub fn from_client(client: &HttpClient, config: Option<BucketsConfig>) -> Self {
+        let config = config.or_else(|| BucketsConfig::infer_config(client.supports_vpnless()));
 
         Self {
             client: client.dupe(),
-            manifold_url,
+            config,
         }
+    }
+
+    /// Whether the Manifold client has an endpoint and can upload.
+    pub fn will_upload(&self) -> bool {
+        self.config.is_some()
     }
 
     pub async fn write(
@@ -229,13 +300,14 @@ impl ManifoldClient {
         buf: bytes::Bytes,
         ttl: Ttl,
     ) -> buck2_error::Result<()> {
-        let manifold_url = match &self.manifold_url {
-            None => return Ok(()),
-            Some(x) => x,
+        let Some(ref config) = self.config else {
+            return Ok(());
         };
+        let manifold_url = &config.upload_url;
+
         let url = format!(
-            "{}/v0/write/{}?bucketName={}&apiKey={}&timeoutMsec=20000",
-            manifold_url, manifold_bucket_path, bucket.name, bucket.key
+            "{manifold_url}/v0/write/{manifold_bucket_path}?bucketName={}&apiKey={}&timeoutMsec=20000",
+            bucket.name, bucket.key
         );
 
         let mut headers = vec![(
@@ -273,13 +345,14 @@ impl ManifoldClient {
         buf: bytes::Bytes,
         offset: u64,
     ) -> buck2_error::Result<()> {
-        let manifold_url = match &self.manifold_url {
-            None => return Ok(()),
-            Some(x) => x,
+        let Some(ref config) = self.config else {
+            return Ok(());
         };
+        let manifold_url = &config.upload_url;
+
         let url = format!(
-            "{}/v0/append/{}?bucketName={}&apiKey={}&timeoutMsec=20000&writeOffset={}",
-            manifold_url, manifold_bucket_path, bucket.name, bucket.key, offset
+            "{manifold_url}/v0/append/{manifold_bucket_path}?bucketName={}&apiKey={}&timeoutMsec=20000&writeOffset={offset}",
+            bucket.name, bucket.key
         );
 
         let res = http_retry(
@@ -348,7 +421,27 @@ impl ManifoldClient {
         self.read_and_upload(bucket, &filename, ttl, &mut file)
             .await?;
 
-        Ok(manifold_explorer_url(&bucket, filename))
+        Ok(self.file_view_url(&bucket, &filename).unwrap_or_default())
+    }
+
+    /// Gets the URL for viewing an individual file.
+    pub fn file_view_url(&self, bucket: &Bucket, filename: &str) -> Option<String> {
+        self.config
+            .as_ref()
+            .map(|config| format!("{}/{}/{}", config.file_view_url, bucket.name, filename))
+    }
+
+    /// Gets the command for getting an individual file, for interactive use.
+    pub fn file_dump_command(&self, bucket: &Bucket, filename: &str) -> Option<String> {
+        // FIXME(jadel): This does overlap LogDownloadMethod::Curl, I am not
+        // sure what to do about that.
+        if let Some(ref config) = self.config
+            && let Some(ref command) = config.file_get_command
+        {
+            Some(format!("{} {}/{}", command, bucket.name, filename))
+        } else {
+            None
+        }
     }
 }
 
@@ -368,17 +461,17 @@ impl SharedManifoldClient {
     /// The command's shared client, building it on first use.
     pub async fn http_client(&self) -> buck2_error::Result<HttpClient> {
         self.cell
-            .get_or_try_init(|| async {
-                HttpClientBuilder::internal()
-                    .await
-                    .map(|mut builder| builder.with_absolute_dns_names().build())
-            })
+            .get_or_try_init(build_http_client)
             .await
             .map(|client| client.dupe())
     }
 
     pub async fn manifold_client(&self) -> buck2_error::Result<ManifoldClient> {
-        Ok(ManifoldClient::from_client(&self.http_client().await?))
+        // FIXME(jadel): thread configuration through
+        Ok(ManifoldClient::from_client(
+            &self.http_client().await?,
+            None,
+        ))
     }
 }
 

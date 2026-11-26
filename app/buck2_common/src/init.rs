@@ -35,6 +35,7 @@ use crate::daemon_routing::DaemonRouting;
 use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::dice::CONFIGS_INVISIBLE_TO_DICE;
 use crate::legacy_configs::key::BuckconfigKeyRef;
+use crate::manifold::BucketsConfig;
 
 /// Helper enum to categorize the kind of timeout we get from the startup config.
 #[derive(Clone, Debug)]
@@ -523,6 +524,7 @@ pub struct DaemonStartupOptions {
     pub http: HttpConfig,
     pub resource_control: ResourceControlConfig,
     pub log_download_method: LogDownloadMethod,
+    pub buckets_config: Option<BucketsConfig>,
     pub macos_qos_class: Option<MacosQosClass>,
     pub daemon_idle_timeout_s: Option<u64>,
     /// Pagable DICE storage settings, or `None` when paging is disabled.
@@ -626,6 +628,7 @@ impl DaemonStartupConfig {
                 &settings.resource_control,
                 config,
             )?,
+            buckets_config: BucketsConfig::from_config(config)?,
             log_download_method,
             macos_qos_class: {
                 if buck2_env!("BUCK2_DISABLE_MACOS_QOS", bool)? {
@@ -689,6 +692,8 @@ impl DaemonStartupConfig {
             } else {
                 LogDownloadMethod::None
             },
+            // TODO(jadel): is this a regression in test vs before?
+            buckets_config: None,
             macos_qos_class: None,
             daemon_idle_timeout_s: None,
             hydration: None,

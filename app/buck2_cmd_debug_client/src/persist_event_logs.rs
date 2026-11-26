@@ -16,6 +16,7 @@ use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_common::chunk_reader::ChunkReader;
 use buck2_common::manifold;
+use buck2_common::manifold::BucketsConfig;
 use buck2_common::manifold::ManifoldChunkedUploader;
 use buck2_common::manifold::ManifoldClient;
 use buck2_core::soft_error_or_panic;
@@ -77,8 +78,10 @@ impl PersistEventLogsCommand {
         events_ctx.log_invocation_record = false;
         let sink = create_scribe_sink(&ctx)?;
         let trace_id = self.trace_id.clone();
+        let buckets_config = ctx.buckets_config()?;
+
         ctx.with_runtime(|_ctx| async move {
-            let (local_result, remote_result) = self.read_and_upload().await;
+            let (local_result, remote_result) = self.read_and_upload(buckets_config).await;
 
             let (local_error_messages, local_error_category, local_success) =
                 status_from_result(local_result);
@@ -99,7 +102,10 @@ impl PersistEventLogsCommand {
         ExitResult::success()
     }
 
-    async fn read_and_upload(self) -> (buck2_error::Result<()>, buck2_error::Result<()>) {
+    async fn read_and_upload(
+        self,
+        buckets_config: Option<BucketsConfig>,
+    ) -> (buck2_error::Result<()>, buck2_error::Result<()>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let (file, watched) = match open_log_file(&self.local_path).await {
             Ok(files) => files,
@@ -114,7 +120,7 @@ impl PersistEventLogsCommand {
             }
         };
         let watch = watch_task(&self.local_path, watched, tx);
-        let upload = upload_task(file, rx, self.manifold_name);
+        let upload = upload_task(file, rx, buckets_config, self.manifold_name);
 
         // Wait for both tasks to finish.
         tokio::join!(watch, upload)
@@ -166,9 +172,15 @@ async fn open_log_file(local_path: &str) -> Result<(File, File), buck2_error::Er
 async fn upload_task(
     file: File,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
+    buckets_config: Option<BucketsConfig>,
     manifold_name: String,
 ) -> buck2_error::Result<()> {
-    let manifold_client = ManifoldClient::new().await?;
+    let manifold_client = ManifoldClient::new_with_config(buckets_config).await?;
+    // No need to do more work if we don't have an endpoint configured (default
+    // in OSS)
+    if !manifold_client.will_upload() {
+        return Ok(());
+    }
     let manifold_path = format!("flat/{manifold_name}");
     let mut uploader = Uploader::new(file, &manifold_path, &manifold_client)?;
 

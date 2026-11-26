@@ -210,7 +210,8 @@ async fn with_timeout<R>(
 }
 
 async fn write_to_manifold(buf: &[u8], name: &str) -> Option<String> {
-    let manifold = ManifoldClient::new().await.ok()?;
+    // FIXME(jadel): thread configuration through
+    let manifold = ManifoldClient::new_with_config(None).await.ok()?;
 
     let filename = format!("flat/{}_{}_logs", uuid::Uuid::new_v4(), name);
     let ttl = Ttl::from_days(14); // 14 days should be plenty of time to take action
@@ -223,12 +224,7 @@ async fn write_to_manifold(buf: &[u8], name: &str) -> Option<String> {
         .await
         .ok()?;
 
-    let url = format!(
-        "https://interncache-all.fbcdn.net/manifold/{}/{}",
-        bucket.name, filename
-    );
-
-    Some(url)
+    manifold.file_view_url(&bucket, &filename)
 }
 
 async fn cmd_logs_to_manifold(cmd: &str, args: Vec<&str>) -> Option<String> {

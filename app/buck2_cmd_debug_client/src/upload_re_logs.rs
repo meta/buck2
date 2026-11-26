@@ -33,12 +33,12 @@ impl BuckSubcommand for UploadReLogsCommand {
     async fn exec_impl(
         self,
         _matches: BuckArgMatches<'_>,
-        _ctx: ClientCommandContext<'_>,
+        ctx: ClientCommandContext<'_>,
         events_ctx: &mut buck2_client_ctx::events_ctx::EventsCtx,
     ) -> ExitResult {
         buck2_core::facebook_only();
         events_ctx.log_invocation_record = false;
-        let manifold = ManifoldClient::new().await?;
+        let manifold = ManifoldClient::new_with_config(ctx.buckets_config()?).await?;
         upload_re_logs(
             &manifold,
             Bucket::RE_LOGS,

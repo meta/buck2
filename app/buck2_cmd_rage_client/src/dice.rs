@@ -53,7 +53,11 @@ pub async fn upload_dice_dump(
         )
         .await?;
 
-    Ok(manifold_leads(&manifold_bucket, manifold_filename))
+    Ok(manifold_leads(
+        manifold,
+        &manifold_bucket,
+        manifold_filename,
+    ))
 }
 
 struct DiceDump {

@@ -83,9 +83,7 @@ fn update_events_ctx<T: StreamingCommand>(
             let mut buckconfig = ctx.immediate_config.root_config()?;
             settings.invocation.health_check.enabled(&mut buckconfig)
         })
-        .unwrap_or(false)
-        // Force-enable health checks when the test override is set.
-        || std::env::var_os("BUCK2_TEST_SLOW_BUILD_CHECK").is_some();
+        .unwrap_or(false);
 
     let (
         health_check_tags_receiver,

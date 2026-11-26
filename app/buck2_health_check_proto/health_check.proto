@@ -28,7 +28,6 @@ message HealthCheckContextEvent {
     string branched_from_revision = 3;
     bool has_excess_cache_misses = 4;
     buck.data.SystemInfo experiment_configurations = 5;
-    uint64 test_slow_build_threshold_secs = 6;
   }
 }
 

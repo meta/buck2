@@ -82,10 +82,6 @@ pub struct HealthCheckContext {
 
     /// Configurations for health check experiments.
     pub experiment_configurations: Option<buck2_data::SystemInfo>,
-
-    /// Test override for slow build threshold (seconds). When set, bypasses
-    /// the normal p99 Scuba lookup and uses this value instead.
-    pub test_slow_build_threshold_secs: Option<u64>,
 }
 
 /// A subset of the Snapshot data specifically for health check use.
@@ -115,7 +111,4 @@ pub enum HealthCheckContextEvent {
     HasExcessCacheMisses(),
     /// Configuration about the health checks.
     ExperimentConfigurations(buck2_data::SystemInfo),
-    /// Test override for slow build threshold (in seconds).
-    /// Set via BUCK2_TEST_SLOW_BUILD_CHECK env var on the client.
-    TestSlowBuildThreshold(u64),
 }

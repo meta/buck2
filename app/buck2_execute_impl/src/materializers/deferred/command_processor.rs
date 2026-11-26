@@ -16,7 +16,6 @@ use std::task::Poll;
 
 use buck2_common::cancellation::CancellationScope;
 use buck2_common::liveliness_observer::LivelinessObserverSync;
-use buck2_core::buck2_env;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::soft_error_or_panic;
@@ -1043,18 +1042,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     rematerialization_method,
                     ..
                 } => {
-                    // NOTE: This is for testing performance when hitting mismatches with disk
-                    // state. Unwrapping isn't ideal, but we can't report errors here.
-                    let force_mismatch = buck2_env!(
-                        "BUCK2_TEST_FORCE_DECLARE_MISMATCH",
-                        bool,
-                        applicability = testing
-                    )
-                    .unwrap();
-
                     if path_iter.next().is_none()
                         && artifact_metadata_matches_entry(metadata, value.entry())
-                        && !force_mismatch
                     {
                         // In this case, the entry declared matches the already materialized
                         // entry on disk, so just update the deps field but leave

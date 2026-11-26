@@ -23,6 +23,14 @@ use crate::buck2_env;
 
 pub mod log_file;
 
+#[cfg(not(fbcode_build))]
+pub mod otel;
+
+#[cfg(fbcode_build)]
+mod otel_stub;
+#[cfg(fbcode_build)]
+pub use otel_stub as otel;
+
 pub trait LogConfigurationReloadHandle: Send + Sync + 'static {
     fn update_log_filter(&self, format: &str) -> buck2_error::Result<()>;
 }

@@ -44,6 +44,10 @@ for token in sys.argv[1:]:
 if os.environ.get("FAKE_JSON_STDERR") == "1":
     sys.stderr.write('{"rendered":"boom","level":"error"}\\n')
     sys.stderr.flush()
+if "FAKE_STDERR_FILE" in os.environ:
+    with open(os.environ["FAKE_STDERR_FILE"], "rb") as handle:
+        sys.stderr.buffer.write(handle.read())
+    sys.stderr.flush()
 with open(os.environ["FAKE_RECORD"], "w", encoding="utf-8") as handle:
     json.dump(record, handle)
 sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
@@ -193,6 +197,48 @@ class WrapperTest(unittest.TestCase):
         )
         self.assertEqual(code, 3)
         self.assertIn('{"rendered":"boom","level":"error"}', stderr)
+
+    def test_stderr_that_is_not_a_diagnostic_passes_through(self):
+        # rustc forwards what a proc macro prints with eprintln! as is. Some of
+        # those lines parse as JSON without being a diagnostic object, and some
+        # are not UTF-8; all of them must be passed through.
+        stderr_file = os.path.join(self.tmp.name, "stderr.txt")
+        lines = [
+            b'["pub", "fn"]',
+            b'"quoted"',
+            b"42",
+            b"null",
+            b"true",
+            b"caf\xe9",
+            b"plain text",
+        ]
+        with open(stderr_file, "wb") as handle:
+            handle.write(b"\n".join(lines) + b"\n")
+            handle.write(b'{"rendered":"error: boom\\n","level":"error"}\n')
+        diag_json = os.path.join(self.tmp.name, "diag.json")
+        cmd = [
+            sys.executable,
+            SCRIPT,
+            f"--env=FAKE_RECORD={self.record_path}",
+            f"--env=FAKE_STDERR_FILE={stderr_file}",
+            f"--diag-json={diag_json}",
+            sys.executable,
+            self.driver,
+            "--rustc-action-separator",
+            "--program-args",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, cwd=self.tmp.name)
+        self.assertNotIn(b"Traceback", proc.stderr)
+        for line in lines:
+            self.assertIn(line + b"\n", proc.stderr)
+        self.assertIn(b"error: boom", proc.stderr)
+        with open(diag_json, encoding="utf-8") as handle:
+            self.assertEqual(
+                [json.loads(diag)["rendered"] for diag in handle],
+                ["error: boom\n"],
+            )
+        # The error diagnostic makes the action fail.
+        self.assertEqual(proc.returncode, 1)
 
     def test_echo_shows_boundary_and_raw_tail(self):
         out_path = os.path.join(self.tmp.name, "echo.txt")

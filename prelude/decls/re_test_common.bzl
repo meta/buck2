@@ -20,6 +20,7 @@ def _opts_for_tests_arg() -> Attr:
     #     "remote_enabled": bool | None
     #     "use_case": str | None
     #     "remote_cache_enabled": bool | None
+    #     "allow_cache_uploads": bool | None
     #     "dependencies": list<Dict<str, str>> | []
     #     "gang_workers": list<Dict<str, str>> | []
     #     "gang": Dict<str, str | int | Dict<str, str>> | None

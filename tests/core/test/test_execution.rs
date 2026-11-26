@@ -12,6 +12,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::filter_events;
 use buck2_e2e::utils::random_string;
 use buck2_e2e::utils::read_what_ran;
 use serde_json::Value;
@@ -215,6 +216,94 @@ async fn test_local_test_execution_not_cached(buck: &Buck) -> anyhow::Result<()>
         second_test_runs[0]["reproducer"]["executor"], "Local",
         "Expected test to run locally, not be cached!"
     );
+    Ok(())
+}
+
+/// Runs `//:cacheable_test` locally, with a remote cache that allows uploads, and returns the
+/// cache uploads of its test run: the upload of its listing is left out.
+async fn cache_uploads_of_local_test_run(
+    buck: &Buck,
+    extra_args: &[&str],
+) -> anyhow::Result<Vec<Value>> {
+    let seed = format!("test.seed={}", random_string());
+    let mut args = extra_args.to_vec();
+    args.extend([
+        "-c",
+        "test.local_enabled=true",
+        "-c",
+        "test.remote_enabled=false",
+        "-c",
+        "test.remote_cache_enabled=true",
+        "-c",
+        "test.allow_cache_uploads=true",
+        "-c",
+        &seed,
+        "//:cacheable_test",
+    ]);
+    buck.test(&args).await?;
+    let test_runs = test_runs(buck, &[]).await?;
+    assert_eq!(test_runs.len(), 1, "Expected one test.run entry");
+    assert_eq!(test_runs[0]["reproducer"]["executor"], "Local");
+    let digest = test_runs[0]
+        .pointer("/reproducer/details/digest")
+        .unwrap_or_else(|| panic!("No digest in {}", test_runs[0]))
+        .clone();
+    Ok(
+        filter_events(buck, &["Event", "data", "SpanEnd", "data", "CacheUpload"])
+            .await?
+            .into_iter()
+            .filter(|upload| upload["action_digest"] == digest)
+            .collect(),
+    )
+}
+
+// `BUCK2_TEST_SKIP_ACTION_CACHE_WRITE` makes the action result write succeed without writing it,
+// as for the listing upload in `test_listing.rs`. Only Linux cuts a local run off the network.
+#[buck_test(
+    env = [("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")],
+    meta_only = "remote cache",
+    skip_for_os = ["darwin", "windows"]
+)]
+async fn test_passing_local_test_execution_uploaded_when_asked(buck: &Buck) -> anyhow::Result<()> {
+    let uploads = cache_uploads_of_local_test_run(
+        buck,
+        &[
+            "--setting",
+            "test.upload_passing_local_results=true",
+            "-c",
+            "test.network_access=loopback",
+        ],
+    )
+    .await?;
+    assert_eq!(uploads.len(), 1, "Expected one upload of the test run");
+    assert!(uploads[0]["success"].as_bool().unwrap_or_default());
+    Ok(())
+}
+
+#[buck_test(
+    env = [("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")],
+    meta_only = "remote cache"
+)]
+async fn test_local_test_execution_not_uploaded_by_default(buck: &Buck) -> anyhow::Result<()> {
+    let uploads =
+        cache_uploads_of_local_test_run(buck, &["-c", "test.network_access=loopback"]).await?;
+    assert_eq!(uploads.len(), 0, "Expected no upload of the test run");
+    Ok(())
+}
+
+#[buck_test(
+    env = [("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")],
+    meta_only = "remote cache"
+)]
+async fn test_local_test_execution_not_uploaded_without_network_isolation(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    let uploads = cache_uploads_of_local_test_run(
+        buck,
+        &["--setting", "test.upload_passing_local_results=true"],
+    )
+    .await?;
+    assert_eq!(uploads.len(), 0, "Expected no upload of the test run");
     Ok(())
 }
 

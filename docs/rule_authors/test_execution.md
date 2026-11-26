@@ -123,6 +123,132 @@ used and results in execution on RE, it'll happen on RE unconditionally.
 Therefore, it's a good idea to set those fields if RE-only executor overrides
 are provided.
 
+### Caching test results
+
+A rule that sets `supports_test_execution_caching = True` in its
+`ExternalRunnerTestInfo` lets Buck2 serve a test's result from the remote action
+cache instead of running the test again. Before it runs such a test, Buck2 looks
+the test's action up in the action cache, if the test's executor has the remote
+cache enabled, and a result it finds stands in for the run: `buck2 log what-ran`
+shows the test as `cache`. `--no-remote-cache` turns the lookup off.
+
+Buck2 only reads these results. What gets into the cache is the result of a test
+that ran on RE, which RE stores itself; a test that runs locally is not stored.
+With a remote cache and no RE, a cacheable test therefore pays one action cache
+lookup on every run and still runs every time.
+
+In the prelude, the test rules that expose `supports_test_execution_caching`,
+such as `cxx_test`, `rust_test`, `python_test`, `go_test`, `java_test` and
+`sh_test`, default it to `True`. Whether a lookup happens depends on the test's
+executor:
+
+- a test without a `remote_execution` profile, neither its own nor a default one
+  from the remote test execution toolchain, or with
+  `remote_execution = "disabled"`, runs on a local executor with the remote
+  cache disabled, so it is never looked up;
+- a test with a `remote_execution` profile uses the remote cache if the profile
+  sets `remote_cache_enabled = True`. A profile that does not say uses it
+  <OssOnly>when it runs tests on RE (`remote_enabled`, the default)</OssOnly>
+  <FbInternalOnly>always</FbInternalOnly>.
+
+The action of a test includes its command line. A test that does not set
+`use_project_relative_paths = True` gets absolute paths there, so its result is
+only found again by checkouts at the same path.
+
+#### Uploading the results of local runs
+
+The `test.upload_passing_local_results` setting, off by default, makes Buck2
+upload the result of a test that ran locally, so that later runs anywhere that
+read the same cache can use it:
+
+```sh
+buck2 test --setting test.upload_passing_local_results=true //my:test
+```
+
+It can also be set in `.bucksettings.toml`. Buck2 uploads the result of a local
+run only when all of these hold:
+
+- the test supports test execution caching, and its executor reads the remote
+  cache and allows cache uploads (`allow_cache_uploads`, which a
+  `remote_execution` profile of the prelude's test rules can set), as the
+  uploads of build actions need. An executor that allows them also uploads the
+  test listings it runs locally, if the test runner marks them cacheable,
+  whatever the setting;
+- the test passed: a test that failed, timed out, was cancelled or could not be
+  run is never uploaded, so it runs again next time;
+- the test ran without network access: its executor restricts `network_access`
+  (`none`, `loopback`, `strict` or `private`), which on Linux runs the test in a
+  network namespace of its own. Other platforms do not isolate local commands,
+  so they never upload;
+- the run was not a repeat of the same test, as a stress run makes, and the test
+  does not use local resources.
+
+If the upload fails, Buck2 logs it and the test keeps its result.
+
+A cached pass is reused until the test's action changes. Network isolation keeps
+a pass that needed the network out of the cache, but a local test still sees the
+machine's files, the environment variables it inherits from Buck2 and the time
+of day, none of which its action records; only enable the setting for tests
+whose pass holds on other machines.
+
+For the prelude's test rules, a default profile on the remote test execution
+toolchain sets this up for every test that has no `remote_execution` of its own.
+`network_access` is an attribute of each test. A project made with `buck2 init`
+gets `toolchains//:remote_test_execution` from `system_demo_toolchains()`,
+without profiles; define it yourself instead, together with the other
+toolchains the tests need (an `sh_test` needs `test` and `python_bootstrap`):
+
+```python
+# toolchains/BUCK
+load("@prelude//tests:test_toolchain.bzl", "noop_test_toolchain")
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
+load("@prelude//toolchains:remote_test_execution.bzl", "remote_test_execution_toolchain")
+
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    visibility = ["PUBLIC"],
+)
+
+noop_test_toolchain(
+    name = "test",
+    visibility = ["PUBLIC"],
+)
+
+remote_test_execution_toolchain(
+    name = "remote_test_execution",
+    default_profile = "local_with_cache",
+    profiles = {
+        "local_with_cache": {
+            "allow_cache_uploads": True,
+            "capabilities": {},
+            "local_enabled": True,
+            "remote_cache_enabled": True,
+            "remote_enabled": False,
+            "use_case": "buck2-default",
+        },
+    },
+    visibility = ["PUBLIC"],
+)
+```
+
+```python
+# BUCK
+sh_test(
+    name = "test",
+    test = "test.sh",
+    network_access = "loopback",
+)
+```
+
+```ini
+# .buckconfig
+[buck2_re_client]
+  action_cache_address = grpc://127.0.0.1:9092
+  cas_address = grpc://127.0.0.1:9092
+  engine_address = grpc://127.0.0.1:9092
+  tls = false
+```
+
 ## Verbatim arguments and handles
 
 As noted above, the test runner only interacts with a subset of arguments

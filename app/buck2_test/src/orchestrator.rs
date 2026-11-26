@@ -112,6 +112,7 @@ use buck2_execute::execute::environment_inheritance::EnvironmentInheritance;
 use buck2_execute::execute::kind::CommandExecutionKind;
 use buck2_execute::execute::manager::CommandExecutionManager;
 use buck2_execute::execute::prepared::NoOpCommandOptionalExecutor;
+use buck2_execute::execute::prepared::PreparedAction;
 use buck2_execute::execute::prepared::PreparedCommand;
 use buck2_execute::execute::request::ActionMetadataBlob;
 use buck2_execute::execute::request::CommandExecutionInput;
@@ -680,6 +681,12 @@ impl<'a> BuckTestOrchestrator<'a> {
         let test_info = Self::get_test_info(dice, &test_target, internal_runner_config).await?;
         let effective_test_execution_caching =
             test_info.supports_test_execution_caching() && !disable_test_execution_caching;
+        let upload_passing_local_results = effective_test_execution_caching
+            && dice
+                .per_transaction_data()
+                .get_invocation_buck_settings()
+                .test
+                .upload_passing_local_results();
         let disable_local_network_isolation =
             Self::disable_local_network_isolation(stage.as_ref(), &test_info)?;
         let test_executor = Self::get_test_executor(
@@ -690,6 +697,7 @@ impl<'a> BuckTestOrchestrator<'a> {
             fs,
             &stage,
             effective_test_execution_caching,
+            upload_passing_local_results,
         )
         .await?;
         let test_executable_expanded = Self::expand_test_executable(
@@ -790,6 +798,7 @@ impl<'a> BuckTestOrchestrator<'a> {
             liveliness_observer.dupe(),
             test_executor.re_cache_enabled(),
             effective_test_execution_caching,
+            upload_passing_local_results,
             waiting_data,
         )
         .boxed()
@@ -1178,6 +1187,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
             fs,
             &stage,
             false,
+            false,
         )
         .await?;
         let test_executable_expanded = Self::expand_test_executable(
@@ -1366,6 +1376,7 @@ impl BuckTestOrchestrator<'_> {
         liveliness_observer: Arc<dyn LivelinessObserver>,
         re_cache_enabled: bool,
         supports_test_execution_caching: bool,
+        upload_passing_local_results: bool,
         waiting_data: WaitingData,
     ) -> Result<ExecuteData, ExecuteError> {
         let events = dice.per_transaction_data().get_dispatcher().dupe();
@@ -1465,7 +1476,10 @@ impl BuckTestOrchestrator<'_> {
                 result
             }
             TestStage::Testing {
-                suite, testcases, ..
+                suite,
+                testcases,
+                repeat_count,
+                ..
             } => {
                 let test_suite = Some(TestSuite {
                     suite_name: suite.clone(),
@@ -1475,24 +1489,26 @@ impl BuckTestOrchestrator<'_> {
                 let start = TestRunStart {
                     suite: test_suite.clone(),
                 };
-                events
+                let (result, cached) = events
                     .span_async(start, async move {
-                        let result = if supports_test_execution_caching {
+                        let (result, cached) = if supports_test_execution_caching {
                             match executor
                                 .action_cache(manager, &prepared_command, cancellation)
                                 .await
                             {
                                 ControlFlow::Continue(manager) => {
-                                    executor
+                                    let result = executor
                                         .exec_cmd(manager, &prepared_command, cancellation)
-                                        .await
+                                        .await;
+                                    (result, false)
                                 }
-                                ControlFlow::Break(result) => result,
+                                ControlFlow::Break(result) => (result, true),
                             }
                         } else {
-                            executor
+                            let result = executor
                                 .exec_cmd(manager, &prepared_command, cancellation)
-                                .await
+                                .await;
+                            (result, false)
                         };
                         let end = TestRunEnd {
                             suite: test_suite,
@@ -1507,9 +1523,47 @@ impl BuckTestOrchestrator<'_> {
                             )
                             .ok(),
                         };
-                        (result, end)
+                        ((result, cached), end)
                     })
-                    .await
+                    .await;
+                // Only a passing local run is written, as `RunAction` only uploads successful
+                // results: a failed, timed out, cancelled or errored test must run again, not be
+                // served from the cache, and remote execution publishes its own results. The run
+                // must have been cut off from the network, as a pass that depended on it would not
+                // hold elsewhere. Nor is a repeated run, which a stress run makes, a run whose
+                // executor does not read the cache, or a run that held local resources, whose
+                // state the action digest does not cover.
+                if upload_passing_local_results
+                    && re_cache_enabled
+                    && repeat_count.is_none()
+                    && !cached
+                    && result.was_success()
+                    && result.was_locally_executed()
+                    && had_local_network_isolation(&request, &prepared_action)
+                    && request.required_local_resources().is_empty()
+                {
+                    let info = CacheUploadInfo {
+                        target: &test_target as _,
+                        digest_config,
+                        mergebase: &None,
+                        re_platform: executor.re_platform(),
+                        allow_cache_upload: true,
+                    };
+                    let _result = match executor
+                        .cache_upload(
+                            &info,
+                            &result,
+                            None,
+                            None,
+                            &prepared_action.action_and_blobs,
+                        )
+                        .await
+                    {
+                        Ok(result) => result,
+                        Err(e) => return Err(ExecuteError::Error(e)),
+                    };
+                }
+                result
             }
         };
         let command_execution = Some(
@@ -1662,6 +1716,7 @@ impl BuckTestOrchestrator<'_> {
         executor_config: &CommandExecutorConfig,
         stage: &TestStage,
         supports_test_execution_caching: bool,
+        upload_passing_local_results: bool,
     ) -> buck2_error::Result<CommandExecutor> {
         let CommandExecutorResponse {
             executor,
@@ -1677,8 +1732,13 @@ impl BuckTestOrchestrator<'_> {
             TestStage::Listing { .. } => (cache_uploader, action_cache_checker),
             TestStage::Testing { .. } => {
                 (
-                    // We never upload local test executions
-                    Arc::new(NoOpCacheUploader {}) as _,
+                    // Local test executions are only uploaded when
+                    // `test.upload_passing_local_results` asks for it, see `execute_request`.
+                    if upload_passing_local_results {
+                        cache_uploader
+                    } else {
+                        Arc::new(NoOpCacheUploader {}) as _
+                    },
                     if supports_test_execution_caching {
                         action_cache_checker
                     } else {
@@ -1777,6 +1837,7 @@ impl BuckTestOrchestrator<'_> {
         fs: &ArtifactFs,
         stage: &TestStage,
         supports_test_execution_caching: bool,
+        upload_passing_local_results: bool,
     ) -> buck2_error::Result<TestExecutor> {
         // NOTE: get_providers() implicitly calls this already but it's not the end of the world
         // since this will get cached in DICE.
@@ -1854,6 +1915,7 @@ impl BuckTestOrchestrator<'_> {
             &executor_config,
             stage,
             supports_test_execution_caching,
+            upload_passing_local_results,
         )
         .buck_error_context("Error constructing CommandExecutor")?;
 
@@ -3001,6 +3063,22 @@ impl TestExecutor {
     }
 }
 
+/// Whether a local run of `request` was cut off from the network. On Linux the forkserver runs a
+/// command whose network access is restricted in a network namespace of its own, and the command
+/// fails if the namespace cannot be created. Other platforms do not isolate local commands, and a
+/// persistent worker is not started for the request it serves.
+fn had_local_network_isolation(
+    request: &CommandExecutionRequest,
+    prepared_action: &PreparedAction,
+) -> bool {
+    cfg!(target_os = "linux")
+        && !request.disable_local_network_isolation()
+        && request.worker().is_none()
+        && prepared_action
+            .network_access
+            .is_some_and(|network_access| network_access != buck2_data::NetworkAccess::All)
+}
+
 /// The exit code reported for a failed execution. Runners read exit code 0 as a pass, and an
 /// executor can fail with exit code 0 (a worker that exits 0 before connecting), so a failure
 /// always reports a non-zero code.
@@ -3013,6 +3091,9 @@ fn failure_exit_code(exit_code: Option<i32>) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
     use buck2_build_api::context::SetBuildContextData;
     use buck2_common::dice::cells::SetCellResolver;
     use buck2_common::dice::data::SetIsolationDir;
@@ -3023,13 +3104,23 @@ mod tests {
     use buck2_core::cells::CellResolver;
     use buck2_core::cells::name::CellName;
     use buck2_core::configuration::data::ConfigurationData;
+    use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
     use buck2_core::fs::buck_out_path::BuckOutPathResolver;
     use buck2_core::fs::project::ProjectRootTemp;
     use buck2_data::local_command::EnvironmentRule;
     use buck2_execute::digest_config::SetDigestConfig;
+    use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
+    use buck2_execute::execute::cache_uploader::CacheUploadOutcome;
+    use buck2_execute::execute::cache_uploader::CacheUploadResults;
+    use buck2_execute::execute::cache_uploader::DepFileCacheUploadOutcome;
+    use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
+    use buck2_execute::execute::cache_uploader::UploadCache;
+    use buck2_execute::execute::kind::RemoteCommandExecutionDetails;
+    use buck2_execute::execute::kind::RemoteExecutionOrigin;
     use buck2_execute::execute::manager::CommandExecutionManagerExt;
     use buck2_execute::execute::output::CommandStdStreams;
     use buck2_execute::execute::prepared::PreparedCommandExecutor;
+    use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
     use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
     use buck2_test_api::data::TestStage;
     use buck2_test_api::data::TestStatus;
@@ -3040,6 +3131,7 @@ mod tests {
     use futures::channel::mpsc::UnboundedReceiver;
     use futures::future;
     use futures::stream::TryStreamExt;
+    use remote_execution::TActionResult2;
 
     use super::*;
 
@@ -3204,6 +3296,7 @@ mod tests {
                 NoopLivelinessObserver::create(),
                 false,
                 false,
+                false,
                 WaitingData::new(),
             ),
         )
@@ -3215,6 +3308,473 @@ mod tests {
             )
         })?;
         assert_eq!(ExecutionStatus::Finished { exitcode: 1 }, data.status);
+        Ok(())
+    }
+
+    fn local_execution_kind(command: &PreparedCommand<'_, '_>) -> CommandExecutionKind {
+        CommandExecutionKind::Local {
+            digest: command.prepared_action.digest(),
+            command: vec![],
+            env: BuckFixedSortedMap::new(),
+            working_directory: Default::default(),
+            environment_rule: EnvironmentRule::Unspecified,
+        }
+    }
+
+    /// An executor that runs a test locally, and the test passes.
+    struct PassingTest;
+
+    #[async_trait]
+    impl PreparedCommandExecutor for PassingTest {
+        async fn exec_cmd(
+            &self,
+            command: &PreparedCommand<'_, '_>,
+            manager: CommandExecutionManager,
+            _cancellations: &CancellationContext,
+        ) -> CommandExecutionResult {
+            manager.claim().await.success(
+                local_execution_kind(command),
+                Default::default(),
+                CommandStdStreams::Local {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                },
+                CommandExecutionMetadata::empty(TimeSpan::empty_now()),
+            )
+        }
+
+        fn is_local_execution_possible(&self, _executor_preference: ExecutorPreference) -> bool {
+            true
+        }
+    }
+
+    /// An executor that runs a test locally, and the test hits its timeout.
+    struct TimedOutTest;
+
+    #[async_trait]
+    impl PreparedCommandExecutor for TimedOutTest {
+        async fn exec_cmd(
+            &self,
+            command: &PreparedCommand<'_, '_>,
+            manager: CommandExecutionManager,
+            _cancellations: &CancellationContext,
+        ) -> CommandExecutionResult {
+            manager.claim().await.timeout(
+                local_execution_kind(command),
+                Default::default(),
+                Duration::from_secs(1),
+                CommandStdStreams::Local {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                },
+                CommandExecutionMetadata::empty(TimeSpan::empty_now()),
+                None,
+            )
+        }
+
+        fn is_local_execution_possible(&self, _executor_preference: ExecutorPreference) -> bool {
+            true
+        }
+    }
+
+    /// A cache uploader that counts the results it is asked to upload.
+    #[derive(Default)]
+    struct RecordingUploader {
+        uploads: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl UploadCache for RecordingUploader {
+        async fn upload(
+            &self,
+            _info: &CacheUploadInfo<'_>,
+            _execution_result: &CommandExecutionResult,
+            _re_result: Option<&mut TActionResult2>,
+            _dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
+            _action_digest_and_blobs: &ActionDigestAndBlobs,
+        ) -> buck2_error::Result<CacheUploadResults> {
+            self.uploads.fetch_add(1, Ordering::SeqCst);
+            Ok(CacheUploadResults {
+                cache_upload_outcome: CacheUploadOutcome::Success,
+                dep_file_cache_upload_outcome: DepFileCacheUploadOutcome::NoDepFileBundle,
+                dep_file_cache_upload_key: None,
+            })
+        }
+    }
+
+    /// An executor whose test fails to run for reasons of its own, as an infra failure does.
+    struct ErroredTest;
+
+    #[async_trait]
+    impl PreparedCommandExecutor for ErroredTest {
+        async fn exec_cmd(
+            &self,
+            _command: &PreparedCommand<'_, '_>,
+            manager: CommandExecutionManager,
+            _cancellations: &CancellationContext,
+        ) -> CommandExecutionResult {
+            manager.error(
+                "test",
+                buck2_error::buck2_error!(buck2_error::ErrorTag::Tier0, "infra failure"),
+            )
+        }
+
+        fn is_local_execution_possible(&self, _executor_preference: ExecutorPreference) -> bool {
+            true
+        }
+    }
+
+    /// An executor whose test is cancelled.
+    struct CancelledTest;
+
+    #[async_trait]
+    impl PreparedCommandExecutor for CancelledTest {
+        async fn exec_cmd(
+            &self,
+            command: &PreparedCommand<'_, '_>,
+            manager: CommandExecutionManager,
+            _cancellations: &CancellationContext,
+        ) -> CommandExecutionResult {
+            manager.cancel(
+                local_execution_kind(command),
+                CommandCancellationReason::NotSpecified,
+                CommandExecutionMetadata::empty(TimeSpan::empty_now()),
+            )
+        }
+
+        fn is_local_execution_possible(&self, _executor_preference: ExecutorPreference) -> bool {
+            true
+        }
+    }
+
+    /// An executor that runs a test on remote execution, and the test passes.
+    struct RemoteTest;
+
+    #[async_trait]
+    impl PreparedCommandExecutor for RemoteTest {
+        async fn exec_cmd(
+            &self,
+            command: &PreparedCommand<'_, '_>,
+            manager: CommandExecutionManager,
+            _cancellations: &CancellationContext,
+        ) -> CommandExecutionResult {
+            let kind = CommandExecutionKind::Remote {
+                details: RemoteCommandExecutionDetails::new(
+                    command.prepared_action.digest(),
+                    None,
+                    None,
+                    RemoteExecutorUseCase::buck2_default(),
+                    &remote_execution::Platform { properties: vec![] },
+                    false,
+                ),
+                queue_time: Duration::ZERO,
+                materialized_inputs_for_failed: None,
+                materialized_outputs_for_failed_actions: None,
+                origin: RemoteExecutionOrigin::Executed,
+                re_worker: None,
+            };
+            manager.claim().await.success(
+                kind,
+                Default::default(),
+                CommandStdStreams::Local {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                },
+                CommandExecutionMetadata::empty(TimeSpan::empty_now()),
+            )
+        }
+
+        fn is_local_execution_possible(&self, _executor_preference: ExecutorPreference) -> bool {
+            false
+        }
+    }
+
+    /// An action cache that holds a passing result for every command.
+    struct CacheHoldingPass;
+
+    #[async_trait]
+    impl PreparedCommandOptionalExecutor for CacheHoldingPass {
+        async fn maybe_execute(
+            &self,
+            command: &PreparedCommand<'_, '_>,
+            manager: CommandExecutionManager,
+            _cancellations: &CancellationContext,
+        ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+            ControlFlow::Break(manager.claim().await.success(
+                local_execution_kind(command),
+                Default::default(),
+                CommandStdStreams::Local {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                },
+                CommandExecutionMetadata::empty(TimeSpan::empty_now()),
+            ))
+        }
+    }
+
+    /// How the testing stage is run in `uploads_of_testing_stage`.
+    struct TestingStageRun {
+        upload_passing_local_results: bool,
+        re_cache_enabled: bool,
+        cache_holds_pass: bool,
+        repeat_count: Option<usize>,
+        required_local_resources: Vec<LocalResourceState>,
+        network_access: Option<buck2_data::NetworkAccess>,
+    }
+
+    impl TestingStageRun {
+        /// A single run, on an executor that reads the remote cache, which does not hold the
+        /// result, of a test that holds no local resources and may only reach loopback, with
+        /// uploads asked for.
+        fn asked() -> Self {
+            Self {
+                upload_passing_local_results: true,
+                re_cache_enabled: true,
+                cache_holds_pass: false,
+                repeat_count: None,
+                required_local_resources: vec![],
+                network_access: Some(buck2_data::NetworkAccess::Loopback),
+            }
+        }
+    }
+
+    /// Uploads of a passing run that `TestingStageRun::asked` describes: only Linux isolates the
+    /// network of a local run.
+    const UPLOADS_OF_ASKED_PASS: usize = if cfg!(target_os = "linux") { 1 } else { 0 };
+
+    /// What `execute_request` reported.
+    #[derive(Debug, PartialEq)]
+    enum Reported {
+        Status(ExecutionStatus),
+        Cancelled,
+        Error,
+    }
+
+    const PASSED: Reported = Reported::Status(ExecutionStatus::Finished { exitcode: 0 });
+    const FAILED: Reported = Reported::Status(ExecutionStatus::Finished { exitcode: 1 });
+
+    /// Runs the testing stage of a test that supports test execution caching and returns what
+    /// it reported and how many results were uploaded.
+    async fn uploads_of_testing_stage(
+        test: Arc<dyn PreparedCommandExecutor>,
+        run: TestingStageRun,
+    ) -> buck2_error::Result<(Reported, usize)> {
+        let temp = ProjectRootTemp::new().unwrap();
+        let digest_config = DigestConfig::testing_default();
+        let mut data = UserComputationData::new();
+        data.data.set(EventDispatcher::null());
+        let dice = DiceBuilder::new()
+            .set_data(|d| {
+                d.set_testing_io_provider(&temp);
+                d.set_digest_config(digest_config);
+            })
+            .build(data)
+            .await
+            .unwrap()
+            .commit()
+            .await;
+
+        let fs = ArtifactFs::new(
+            CellResolver::testing_with_name_and_path(
+                CellName::testing_new("cell"),
+                CellRootPathBuf::new(ProjectRelativePathBuf::unchecked_new("cell".to_owned())),
+            ),
+            BuckOutPathResolver::new(ProjectRelativePathBuf::unchecked_new("buck_out/v2".into())),
+            temp.path().dupe(),
+        );
+        let uploader = Arc::new(RecordingUploader::default());
+        let action_cache: Arc<dyn PreparedCommandOptionalExecutor> = if run.cache_holds_pass {
+            Arc::new(CacheHoldingPass)
+        } else {
+            Arc::new(NoOpCommandOptionalExecutor {})
+        };
+        let executor = CommandExecutor::new(
+            test,
+            action_cache,
+            Arc::new(NoOpCommandOptionalExecutor {}),
+            uploader.dupe(),
+            None,
+            fs.dupe(),
+            CommandGenerationOptions {
+                path_separator: PathSeparatorKind::system_default(),
+                output_paths_behavior: Default::default(),
+                use_bazel_protocol_remote_persistent_workers: false,
+                network_access: None,
+            },
+            remote_execution::Platform { properties: vec![] },
+        );
+        let paths = CommandExecutionPaths::new(
+            vec![],
+            BuckMutInsertionSet::default(),
+            &fs,
+            digest_config,
+            None,
+        )?;
+        let request = CommandExecutionRequest::new(
+            vec![],
+            vec!["true".to_owned()],
+            paths,
+            BuckFixedSortedMap::new(),
+        )
+        .with_required_local_resources(run.required_local_resources)?
+        .with_network_access(run.network_access);
+        let label = ConfiguredProvidersLabel::new(
+            ConfiguredTargetLabel::testing_parse("cell//pkg:foo", ConfigurationData::testing_new()),
+            Default::default(),
+        );
+        let stage = TestStage::Testing {
+            suite: "foo".to_owned(),
+            testcases: vec![],
+            variant: None,
+            repeat_count: run.repeat_count,
+        };
+
+        let mut ctx = dice.ctx();
+        let result = buck2_events::dispatch::with_dispatcher_async(
+            EventDispatcher::null(),
+            BuckTestOrchestrator::execute_request(
+                &mut ctx,
+                CancellationContext::testing(),
+                &label,
+                &stage,
+                &executor,
+                request,
+                NoopLivelinessObserver::create(),
+                run.re_cache_enabled,
+                true,
+                run.upload_passing_local_results,
+                WaitingData::new(),
+            ),
+        )
+        .await;
+        let reported = match result {
+            Ok(data) => Reported::Status(data.status),
+            Err(ExecuteError::Cancelled(_)) => Reported::Cancelled,
+            Err(ExecuteError::Error(_)) => Reported::Error,
+        };
+        Ok((reported, uploader.uploads.load(Ordering::SeqCst)))
+    }
+
+    #[tokio::test]
+    async fn passing_local_test_result_is_uploaded() -> buck2_error::Result<()> {
+        let uploads = uploads_of_testing_stage(Arc::new(PassingTest), TestingStageRun::asked());
+        assert_eq!((PASSED, UPLOADS_OF_ASKED_PASS), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_test_result_without_network_isolation_is_not_uploaded() -> buck2_error::Result<()>
+    {
+        for network_access in [None, Some(buck2_data::NetworkAccess::All)] {
+            let run = TestingStageRun {
+                network_access,
+                ..TestingStageRun::asked()
+            };
+            let uploads = uploads_of_testing_stage(Arc::new(PassingTest), run);
+            assert_eq!((PASSED, 0), uploads.await?);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_test_result_is_not_uploaded_unless_asked() -> buck2_error::Result<()> {
+        let run = TestingStageRun {
+            upload_passing_local_results: false,
+            ..TestingStageRun::asked()
+        };
+        let uploads = uploads_of_testing_stage(Arc::new(PassingTest), run);
+        assert_eq!((PASSED, 0), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_local_test_result_is_not_uploaded() -> buck2_error::Result<()> {
+        let uploads =
+            uploads_of_testing_stage(Arc::new(FailureWithExitCodeZero), TestingStageRun::asked());
+        assert_eq!((FAILED, 0), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn timed_out_local_test_result_is_not_uploaded() -> buck2_error::Result<()> {
+        let uploads = uploads_of_testing_stage(Arc::new(TimedOutTest), TestingStageRun::asked());
+        let timed_out = Reported::Status(ExecutionStatus::TimedOut {
+            duration: Duration::from_secs(1),
+        });
+        assert_eq!((timed_out, 0), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn errored_local_test_result_is_not_uploaded() -> buck2_error::Result<()> {
+        let uploads = uploads_of_testing_stage(Arc::new(ErroredTest), TestingStageRun::asked());
+        assert_eq!((FAILED, 0), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_local_test_result_is_not_uploaded() -> buck2_error::Result<()> {
+        let uploads = uploads_of_testing_stage(Arc::new(CancelledTest), TestingStageRun::asked());
+        assert_eq!((Reported::Cancelled, 0), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remote_test_result_is_not_uploaded() -> buck2_error::Result<()> {
+        let uploads = uploads_of_testing_stage(Arc::new(RemoteTest), TestingStageRun::asked());
+        assert_eq!((PASSED, 0), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_result_served_from_cache_is_not_uploaded() -> buck2_error::Result<()> {
+        let run = TestingStageRun {
+            cache_holds_pass: true,
+            ..TestingStageRun::asked()
+        };
+        let uploads = uploads_of_testing_stage(Arc::new(PassingTest), run);
+        assert_eq!((PASSED, 0), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repeated_local_test_result_is_not_uploaded() -> buck2_error::Result<()> {
+        let run = TestingStageRun {
+            repeat_count: Some(1),
+            ..TestingStageRun::asked()
+        };
+        let uploads = uploads_of_testing_stage(Arc::new(PassingTest), run);
+        assert_eq!((PASSED, 0), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_test_result_is_not_uploaded_without_remote_cache() -> buck2_error::Result<()> {
+        let run = TestingStageRun {
+            re_cache_enabled: false,
+            ..TestingStageRun::asked()
+        };
+        let uploads = uploads_of_testing_stage(Arc::new(PassingTest), run);
+        assert_eq!((PASSED, 0), uploads.await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_test_result_with_local_resources_is_not_uploaded() -> buck2_error::Result<()> {
+        let resource = LocalResourceState::new(
+            ConfiguredTargetLabel::testing_parse(
+                "cell//pkg:resource",
+                ConfigurationData::testing_new(),
+            ),
+            None,
+            vec![],
+        );
+        let run = TestingStageRun {
+            required_local_resources: vec![resource],
+            ..TestingStageRun::asked()
+        };
+        let uploads = uploads_of_testing_stage(Arc::new(PassingTest), run);
+        assert_eq!((PASSED, 0), uploads.await?);
         Ok(())
     }
 

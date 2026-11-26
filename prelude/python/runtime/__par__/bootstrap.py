@@ -41,6 +41,9 @@ def run_as_main(
     When `main_function_hooks` is set, the hooks are called in sequence after the
     main module has been imported, just before the main function is invoked. This
     parameter has no effect if `main_function` is `None`.
+
+    When `main_function` is set, its return value becomes the process's exit
+    status, as `sys.exit` interprets it.
     """
 
     # Allow users to decorate the main module. In normal Python invocations this
@@ -87,9 +90,12 @@ def run_as_main(
     for hook in main_function_hooks:
         hook()
 
+    # Like a `console_scripts` entry point, the main function's return value is
+    # the exit status: `None` is success, an int is the code, and anything else
+    # is printed to stderr with status 1.
     if iscoroutinefunction(main):
         import asyncio
 
-        asyncio.run(main())
+        sys.exit(asyncio.run(main()))
     else:
-        main()
+        sys.exit(main())

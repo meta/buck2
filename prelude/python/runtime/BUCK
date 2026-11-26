@@ -2,10 +2,40 @@ load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("plf_experience")
 
+prelude = native
+
 source_listing()
 
 filegroup(
     name = "bootstrap_files",
     srcs = glob(["__par__/**/*.py"]),
     visibility = ["PUBLIC"],
+)
+
+prelude.python_library(
+    name = "exit_status_lib",
+    srcs = ["tests/exit_status.py"],
+    base_module = "",
+)
+
+prelude.python_binary(
+    name = "exit_status",
+    main_function = "tests.exit_status.main",
+    deps = [":exit_status_lib"],
+)
+
+prelude.python_binary(
+    name = "async_exit_status",
+    main_function = "tests.exit_status.async_main",
+    deps = [":exit_status_lib"],
+)
+
+prelude.python_test(
+    name = "bootstrap_test",
+    srcs = ["tests/bootstrap_test.py"],
+    base_module = "",
+    env = {
+        "ASYNC_EXIT_STATUS_BIN": "$(exe_target :async_exit_status)",
+        "EXIT_STATUS_BIN": "$(exe_target :exit_status)",
+    },
 )

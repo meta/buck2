@@ -23,6 +23,7 @@ load(
     "system_java_lib",
     "system_java_tool",
     "system_prebuilt_jar_bootstrap_toolchain",
+    "system_prebuilt_jar_toolchain",
 )
 load("@prelude//toolchains:kotlin.bzl", "kotlincd_toolchain", "system_kotlin_bootstrap_toolchain")
 load("@prelude//toolchains:ocaml.bzl", "system_ocaml_toolchain")
@@ -203,8 +204,7 @@ def system_demo_toolchains():
         visibility = ["PUBLIC"],
     )
 
-    # TODO(ianc) Make this not a bootstrap toolchain
-    system_prebuilt_jar_bootstrap_toolchain(
+    system_prebuilt_jar_toolchain(
         name = "prebuilt_jar",
         java = ":java_tool",
         visibility = ["PUBLIC"],
@@ -212,6 +212,7 @@ def system_demo_toolchains():
 
     system_prebuilt_jar_bootstrap_toolchain(
         name = "prebuilt_jar_bootstrap",
+        generate_snapshot = True,
         java = ":java_tool",
         visibility = ["PUBLIC"],
     )

@@ -10,6 +10,7 @@ load("@prelude//:paths.bzl", "paths")
 load(
     "@prelude//java:java_toolchain.bzl",
     "AbiGenerationMode",
+    "DepFiles",
     "JavaPlatformInfo",
     "JavaTestToolchainInfo",
     "JavaToolchainInfo",
@@ -17,6 +18,20 @@ load(
     "PrebuiltJarToolchainInfo",
 )
 load("@prelude//tests:test_listing.bzl", "TestListingInfo")
+
+_CP_SNAPSHOT_GENERATOR = "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/buildtools/snapshot:cp_snapshot_generator"
+_JAVACD_WORKER = "prelude//toolchains/android/src/com/facebook/buck/jvm/java/stepsbuilder/javacd/worker:javacd_grpc_worker_tool"
+_CLASS_ABI_GENERATOR = "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi:api-stubber"
+
+def _read_bool(section, key, default):
+    v = read_root_config(section, key, None)
+    if v == None:
+        return default
+    return v.lower() in ("true", "1", "yes", "on")
+
+def use_persistent_workers():
+    """`[build] use_persistent_workers`, on by default as in Meta's toolchains."""
+    return _read_bool("build", "use_persistent_workers", True)
 
 def _system_java_tool_impl(ctx):
     return [
@@ -58,25 +73,43 @@ system_java_lib = rule(
     },
 )
 
-def system_prebuilt_jar_bootstrap_toolchain(name, java, visibility = None):
+def system_prebuilt_jar_bootstrap_toolchain(name, java, generate_snapshot = False, visibility = None):
+    """Bootstrap prebuilt_jar toolchain. `generate_snapshot` adds Kotlin classpath snapshots, which
+    Kotlin incremental compilation needs for every classpath entry (the toolchain's own jars too)."""
     kwargs = {}
+    if generate_snapshot:
+        kwargs["cp_snapshot_generator"] = _CP_SNAPSHOT_GENERATOR
 
     _prebuilt_jar_toolchain_rule(name = name, java = java, visibility = visibility, **kwargs)
+
+def system_prebuilt_jar_toolchain(name, java, visibility = None):
+    """prebuilt_jar toolchain for app code: ABI jars and Kotlin classpath snapshots of prebuilts."""
+    _prebuilt_jar_toolchain_rule(
+        name = name,
+        java = java,
+        class_abi_generator = _CLASS_ABI_GENERATOR,
+        cp_snapshot_generator = _CP_SNAPSHOT_GENERATOR,
+        is_bootstrap_toolchain = False,
+        visibility = visibility,
+    )
 
 def _prebuilt_jar_toolchain_rule_impl(ctx):
     return [
         DefaultInfo(),
         PrebuiltJarToolchainInfo(
-            class_abi_generator = None,
-            cp_snapshot_generator = None,
+            class_abi_generator = ctx.attrs.class_abi_generator,
+            cp_snapshot_generator = ctx.attrs.cp_snapshot_generator,
             global_code_config = {},
-            is_bootstrap_toolchain = True,
+            is_bootstrap_toolchain = ctx.attrs.is_bootstrap_toolchain,
             java = ctx.attrs.java,
         ),
     ]
 
 _prebuilt_jar_toolchain_rule = rule(
     attrs = {
+        "class_abi_generator": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+        "cp_snapshot_generator": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+        "is_bootstrap_toolchain": attrs.bool(default = True),
         # this just goes into the RunInfo of the result, so it's target, not exec
         "java": attrs.dep(providers = [RunInfo]),
     },
@@ -101,6 +134,12 @@ def javacd_toolchain(name, java, javac, jar, jlink, jmod, jrt_fs_jar, java_for_t
         javacd = "prelude//toolchains/android/src/com/facebook/buck/jvm/java/stepsbuilder/javacd/main:javacd_tool",
         javac_protocol = "javacd",
         javacd_main_class = "com.facebook.buck.jvm.java.stepsbuilder.javacd.main.JavaCDMain",
+        # Incremental-build optimisations, on by default as in Meta's production toolchain.
+        # Each one has a buckconfig kill switch with the same key Meta uses.
+        cp_snapshot_generator = _CP_SNAPSHOT_GENERATOR,
+        dep_files = read_root_config("java", "javacd_dep_files", "per_class"),
+        javacd_worker = _JAVACD_WORKER if use_persistent_workers() else None,
+        track_class_usage = _read_bool("java", "track_class_usage", True),
         jlink = jlink,
         jmod = jmod,
         jrt_fs_jar = jrt_fs_jar,
@@ -130,8 +169,8 @@ def _java_toolchain_impl(ctx):
             compile_and_package = ctx.attrs.compile_and_package,
             class_abi_generator = ctx.attrs.class_abi_generator,
             class_loader_bootstrapper = ctx.attrs.class_loader_bootstrapper,
-            cp_snapshot_generator = None,
-            dep_files = None,
+            cp_snapshot_generator = ctx.attrs.cp_snapshot_generator,
+            dep_files = DepFiles(ctx.attrs.dep_files),
             fat_jar_main_class_lib = ctx.attrs.fat_jar_main_class_lib,
             compiler_class_to_source_map = ctx.attrs.compiler_class_to_source_map,
             gen_class_to_source_map = ctx.attrs.gen_class_to_source_map,
@@ -148,13 +187,14 @@ def _java_toolchain_impl(ctx):
             javacd_jvm_args = [],
             javacd_jvm_args_target = [],
             javacd_main_class = ctx.attrs.javacd_main_class,
+            javacd_worker = ctx.attrs.javacd_worker,
             jar_builder = RunInfo(cmd_args([ctx.attrs.java[RunInfo], "-jar", ctx.attrs.jar_builder])),
             jlink = ctx.attrs.jlink,
             jmod = ctx.attrs.jmod,
             jrt_fs_jar = ctx.attrs.jrt_fs_jar,
             src_root_elements = [],
             src_root_prefixes = [],
-            track_class_usage = False,
+            track_class_usage = ctx.attrs.track_class_usage,
             zip_scrubber = RunInfo(cmd_args([ctx.attrs.java[RunInfo], "-jar", ctx.attrs.zip_scrubber])),
             nullsafe = None,
             nullsafe_extra_args = [],
@@ -183,6 +223,8 @@ _java_toolchain = rule(
             default = "prelude//java/tools:compiler_class_to_source_map",
             providers = [RunInfo],
         ),
+        "cp_snapshot_generator": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+        "dep_files": attrs.enum(["none", "per_class", "per_jar"], default = "none"),
         "fat_jar": attrs.exec_dep(
             default = "prelude//java/tools:fat_jar",
             providers = [RunInfo],
@@ -207,6 +249,7 @@ _java_toolchain = rule(
         "javac_protocol": attrs.enum(JavacProtocol.values()),
         "javacd": attrs.option(attrs.source(), default = None),
         "javacd_main_class": attrs.option(attrs.string(), default = None),
+        "javacd_worker": attrs.option(attrs.dep(), default = None),
         "jlink": attrs.exec_dep(providers = [RunInfo]),
         "jmod": attrs.exec_dep(providers = [RunInfo]),
         "jrt_fs_jar": attrs.source(),
@@ -216,6 +259,7 @@ _java_toolchain = rule(
         ),
         "source_level": attrs.string(default = "8"),
         "target_level": attrs.string(default = "8"),
+        "track_class_usage": attrs.bool(default = False),
         "zip_scrubber": attrs.source(default = "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip_scrubber"),
     },
 )

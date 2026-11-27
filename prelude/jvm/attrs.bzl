@@ -186,7 +186,9 @@ def _required_for_source_only_abi():
 def _incremental():
     return {
         "incremental": attrs.bool(
-            default = False,
+            # `[kotlin] incremental_by_default = true` turns it on for every target that does not
+            # set it (Meta's macros set it per target; open-source builds have no such macro).
+            default = read_root_config("kotlin", "incremental_by_default", "false").lower() == "true",
             doc = """
                 Enables Kotlin incremental compilation.
             """,

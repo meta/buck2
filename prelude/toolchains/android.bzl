@@ -7,6 +7,8 @@
 # above-listed licenses.
 
 load("@prelude//android:android_toolchain.bzl", "AidlToolchainInfo", "AndroidPlatformInfo", "AndroidToolchainInfo")
+load("@prelude//java:java_providers.bzl", "ClasspathSnapshotGranularity", "generate_java_classpath_snapshot")
+load("@prelude//java:java_toolchain.bzl", "JavaToolchainInfo")
 load("@prelude//target_stats:target_stats_tools.bzl", "TargetStatsToolsInfo")
 load("@prelude//tests:test_listing.bzl", "TestListingInfo")
 
@@ -162,19 +164,32 @@ def system_android_toolchain(name, android_sdk_tools_target, jdk_system_image, *
     kwargs["package_strings_as_assets"] = "prelude//toolchains/android/src/com/facebook/buck/android/resources/strings:package_strings_as_assets_binary"
     kwargs["proguard_config"] = "{}[proguard_config]".format(android_sdk_tools_target)
     kwargs["proguard_jar"] = "{}[proguard.jar]".format(android_sdk_tools_target)
-    kwargs["r_dot_java_weight_factor"] = 8
+    kwargs["r_dot_java_weight_factor"] = int(read_root_config("android", "r_dot_java_weight_factor", "8"))
     # @oss-disable[end= ]: kwargs["redex_native_class_names"] = "prelude//android/tools/meta_only:redex_native_class_names"
     kwargs["replace_application_id_placeholders"] = (
         "prelude//toolchains/android/src/com/facebook/buck/android/manifest:replace_application_id_placeholders_binary"
     )
     kwargs["secondary_dex_compression_command"] = "prelude//toolchains/android/src/com/facebook/buck/android/dex:secondary_dex_compression_binary"
-    kwargs["secondary_dex_weight_limit"] = 1024
+    # Bytes of estimated dex weight per secondary dex. Meta's toolchain uses 12 MiB; the old
+    # 1024 made every few classes their own dex (plus one canary class compile each).
+    kwargs["secondary_dex_weight_limit"] = int(read_root_config("android", "secondary_dex_weight_limit", str(12 * 1024 * 1024)))
     kwargs["unpack_aar"] = "prelude//android/tools:unpack_aar"
     kwargs["zipalign"] = "{}[zipalign]".format(android_sdk_tools_target)
 
     system_android_toolchain_rule(name = name, **kwargs)
 
 def system_android_toolchain_rule_impl(ctx):
+    # Kotlin incremental compilation needs a classpath snapshot of android.jar too.
+    bootclasspath_snapshots = [
+        generate_java_classpath_snapshot(
+            ctx.actions,
+            ctx.attrs._java_toolchain[JavaToolchainInfo].cp_snapshot_generator,
+            ClasspathSnapshotGranularity("CLASS_LEVEL"),
+            ctx.attrs.android_jar,
+            "",
+        ),
+    ]
+    bootclasspath_snapshots = [x for x in bootclasspath_snapshots if x != None]
     return [
         DefaultInfo(),
         AndroidPlatformInfo(
@@ -190,6 +205,7 @@ def system_android_toolchain_rule_impl(ctx):
             aar_builder = ctx.attrs.aar_builder[RunInfo],
             adb = ctx.attrs.adb[RunInfo],
             android_bootclasspath = [ctx.attrs.android_jar],
+            android_bootclasspath_snapshots = bootclasspath_snapshots,
             android_jar = ctx.attrs.android_jar,
             android_optional_jars = ctx.attrs.android_optional_jars,
             apk_builder = ctx.attrs.apk_builder,
@@ -300,6 +316,7 @@ system_android_toolchain_rule = rule(
         "target_stats_tools": attrs.option(attrs.dep(providers = [TargetStatsToolsInfo]), default = None),
         "unpack_aar": attrs.dep(providers = [RunInfo]),
         "zipalign": attrs.dep(providers = [RunInfo]),
+        "_java_toolchain": attrs.toolchain_dep(default = "toolchains//:java", providers = [JavaToolchainInfo]),
     },
     impl = system_android_toolchain_rule_impl,
     is_toolchain_rule = True,

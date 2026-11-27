@@ -33,6 +33,12 @@ def _source_only_abi_enabled():
 def _persistent_workers_enabled():
     return read_root_config("build", "use_persistent_workers", "True").lower() in ("true", "1", "yes")
 
+def _read_bool(section, key, default):
+    v = read_root_config(section, key, None)
+    if v == None:
+        return default
+    return v.lower() in ("true", "1", "yes", "on")
+
 def kotlincd_toolchain(name, java_binary_for_kotlincd = None, visibility = None):
     source_only_abi = _source_only_abi_enabled()
     _kotlin_toolchain_rule(
@@ -44,7 +50,15 @@ def kotlincd_toolchain(name, java_binary_for_kotlincd = None, visibility = None)
         annotation_processing_jar = "prelude//toolchains/android/third-party:kotlin-annotation-processing-embeddable",
         class_loader_bootstrapper = "prelude//toolchains/android/src/com/facebook/buck/cli/bootstrapper:bootstrapper",
         compile_kotlin = "prelude//kotlin/tools/compile_kotlin:compile_kotlin",
-        dep_files = "none",
+        # Incremental-build optimisations, on by default as in Meta's production toolchain.
+        # Each one has a buckconfig kill switch with the same key Meta uses.
+        dep_files = read_root_config("kotlin", "kotlincd_dep_files", "per_class"),
+        # Off by default: Kotlin incremental compilation is correct only when the classpath snapshot
+        # generator bundles the compiler's exact Kotlin version (see `has_matching_snapshot_generator`
+        # in buildtools/snapshot/snapshot_generators.bzl). The open-source generator is a prebuilt jar
+        # from an older release, so it does not.
+        enable_incremental_compilation = _read_bool("kotlin", "enable_incremental_compilation", False),
+        jvm_abi_gen_plugin = "prelude//toolchains/android/third-party:jvm-abi-gen" if _read_bool("kotlin", "jvm_abi_gen", True) else None,
         kapt_base64_encoder = "prelude//kotlin/tools/kapt_base64_encoder:kapt_base64_encoder",
         kotlin_stdlib = "prelude//toolchains/android/third-party:kotlin-stdlib",
         kotlin_version = kotlin_version(),
@@ -68,7 +82,6 @@ def kotlincd_toolchain(name, java_binary_for_kotlincd = None, visibility = None)
         kotlinc_protocol = "kotlincd",
         kotlincd_main_class = "com.facebook.buck.jvm.kotlin.cd.workertool.KotlinCDMain",
         kotlincd_worker = _KOTLINCD_WORKER if _persistent_workers_enabled() else None,
-        jvm_abi_gen_plugin = "prelude//toolchains/android/third-party:jvm-abi-gen",
         kosabi_jvm_abi_gen_k2_plugin = _KOSABI_PLUGINS + "/k2-jvm-abi-gen:k2-jvm-abi-gen" if source_only_abi else None,
         kosabi_stubs_gen_k2_plugin = _KOSABI_PLUGINS + "/stubsgen:stubsgen_k2" if source_only_abi else None,
         visibility = visibility,

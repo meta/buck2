@@ -171,13 +171,14 @@ mod imp {
     }
 }
 
-/// Cargo builds on Linux and macOS use jemalloc through `tikv-jemallocator` as the global
+/// Cargo builds on Linux (glibc) and macOS use jemalloc through `tikv-jemallocator` as the global
 /// allocator (see `app/buck2/bin/buck2.rs`), so the stats and tuning that need only `mallctl` work
 /// there too. Heap and recent-allocation dumps need jemalloc's profiler, which these builds do not
-/// enable.
+/// enable. Musl builds use the system allocator instead (see below).
 #[cfg(all(
     not(fbcode_build),
     not(buck_build),
+    not(target_env = "musl"),
     any(target_os = "linux", target_os = "macos")
 ))]
 mod imp {
@@ -248,7 +249,11 @@ mod imp {
 
 #[cfg(all(
     not(fbcode_build),
-    any(buck_build, not(any(target_os = "linux", target_os = "macos")))
+    any(
+        buck_build,
+        target_env = "musl",
+        not(any(target_os = "linux", target_os = "macos"))
+    )
 ))]
 mod imp {
     pub fn write_heap_to_file(_filename: &str) -> buck2_error::Result<()> {

@@ -40,10 +40,12 @@ use superconsole::Stdin;
 
 // fbcode likes to set its own allocator in fbcode.default_allocator
 // So when we set our own allocator, buck build buck2 or buck2 build buck2 often breaks.
-// Making jemalloc the default only when we do a cargo build.
+// Making jemalloc the default only when we do a cargo build, except for musl:
+// jemalloc's malloc symbols conflict with musl libc's when statically linked.
 #[global_allocator]
 #[cfg(all(
     any(target_os = "linux", target_os = "macos"),
+    not(target_env = "musl"),
     not(buck_build),
     not(buck2_memfrag)
 ))]
@@ -52,6 +54,7 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 /// A C string pointer jemalloc can read as its `const char *malloc_conf`.
 #[cfg(all(
     any(target_os = "linux", target_os = "macos"),
+    not(target_env = "musl"),
     not(buck_build),
     not(buck2_memfrag)
 ))]
@@ -61,6 +64,7 @@ struct MallocConf(*const std::ffi::c_char);
 // SAFETY: the pointer refers to a `'static` C string literal, which is never written.
 #[cfg(all(
     any(target_os = "linux", target_os = "macos"),
+    not(target_env = "musl"),
     not(buck_build),
     not(buck2_memfrag)
 ))]
@@ -74,6 +78,7 @@ unsafe impl Sync for MallocConf {}
 /// with 16 arenas it held 0.5 GiB, and the build took as long.
 #[cfg(all(
     any(target_os = "linux", target_os = "macos"),
+    not(target_env = "musl"),
     not(buck_build),
     not(buck2_memfrag)
 ))]

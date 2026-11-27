@@ -90,6 +90,7 @@ use buck2_execute::re::ttl_refresh::ReChecker;
 use buck2_execute::re::ttl_refresh::StandaloneTtlRefreshCounters;
 use buck2_execute::re::ttl_refresh::TtlRefresher;
 use buck2_execute_impl::executors::local::ForkserverAccess;
+use buck2_execute_impl::executors::worker::WorkerPool;
 use buck2_execute_impl::materializers::deferred::AccessTimesUpdates;
 use buck2_execute_impl::materializers::deferred::DeferredMaterializer;
 use buck2_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
@@ -415,6 +416,11 @@ pub struct RepoState {
     /// Resource-pressure thresholds for automatic idle page-out, selected for this tenant's
     /// isolation. `None` disables automatic idle page-out for this tenant.
     pub(crate) page_out_on_idle: Option<PageOutThresholds>,
+
+    /// The worker pool of the commands that keep persistent workers across commands
+    /// (`buck2.persistent_workers_across_commands`). The first such command creates it.
+    #[allocative(skip)]
+    shared_worker_pool: parking_lot::Mutex<Option<Arc<WorkerPool>>>,
 }
 
 struct TenantStateInit<'a> {
@@ -1063,6 +1069,7 @@ impl TenantState {
                 .unwrap_or_else(RolloutPercentage::never)
                 .roll(),
             page_out_on_idle,
+            shared_worker_pool: parking_lot::Mutex::new(None),
         });
 
         #[cfg(fbcode_build)]
@@ -1101,6 +1108,23 @@ impl TenantState {
 }
 
 impl RepoState {
+    /// The worker pool kept across the commands of this repo, with a command's settings applied.
+    pub(crate) fn shared_worker_pool(
+        &self,
+        graceful_shutdown_timeout_s: Option<u32>,
+        idle_timeout: Duration,
+    ) -> Arc<WorkerPool> {
+        let pool = self
+            .shared_worker_pool
+            .lock()
+            .get_or_insert_with(|| {
+                WorkerPool::across_commands(graceful_shutdown_timeout_s, idle_timeout)
+            })
+            .dupe();
+        pool.begin_command(graceful_shutdown_timeout_s, idle_timeout);
+        pool
+    }
+
     fn create_materializer(
         disk_state_core: bool,
         fs: ProjectRoot,

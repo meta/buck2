@@ -1053,6 +1053,15 @@ impl DiceCommandUpdater<'_, '_> {
         let persistent_worker_shutdown_timeout_s = invocation_settings
             .execution
             .persistent_worker_shutdown_timeout_s(&mut buckconfig)?;
+        let persistent_workers_across_commands = invocation_settings
+            .execution
+            .persistent_workers_across_commands(&mut buckconfig)?;
+        let persistent_worker_idle_timeout = Duration::from_secs(
+            invocation_settings
+                .execution
+                .persistent_worker_idle_timeout_s(&mut buckconfig)?
+                .into(),
+        );
 
         let remote_execution = &invocation_settings.remote_execution;
         let re_cancel_on_estimated_queue_time_exceeds = remote_execution
@@ -1163,7 +1172,14 @@ impl DiceCommandUpdater<'_, '_> {
         };
         data.set_detailed_aggregated_metrics_events_holder();
 
-        let worker_pool = Arc::new(WorkerPool::new(Some(persistent_worker_shutdown_timeout_s)));
+        let worker_pool = if persistent_workers_across_commands {
+            self.cmd_ctx.base_context.repo().shared_worker_pool(
+                Some(persistent_worker_shutdown_timeout_s),
+                persistent_worker_idle_timeout,
+            )
+        } else {
+            Arc::new(WorkerPool::new(Some(persistent_worker_shutdown_timeout_s)))
+        };
 
         let critical_path_backend = if buck2_env!(
             "BUCK2_TEST_CRITICAL_PATH_LOGGING_BACKEND",

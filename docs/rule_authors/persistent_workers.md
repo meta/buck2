@@ -10,8 +10,9 @@ Persistent workers are long-lived processes that Buck2 spawns once and reuses
 across multiple build actions, avoiding the overhead of repeatedly starting
 heavy processes like compilers. This is particularly useful for JVM-based tools
 where startup cost is significant. Workers are shared across actions within a
-single build command and are terminated when the command completes — they do not
-persist across separate invocations.
+single build command and are terminated when the command completes, unless
+[`buck2.persistent_workers_across_commands`](#keeping-workers-across-commands)
+keeps them for later commands.
 
 ## How worker identity works
 
@@ -203,3 +204,25 @@ A project that configures no execution platforms at all, such as one made with
 `buck2 init --no-prelude`, runs its actions with workers enabled.
 
 </OssOnly>
+
+### Keeping workers across commands
+
+With `buck2.persistent_workers_across_commands = true`, a local worker outlives
+the command that started it and serves later commands of the same daemon, so
+they skip its startup and warm-up:
+
+```ini
+[buck2]
+persistent_workers_across_commands = true
+# Seconds a worker waits for its next action before it stops; the default is 900.
+persistent_worker_idle_timeout_s = 900
+```
+
+Across commands, a worker is identified by its command line, environment,
+`concurrency` and `streaming`, not by its `WorkerInfo` instance, so a target
+that is analyzed again keeps its worker. A worker whose input files changed
+since it started, for example a rebuilt tool jar, is replaced. So is a worker
+that failed to start, exited, or was still running a command when a cancellation
+or a timeout made Buck2 stop waiting for it: the next command starts a new one.
+
+An idle worker keeps its memory until it stops.

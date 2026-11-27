@@ -10,15 +10,19 @@
 
 use std::ffi::OsString;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use std::time::Instant;
 
 use buck2_common::client_utils::get_channel_uds;
 use buck2_common::client_utils::retrying;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::liveliness_observer::LivelinessGuard;
 use buck2_common::liveliness_observer::LivelinessObserver;
 use buck2_core::soft_error_or_panic;
+use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
 use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 use buck2_events::dispatch::EventDispatcher;
@@ -240,8 +244,16 @@ async fn spawn_worker(
     dispatcher: EventDispatcher,
     graceful_shutdown_timeout_s: Option<u32>,
 ) -> Result<WorkerHandle, WorkerInitError> {
-    // Use fixed length path at /tmp to avoid 108 character limit for unix domain sockets
-    let dir_name = format!("{}-{}", dispatcher.trace_id(), worker_id);
+    let diagnostics = WorkerDiagnostics::new();
+    // Use fixed length path at /tmp to avoid 108 character limit for unix domain sockets. A pool
+    // kept across commands can start a worker for the same `WorkerInfo` again within one command,
+    // after stopping it for being idle.
+    let dir_name = format!(
+        "{}-{}-{}",
+        dispatcher.trace_id(),
+        worker_id,
+        diagnostics.ordinal
+    );
     let worker_dir = AbsNormPathBuf::from("/tmp/buck2_worker".to_owned())
         .map_err(WorkerInitError::InternalError)?
         .join(FileName::unchecked_new(&dir_name));
@@ -272,7 +284,6 @@ async fn spawn_worker(
     let env: Vec<(OsString, OsString)> = env.into_iter().chain(worker_env).collect();
 
     let (liveliness_observer, liveliness_guard) = LivelinessGuard::create();
-    let diagnostics = WorkerDiagnostics::new();
 
     let spawn_fut = spawn_via_forkserver(
         forkserver,
@@ -372,27 +383,181 @@ async fn spawn_worker(
 
 type WorkerFuture = Shared<BoxFuture<'static, Result<Arc<WorkerHandle>, Arc<WorkerInitError>>>>;
 
-pub struct WorkerPool {
-    workers: Arc<parking_lot::Mutex<BuckMutMap<WorkerId, WorkerFuture>>>,
-    brokers: Arc<parking_lot::Mutex<BuckMutMap<WorkerId, Arc<HostSharingBroker>>>>,
+/// How long the workers of a [`WorkerPool`] live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkerPoolLifetime {
+    /// The pool serves one command, and its workers stop when the command ends.
+    Command,
+    /// The pool serves every command that asks for it, and a worker stops once it has gone
+    /// `idle_timeout` without an action.
+    AcrossCommands { idle_timeout: Duration },
+}
+
+#[derive(Clone, Copy)]
+struct WorkerPoolSettings {
     graceful_shutdown_timeout_s: Option<u32>,
+    lifetime: WorkerPoolLifetime,
+}
+
+/// What a [`WorkerPool`] keeps one worker for.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum WorkerKey {
+    /// A `WorkerInfo`, in a pool that serves one command.
+    Id(WorkerId),
+    /// A command line, environment and settings, in a pool that serves many commands: a target
+    /// that is analyzed again gets a `WorkerInfo` with a new id, which starts the same worker.
+    Command {
+        exe: Vec<String>,
+        env: Vec<(String, String)>,
+        concurrency: Option<usize>,
+        streaming: bool,
+    },
+}
+
+impl WorkerKey {
+    fn new(worker_spec: &WorkerSpec, lifetime: WorkerPoolLifetime) -> Self {
+        match lifetime {
+            WorkerPoolLifetime::Command => WorkerKey::Id(worker_spec.id),
+            WorkerPoolLifetime::AcrossCommands { .. } => WorkerKey::Command {
+                exe: worker_spec.exe.clone(),
+                env: worker_spec
+                    .env
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+                concurrency: worker_spec.concurrency,
+                streaming: worker_spec.streaming,
+            },
+        }
+    }
+}
+
+struct PooledWorker {
+    worker: WorkerFuture,
+    /// The digest of the worker's input files, in a pool that serves many commands: a worker
+    /// whose files changed since it started is replaced.
+    inputs: Option<TrackedFileDigest>,
+    last_handed_out: Instant,
+}
+
+impl PooledWorker {
+    /// Whether the worker failed to start, its process has exited, or it may still be running a
+    /// command that buck2 stopped waiting for.
+    fn is_unusable(&self) -> bool {
+        match self.worker.peek() {
+            None => false,
+            Some(Ok(handle)) => handle.has_exited() || handle.has_abandoned_command(),
+            Some(Err(_)) => true,
+        }
+    }
+
+    /// Whether no action holds the worker and none was handed it in the last `idle_timeout`.
+    fn is_idle(&self, now: Instant, idle_timeout: Duration) -> bool {
+        let in_use = match self.worker.peek() {
+            // Still starting: an action is waiting for it.
+            None => true,
+            // The pool's own copy of the handle is the only one.
+            Some(Ok(handle)) => Arc::strong_count(handle) > 1,
+            Some(Err(_)) => false,
+        };
+        !in_use && now.saturating_duration_since(self.last_handed_out) > idle_timeout
+    }
+}
+
+pub struct WorkerPool {
+    workers: parking_lot::Mutex<BuckMutMap<WorkerKey, PooledWorker>>,
+    brokers: parking_lot::Mutex<BuckMutMap<WorkerKey, Arc<HostSharingBroker>>>,
+    settings: parking_lot::Mutex<WorkerPoolSettings>,
 }
 
 impl WorkerPool {
+    /// A pool for one command.
     pub fn new(graceful_shutdown_timeout_s: Option<u32>) -> WorkerPool {
         tracing::info!("Creating new WorkerPool");
-        WorkerPool {
-            workers: Arc::new(parking_lot::Mutex::new(BuckMutMap::default())),
-            brokers: Arc::new(parking_lot::Mutex::new(BuckMutMap::default())),
+        Self::with_settings(WorkerPoolSettings {
             graceful_shutdown_timeout_s,
+            lifetime: WorkerPoolLifetime::Command,
+        })
+    }
+
+    /// A pool that serves every command that asks for it. Each command calls
+    /// [`WorkerPool::begin_command`] first.
+    pub fn across_commands(
+        graceful_shutdown_timeout_s: Option<u32>,
+        idle_timeout: Duration,
+    ) -> Arc<WorkerPool> {
+        tracing::info!("Creating new WorkerPool kept across commands");
+        let pool = Arc::new(Self::with_settings(WorkerPoolSettings {
+            graceful_shutdown_timeout_s,
+            lifetime: WorkerPoolLifetime::AcrossCommands { idle_timeout },
+        }));
+        spawn_idle_reaper(&pool);
+        pool
+    }
+
+    fn with_settings(settings: WorkerPoolSettings) -> WorkerPool {
+        WorkerPool {
+            workers: parking_lot::Mutex::new(BuckMutMap::default()),
+            brokers: parking_lot::Mutex::new(BuckMutMap::default()),
+            settings: parking_lot::Mutex::new(settings),
+        }
+    }
+
+    /// Applies a command's settings to a pool kept across commands, and drops the workers that
+    /// failed to start, have exited, or may still be running a command of an earlier command that
+    /// buck2 stopped waiting for. The command starts them again.
+    pub fn begin_command(&self, graceful_shutdown_timeout_s: Option<u32>, idle_timeout: Duration) {
+        *self.settings.lock() = WorkerPoolSettings {
+            graceful_shutdown_timeout_s,
+            lifetime: WorkerPoolLifetime::AcrossCommands { idle_timeout },
+        };
+        self.workers
+            .lock()
+            .retain(|_, worker| !worker.is_unusable());
+    }
+
+    /// Drops the pool's handle on every worker that has been idle for longer than the pool's
+    /// idle timeout. A worker stops once nothing holds it. Returns how many were dropped.
+    fn evict_idle_workers(&self, now: Instant) -> usize {
+        let WorkerPoolLifetime::AcrossCommands { idle_timeout } = self.settings.lock().lifetime
+        else {
+            return 0;
+        };
+        let mut evicted = Vec::new();
+        self.workers.lock().retain(|key, worker| {
+            let idle = worker.is_idle(now, idle_timeout);
+            if idle {
+                evicted.push(key.clone());
+            }
+            !idle
+        });
+        if evicted.is_empty() {
+            return 0;
+        }
+        let mut brokers = self.brokers.lock();
+        for key in &evicted {
+            brokers.remove(key);
+        }
+        tracing::info!("Stopping {} idle persistent workers", evicted.len());
+        evicted.len()
+    }
+
+    /// How often the reaper of a pool kept across commands looks for idle workers.
+    fn reaper_period(&self) -> Duration {
+        match self.settings.lock().lifetime {
+            WorkerPoolLifetime::Command => Duration::from_secs(60),
+            WorkerPoolLifetime::AcrossCommands { idle_timeout } => {
+                (idle_timeout / 2).clamp(Duration::from_secs(1), Duration::from_secs(60))
+            }
         }
     }
 
     pub fn get_worker_broker(&self, worker_spec: &WorkerSpec) -> Option<Arc<HostSharingBroker>> {
+        let lifetime = self.settings.lock().lifetime;
         let mut brokers = self.brokers.lock();
         worker_spec.concurrency.map(|concurrency| {
             brokers
-                .entry(worker_spec.id)
+                .entry(WorkerKey::new(worker_spec, lifetime))
                 .or_insert_with(|| {
                     Arc::new(HostSharingBroker::new(
                         HostSharingStrategy::Fifo,
@@ -411,17 +576,26 @@ impl WorkerPool {
         forkserver: ForkserverAccess,
         dispatcher: EventDispatcher,
     ) -> (bool, WorkerFuture) {
-        let mut workers = self.workers.lock();
-        if let Some(worker_fut) = workers.get(&worker_spec.id) {
-            (false, worker_fut.clone())
-        } else {
-            let worker_id = worker_spec.id;
-            let args = worker_spec.exe.to_vec();
-            let streaming = worker_spec.streaming;
-            let root = root.clone();
-            let env: Vec<(OsString, OsString)> = env.into_iter().collect();
-            let graceful_shutdown_timeout_s = self.graceful_shutdown_timeout_s;
-            let fut = async move {
+        let settings = *self.settings.lock();
+        let key = WorkerKey::new(worker_spec, settings.lifetime);
+        let inputs = match settings.lifetime {
+            WorkerPoolLifetime::Command => None,
+            WorkerPoolLifetime::AcrossCommands { .. } => Some(
+                worker_spec
+                    .input_paths
+                    .input_directory()
+                    .fingerprint()
+                    .dupe(),
+            ),
+        };
+        let worker_id = worker_spec.id;
+        let args = worker_spec.exe.to_vec();
+        let streaming = worker_spec.streaming;
+        let root = root.clone();
+        let env: Vec<(OsString, OsString)> = env.into_iter().collect();
+        let graceful_shutdown_timeout_s = settings.graceful_shutdown_timeout_s;
+        self.get_or_insert_worker(key, inputs, Instant::now(), move || {
+            async move {
                 match spawn_worker(
                     worker_id,
                     args,
@@ -439,12 +613,55 @@ impl WorkerPool {
                 }
             }
             .boxed()
-            .shared();
-
-            workers.insert(worker_id, fut.clone());
-            (true, fut)
-        }
+            .shared()
+        })
     }
+
+    /// The worker for `key` and `inputs`, which `start` starts if the pool has none. Returns
+    /// whether `start` ran.
+    fn get_or_insert_worker(
+        &self,
+        key: WorkerKey,
+        inputs: Option<TrackedFileDigest>,
+        now: Instant,
+        start: impl FnOnce() -> WorkerFuture,
+    ) -> (bool, WorkerFuture) {
+        let mut workers = self.workers.lock();
+        if let Some(pooled) = workers.get_mut(&key)
+            && pooled.inputs == inputs
+        {
+            pooled.last_handed_out = now;
+            return (false, pooled.worker.clone());
+        }
+
+        let worker = start();
+        workers.insert(
+            key,
+            PooledWorker {
+                worker: worker.clone(),
+                inputs,
+                last_handed_out: now,
+            },
+        );
+        (true, worker)
+    }
+}
+
+/// Stops the idle workers of `pool` periodically, until the pool is dropped.
+fn spawn_idle_reaper(pool: &Arc<WorkerPool>) {
+    let pool = Arc::downgrade(pool);
+    tokio::spawn(async move {
+        loop {
+            let Some(period) = pool.upgrade().map(|pool| pool.reaper_period()) else {
+                return;
+            };
+            tokio::time::sleep(period).await;
+            let Some(pool) = pool.upgrade() else {
+                return;
+            };
+            pool.evict_idle_workers(Instant::now());
+        }
+    });
 }
 
 /// Process-local, generated correlation only; not a process id or a globally unique identity.
@@ -786,6 +1003,8 @@ pub struct WorkerHandle {
     std_redirects: StdRedirectPaths,
     _liveliness_guard: LivelinessGuard,
     diagnostics: WorkerDiagnostics,
+    /// Whether `exec_cmd` stopped waiting for a command that the worker may still be running.
+    abandoned_command: AtomicBool,
 }
 
 impl WorkerHandle {
@@ -802,6 +1021,41 @@ impl WorkerHandle {
             std_redirects,
             _liveliness_guard: liveliness_guard,
             diagnostics,
+            abandoned_command: AtomicBool::new(false),
+        }
+    }
+
+    /// Whether the worker's process has exited.
+    fn has_exited(&self) -> bool {
+        self.child_exited_observer
+            .while_alive()
+            .now_or_never()
+            .is_some()
+    }
+
+    /// Whether the worker may still be running a command that buck2 stopped waiting for: one
+    /// that was cancelled or timed out. Only stopping the worker stops that command.
+    fn has_abandoned_command(&self) -> bool {
+        self.abandoned_command.load(Ordering::Relaxed)
+    }
+}
+
+/// Marks a worker as running an abandoned command when dropped before [`PendingCommand::answered`].
+struct PendingCommand<'a> {
+    abandoned_command: &'a AtomicBool,
+    answered: bool,
+}
+
+impl PendingCommand<'_> {
+    fn answered(&mut self) {
+        self.answered = true;
+    }
+}
+
+impl Drop for PendingCommand<'_> {
+    fn drop(&mut self) {
+        if !self.answered {
+            self.abandoned_command.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -883,6 +1137,10 @@ impl WorkerHandle {
             }
         };
 
+        let mut pending = PendingCommand {
+            abandoned_command: &self.abandoned_command,
+            answered: false,
+        };
         let mut client = self.client.clone();
         let (status, stdout, stderr) = tokio::select! {
             // Ordered most-informative first, because the default random order
@@ -893,6 +1151,7 @@ impl WorkerHandle {
             biased;
 
             response = client.execute(request) => {
+                pending.answered();
                 match response {
                     Ok(exec_response) => {
                         tracing::info!("Worker response:\n{:?}\n", exec_response);
@@ -926,6 +1185,7 @@ impl WorkerHandle {
                 }
             }
             _ = self.child_exited_observer.while_alive() => {
+                pending.answered();
                 (
                     GatherOutputStatus::SpawnFailed(format!(
                         "Worker exited while running command, see worker logs:\n{}\n{}",
@@ -1227,6 +1487,27 @@ mod worker_handle_tests {
             "expected Cancelled, got {:?}",
             result.status
         );
+        assert!(
+            handle.has_abandoned_command(),
+            "the worker may still be running the cancelled command"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dropping_exec_cmd_abandons_the_command() {
+        // A cancelled buck2 command drops its actions' futures without reaching any `select!` arm.
+        let (client, _server) = start_server(HangingWorker).await;
+        let (handle, _child_alive) = worker_handle(client);
+        let (observer, _alive_guard) = LivelinessGuard::create();
+
+        let exec = handle.exec_cmd(&[], vec![], None, observer.as_ref());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), exec)
+                .await
+                .is_err(),
+            "the worker never answers"
+        );
+        assert!(handle.has_abandoned_command());
     }
 
     #[tokio::test]
@@ -1256,6 +1537,7 @@ mod worker_handle_tests {
             "expected the worker's response, got {:?}",
             result.status
         );
+        assert!(!handle.has_abandoned_command(), "the worker answered");
     }
 
     #[tokio::test(start_paused = true)]
@@ -2059,5 +2341,257 @@ mod worker_handle_tests {
     async fn test_streaming_answer_kept_when_stream_closes_right_after() {
         let (answered, lost) = answered_and_lost().await;
         assert_eq!((answered, lost), (40, 0));
+    }
+}
+
+/// Tests of which worker a [`WorkerPool`] hands out, and when it stops one.
+#[cfg(test)]
+mod worker_pool_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    use std::time::Instant;
+
+    use buck2_common::cas_digest::CasDigestConfig;
+    use buck2_common::file_ops::metadata::TrackedFileDigest;
+    use buck2_common::liveliness_observer::LivelinessGuard;
+    use buck2_execute::execute::request::WorkerId;
+    use buck2_execute_local::StdRedirectPaths;
+    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use buck2_worker_proto::worker_client;
+    use futures::FutureExt;
+    use tonic::transport::Channel;
+
+    use super::WorkerClient;
+    use super::WorkerDiagnostics;
+    use super::WorkerFuture;
+    use super::WorkerHandle;
+    use super::WorkerInitError;
+    use super::WorkerKey;
+    use super::WorkerPool;
+
+    const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+    fn command_key(exe: &str) -> WorkerKey {
+        WorkerKey::Command {
+            exe: vec![exe.to_owned()],
+            env: Vec::new(),
+            concurrency: None,
+            streaming: false,
+        }
+    }
+
+    fn digest(content: &str) -> Option<TrackedFileDigest> {
+        Some(TrackedFileDigest::from_content(
+            content.as_bytes(),
+            CasDigestConfig::testing_default(),
+        ))
+    }
+
+    /// A started worker whose process lives as long as the returned guard. Needs a Tokio runtime.
+    fn started_worker() -> (WorkerFuture, LivelinessGuard) {
+        let (child_exited_observer, child_alive_guard) = LivelinessGuard::create();
+        let (_, handle_guard) = LivelinessGuard::create();
+        let path = |name: &str| {
+            AbsNormPathBuf::new(std::env::temp_dir().join("buck2_worker_test").join(name))
+                .expect("absolute path")
+        };
+        let channel = Channel::from_static("http://[::1]:1").connect_lazy();
+        let handle = WorkerHandle::new(
+            WorkerClient::Single(worker_client::WorkerClient::new(channel)),
+            child_exited_observer,
+            StdRedirectPaths {
+                stdout: path("stdout"),
+                stderr: path("stderr"),
+            },
+            handle_guard,
+            WorkerDiagnostics::new(),
+        );
+        let worker: WorkerFuture = futures::future::ready(Ok(Arc::new(handle)))
+            .boxed()
+            .shared();
+        // Completes the future, as an action awaiting it does.
+        drop(worker.clone().now_or_never());
+        (worker, child_alive_guard)
+    }
+
+    fn failed_worker() -> WorkerFuture {
+        let worker: WorkerFuture = futures::future::ready(Err(Arc::new(
+            WorkerInitError::SpawnFailed("test".to_owned()),
+        )))
+        .boxed()
+        .shared();
+        drop(worker.clone().now_or_never());
+        worker
+    }
+
+    fn starting_worker() -> WorkerFuture {
+        futures::future::pending().boxed().shared()
+    }
+
+    fn must_not_start() -> WorkerFuture {
+        panic!("the pool already has this worker")
+    }
+
+    /// Puts `worker` in `pool`, last handed out at `handed_out`.
+    fn put(
+        pool: &WorkerPool,
+        key: WorkerKey,
+        inputs: Option<TrackedFileDigest>,
+        handed_out: Instant,
+        worker: WorkerFuture,
+    ) {
+        let (started, _worker) = pool.get_or_insert_worker(key, inputs, handed_out, || worker);
+        assert!(started, "the pool had no worker for the key");
+    }
+
+    #[tokio::test]
+    async fn test_pool_for_one_command_keeps_one_worker_per_id() {
+        let pool = WorkerPool::new(None);
+        let now = Instant::now();
+        let (worker, _alive) = started_worker();
+
+        let (started, _) =
+            pool.get_or_insert_worker(WorkerKey::Id(WorkerId(1)), None, now, || worker);
+        assert!(started, "the pool had no worker");
+        let (started, _) =
+            pool.get_or_insert_worker(WorkerKey::Id(WorkerId(1)), None, now, must_not_start);
+        assert!(!started, "the pool reuses the worker of `WorkerId(1)`");
+        let (started, _) =
+            pool.get_or_insert_worker(WorkerKey::Id(WorkerId(2)), None, now, starting_worker);
+        assert!(started, "`WorkerId(2)` gets its own worker");
+    }
+
+    #[tokio::test]
+    async fn test_pool_across_commands_reuses_a_worker_with_unchanged_inputs() {
+        let pool = WorkerPool::across_commands(None, IDLE_TIMEOUT);
+        let now = Instant::now();
+        let (worker, _alive) = started_worker();
+
+        put(&pool, command_key("tool"), digest("a"), now, worker);
+        let (started, _) =
+            pool.get_or_insert_worker(command_key("tool"), digest("a"), now, must_not_start);
+        assert!(!started, "same command line, same input files");
+    }
+
+    #[tokio::test]
+    async fn test_pool_across_commands_replaces_a_worker_whose_inputs_changed() {
+        let pool = WorkerPool::across_commands(None, IDLE_TIMEOUT);
+        let now = Instant::now();
+        let (old, _old_alive) = started_worker();
+        let (new, _new_alive) = started_worker();
+
+        put(&pool, command_key("tool"), digest("a"), now, old);
+        let (started, _) = pool.get_or_insert_worker(command_key("tool"), digest("b"), now, || new);
+        assert!(started, "the command line reads changed files");
+        assert_eq!(
+            pool.workers.lock().len(),
+            1,
+            "the new worker replaces the old one"
+        );
+        let (started, _) =
+            pool.get_or_insert_worker(command_key("tool"), digest("b"), now, must_not_start);
+        assert!(!started, "the new worker serves the new files");
+    }
+
+    #[tokio::test]
+    async fn test_begin_command_drops_unusable_workers() {
+        let pool = WorkerPool::across_commands(None, IDLE_TIMEOUT);
+        let now = Instant::now();
+        let (live, _live_alive) = started_worker();
+        let (exited, exited_alive) = started_worker();
+        drop(exited_alive);
+        let (abandoned, _abandoned_alive) = started_worker();
+        if let Some(Ok(handle)) = abandoned.peek() {
+            handle.abandoned_command.store(true, Ordering::Relaxed);
+        }
+
+        put(&pool, command_key("live"), None, now, live);
+        put(&pool, command_key("exited"), None, now, exited);
+        put(&pool, command_key("abandoned"), None, now, abandoned);
+        put(&pool, command_key("failed"), None, now, failed_worker());
+        put(&pool, command_key("starting"), None, now, starting_worker());
+        pool.begin_command(None, IDLE_TIMEOUT);
+
+        let workers = pool.workers.lock();
+        assert!(workers.contains_key(&command_key("live")));
+        assert!(workers.contains_key(&command_key("starting")));
+        assert!(
+            !workers.contains_key(&command_key("exited")),
+            "the next command starts a worker whose process exited again"
+        );
+        assert!(
+            !workers.contains_key(&command_key("failed")),
+            "the next command starts a worker that failed to start again"
+        );
+        assert!(
+            !workers.contains_key(&command_key("abandoned")),
+            "stopping the worker stops the command that an earlier command abandoned"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_evict_idle_workers_keeps_used_and_recent_workers() {
+        let pool = WorkerPool::across_commands(None, IDLE_TIMEOUT);
+        let start = Instant::now();
+        let (idle, _idle_alive) = started_worker();
+        let (busy, _busy_alive) = started_worker();
+        let (recent, _recent_alive) = started_worker();
+        let busy_handle = busy
+            .clone()
+            .now_or_never()
+            .expect("the worker started")
+            .expect("the worker started");
+
+        put(&pool, command_key("idle"), None, start, idle);
+        put(&pool, command_key("busy"), None, start, busy);
+        put(
+            &pool,
+            command_key("recent"),
+            None,
+            start + Duration::from_secs(110),
+            recent,
+        );
+        put(
+            &pool,
+            command_key("starting"),
+            None,
+            start,
+            starting_worker(),
+        );
+
+        assert_eq!(pool.evict_idle_workers(start + Duration::from_secs(120)), 1);
+        let workers = pool.workers.lock();
+        assert!(
+            !workers.contains_key(&command_key("idle")),
+            "idle for 120 s, past the 60 s timeout"
+        );
+        assert!(
+            workers.contains_key(&command_key("busy")),
+            "an action still holds the worker"
+        );
+        assert!(
+            workers.contains_key(&command_key("recent")),
+            "handed out 10 s ago"
+        );
+        assert!(
+            workers.contains_key(&command_key("starting")),
+            "an action waits for the worker to start"
+        );
+        drop(busy_handle);
+    }
+
+    #[tokio::test]
+    async fn test_pool_for_one_command_stops_no_idle_worker() {
+        let pool = WorkerPool::new(None);
+        let start = Instant::now();
+        let (worker, _alive) = started_worker();
+
+        put(&pool, WorkerKey::Id(WorkerId(1)), None, start, worker);
+        assert_eq!(
+            pool.evict_idle_workers(start + Duration::from_secs(3600)),
+            0,
+            "the command's end stops the worker"
+        );
     }
 }

@@ -29,6 +29,25 @@ pub struct Execution {
         overridable_in(CommandLine, LocalSettings)
     )]
     persistent_worker_shutdown_timeout_s: Option<u32>,
+    /// Whether a persistent worker outlives the command that started it and
+    /// serves later commands, until it has been idle for
+    /// `persistent_worker_idle_timeout_s`.
+    #[setting(
+        buckconfig_fallback = "buck2.persistent_workers_across_commands",
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
+    persistent_workers_across_commands: Option<bool>,
+    /// Seconds a persistent worker kept across commands waits for its next
+    /// action before it stops.
+    #[setting(
+        buckconfig_fallback = "buck2.persistent_worker_idle_timeout_s",
+        internal_default = 900,
+        oss_default = 900,
+        overridable_in(CommandLine, LocalSettings)
+    )]
+    persistent_worker_idle_timeout_s: Option<u32>,
     /// Whether local actions run under miniperf, which counts the instructions
     /// they execute. Turn it off where perf counters are unavailable, as in
     /// some virtual machines.

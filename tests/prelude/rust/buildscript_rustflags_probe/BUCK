@@ -17,9 +17,9 @@ prelude.rust_binary(
 
 buildscript_run(
     name = "build-script-run",
+    package_name = "rustflags_probe",
     buildscript_rule = ":build-script-build",
     local_manifest_dir = ".",
-    package_name = "rustflags_probe",
     version = "0.1.0",
 )
 

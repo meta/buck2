@@ -1,0 +1,4967 @@
+{
+ "kotlin": "2.4.21",
+ "target": ":compiler:cli-jvm",
+ "kosabiMode": "flat: source-only ABI from sources and jars; chained: also from the ABIs of the modules on the compile classpath; class: class ABI",
+ "modules": {
+  ":compiler:arguments.common": {
+   "dir": "compiler/arguments.common",
+   "deps": [
+    [
+     "api",
+     ":core:language.version-settings"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_arguments.common",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":compiler:backend": {
+   "dir": "compiler/backend",
+   "deps": [
+    [
+     "api",
+     ":kotlin-annotations-jvm"
+    ],
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:backend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.tree"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_backend",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:backend.common.jvm": {
+   "dir": "compiler/backend.common.jvm",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common.jvm"
+    ],
+    [
+     "api",
+     ":compiler:config.jvm"
+    ]
+   ],
+   "external": [
+    [
+     "api",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ],
+    [
+     "api",
+     "com.google.guava:guava:33.3.1-jre"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_backend.common.jvm",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:backend.jvm": {
+   "dir": "compiler/ir/backend.jvm",
+   "deps": [
+    [
+     "api",
+     ":compiler:backend"
+    ],
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "api",
+     ":compiler:ir.backend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:backend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":compiler:serialization"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-frontend-utils"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_backend.jvm",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:backend.jvm.codegen": {
+   "dir": "compiler/ir/backend.jvm/codegen",
+   "deps": [
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "api",
+     ":compiler:ir.backend.common"
+    ],
+    [
+     "api",
+     ":compiler:backend.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:backend"
+    ],
+    [
+     "implementation",
+     ":compiler:backend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-frontend-utils"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ]
+   ],
+   "external": [
+    [
+     "implementation",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_backend.jvm.codegen",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:backend.jvm.entrypoint": {
+   "dir": "compiler/ir/backend.jvm/entrypoint",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:ir.psi2ir"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.java"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":compiler:serialization"
+    ],
+    [
+     "implementation",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-klib-metadata"
+    ],
+    [
+     "api",
+     ":compiler:backend.jvm"
+    ],
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "api",
+     ":compiler:ir.serialization.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:backend.jvm.lower"
+    ],
+    [
+     "implementation",
+     ":compiler:backend.jvm.codegen"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_backend.jvm.entrypoint",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:backend.jvm.lower": {
+   "dir": "compiler/ir/backend.jvm/lower",
+   "deps": [
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "api",
+     ":compiler:ir.backend.common"
+    ],
+    [
+     "api",
+     ":compiler:backend.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:backend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-frontend-utils"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_backend.jvm.lower",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:build-tools:kotlin-build-statistics": {
+   "dir": "compiler/build-tools/kotlin-build-statistics",
+   "deps": [
+    [
+     "compileOnly",
+     ":core:util.runtime"
+    ],
+    [
+     "compileOnly",
+     ":compiler:util"
+    ],
+    [
+     "compileOnly",
+     ":kotlin-util-io"
+    ],
+    [
+     "implementation",
+     ":compiler:build-tools:kotlin-build-tools-api"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "implementation",
+     "com.google.code.gson:gson:2.11.0"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_kotlin-build-statistics",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.0",
+    "languageVersion": "2.0",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":compiler:build-tools:kotlin-build-tools-api": {
+   "dir": "compiler/build-tools/kotlin-build-tools-api",
+   "deps": [
+    [
+     "compileOnly",
+     ":compiler:build-tools:kotlin-build-tools-jdk-utils"
+    ],
+    [
+     "api",
+     ":compiler:build-tools:kotlin-build-tools-jdk-utils"
+    ]
+   ],
+   "external": [],
+   "moduleName": "kotlin-build-tools-api",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xjvm-default=all",
+     "-Xsuppress-version-warnings",
+     "-Xsam-conversions=class"
+    ],
+    "apiVersion": "2.0",
+    "languageVersion": "2.0",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": true,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":compiler:build-tools:kotlin-build-tools-jdk-utils": {
+   "dir": "compiler/build-tools/kotlin-build-tools-jdk-utils",
+   "deps": [],
+   "external": [],
+   "moduleName": "kotlin-build-tools-jdk-utils",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings",
+     "-Xsam-conversions=class"
+    ],
+    "apiVersion": "2.0",
+    "languageVersion": "2.0",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": true,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":compiler:cli": {
+   "dir": "compiler/cli",
+   "deps": [
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:cli-base"
+    ],
+    [
+     "implementation",
+     ":compiler:container"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.java"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend:cfg"
+    ],
+    [
+     "implementation",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "api",
+     ":compiler:ir.backend.common"
+    ],
+    [
+     "api",
+     ":compiler:backend"
+    ],
+    [
+     "api",
+     ":compiler:fir:resolve"
+    ],
+    [
+     "api",
+     ":compiler:fir:providers"
+    ],
+    [
+     "api",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "api",
+     ":compiler:fir:fir-jvm"
+    ],
+    [
+     "api",
+     ":compiler:fir:entrypoint"
+    ],
+    [
+     "api",
+     ":compiler:fir:fir2ir"
+    ],
+    [
+     "api",
+     ":compiler:fir:checkers"
+    ],
+    [
+     "api",
+     ":kotlin-util-io"
+    ],
+    [
+     "implementation",
+     ":js:js.config"
+    ],
+    [
+     "implementation",
+     ":native:native.config"
+    ],
+    [
+     "implementation",
+     ":wasm:wasm.config"
+    ],
+    [
+     "implementation",
+     ":wasm:wasm.frontend"
+    ]
+   ],
+   "external": [
+    [
+     "api",
+     "org.fusesource.jansi:jansi:2.4.0"
+    ],
+    [
+     "compileOnly",
+     "local:tools-jar-api:1.8.0_512"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:jdom:2.0.6"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_cli",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi"
+    ],
+    "free": [
+     "-Xjdk-release=1.8",
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": true
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:cli-base": {
+   "dir": "compiler/cli/cli-base",
+   "deps": [
+    [
+     "api",
+     ":core:util.runtime"
+    ],
+    [
+     "api",
+     ":compiler:arguments.common"
+    ],
+    [
+     "api",
+     ":compiler:plugin-api"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.java"
+    ],
+    [
+     "implementation",
+     ":compiler:serialization"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:parser"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "implementation",
+     ":compiler:backend"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:util"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":js:js.config"
+    ],
+    [
+     "implementation",
+     ":wasm:wasm.config"
+    ],
+    [
+     "implementation",
+     ":native:native.config"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ],
+    [
+     "implementation",
+     "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_cli-base",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi"
+    ],
+    "free": [
+     "-Xannotation-target-all",
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:cli-jvm": {
+   "dir": "compiler/cli/cli-jvm",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:util"
+    ],
+    [
+     "implementation",
+     ":compiler:cli"
+    ],
+    [
+     "implementation",
+     ":compiler:cli-metadata"
+    ],
+    [
+     "implementation",
+     ":compiler:container"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.java"
+    ],
+    [
+     "implementation",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.backend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.psi2ir"
+    ],
+    [
+     "implementation",
+     ":compiler:backend"
+    ],
+    [
+     "implementation",
+     ":compiler:backend.jvm.entrypoint"
+    ],
+    [
+     "implementation",
+     ":compiler:plugin-api"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:entrypoint"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir2ir"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir2ir:jvm-backend"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-io"
+    ],
+    [
+     "implementation",
+     ":kotlin-build-common"
+    ],
+    [
+     "implementation",
+     ":compiler:javac-wrapper"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-klib-metadata"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:tools-jar-api:1.8.0_512"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:jdom:2.0.6"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_cli-jvm",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi"
+    ],
+    "free": [
+     "-Xjdk-release=1.8",
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": true
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:cli-metadata": {
+   "dir": "compiler/cli/cli-metadata",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:util"
+    ],
+    [
+     "implementation",
+     ":compiler:cli"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.backend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:backend"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir2ir"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-serialization"
+    ],
+    [
+     "implementation",
+     ":compiler:serialization"
+    ],
+    [
+     "implementation",
+     ":wasm:wasm.frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:resolve"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:providers"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:entrypoint"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-io"
+    ],
+    [
+     "implementation",
+     ":js:js.config"
+    ],
+    [
+     "implementation",
+     ":native:native.config"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-klib-metadata"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:tools-jar-api:1.8.0_512"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:jdom:2.0.6"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_cli-metadata",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi"
+    ],
+    "free": [
+     "-Xjdk-release=1.8",
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": true
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:compiler.version": {
+   "dir": "compiler/compiler.version",
+   "deps": [],
+   "external": [
+    [
+     "compileOnly",
+     "org.jetbrains:annotations:13.0"
+    ]
+   ],
+   "moduleName": "compiler.version",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":compiler:config": {
+   "dir": "compiler/config",
+   "deps": [
+    [
+     "api",
+     ":core:language.version-settings"
+    ],
+    [
+     "api",
+     ":core:metadata"
+    ],
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "compileOnly",
+     ":kotlin-util-klib"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_config",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:config.jvm": {
+   "dir": "compiler/config.jvm",
+   "deps": [
+    [
+     "api",
+     ":core:language.version-settings"
+    ],
+    [
+     "api",
+     ":core:language.targets.jvm"
+    ],
+    [
+     "api",
+     ":compiler:config"
+    ],
+    [
+     "api",
+     ":core:compiler.common.jvm"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_config.jvm",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:container": {
+   "dir": "compiler/container",
+   "deps": [
+    [
+     "api",
+     ":core:util.runtime"
+    ]
+   ],
+   "external": [
+    [
+     "api",
+     "javax.inject:javax.inject:1"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_container",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:checkers": {
+   "dir": "compiler/fir/checkers",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:providers"
+    ],
+    [
+     "api",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "api",
+     ":compiler:fir:raw-fir:raw-fir.common"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:diagnostic-renderers"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-frontend-utils"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_checkers",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:fir:checkers:checkers.js": {
+   "dir": "compiler/fir/checkers/checkers.js",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common.js"
+    ],
+    [
+     "api",
+     ":js:js.ast"
+    ],
+    [
+     "api",
+     ":compiler:fir:checkers"
+    ],
+    [
+     "api",
+     ":compiler:fir:checkers:checkers.web.common"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:diagnostic-renderers"
+    ],
+    [
+     "implementation",
+     ":js:js.config"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_checkers.js",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:checkers:checkers.jvm": {
+   "dir": "compiler/fir/checkers/checkers.jvm",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:checkers"
+    ],
+    [
+     "api",
+     ":compiler:fir:fir-jvm"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:diagnostic-renderers"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_checkers.jvm",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:checkers:checkers.native": {
+   "dir": "compiler/fir/checkers/checkers.native",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:checkers"
+    ],
+    [
+     "api",
+     ":native:base"
+    ],
+    [
+     "api",
+     ":compiler:fir:cones"
+    ],
+    [
+     "api",
+     ":compiler:fir:providers"
+    ],
+    [
+     "api",
+     ":compiler:fir:tree"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":core:util.runtime"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:diagnostic-renderers"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-native"
+    ],
+    [
+     "compileOnly",
+     ":core:compiler.common.native"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_checkers.native",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:checkers:checkers.wasm": {
+   "dir": "compiler/fir/checkers/checkers.wasm",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:checkers"
+    ],
+    [
+     "api",
+     ":compiler:fir:checkers:checkers.web.common"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:diagnostic-renderers"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.wasm"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.js"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.web"
+    ],
+    [
+     "implementation",
+     ":js:js.ast"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_checkers.wasm",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:checkers:checkers.web.common": {
+   "dir": "compiler/fir/checkers/checkers.web.common",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:checkers"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:diagnostic-renderers"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.web"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_checkers.web.common",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:cones": {
+   "dir": "compiler/fir/cones",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ]
+   ],
+   "external": [
+    [
+     "api",
+     "org.jetbrains.kotlinx:kotlinx-collections-immutable-jvm:0.5.1"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_cones",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:diagnostic-renderers": {
+   "dir": "compiler/fir/diagnostic-renderers",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:tree"
+    ],
+    [
+     "api",
+     ":compiler:fir:cones"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":core:metadata"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:providers"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ],
+    [
+     "implementation",
+     ":core:util.runtime"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_diagnostic-renderers",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:entrypoint": {
+   "dir": "compiler/fir/entrypoint",
+   "deps": [
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.java"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.wasm"
+    ],
+    [
+     "api",
+     ":compiler:fir:fir-jvm"
+    ],
+    [
+     "api",
+     ":compiler:fir:fir-native"
+    ],
+    [
+     "api",
+     ":compiler:fir:raw-fir:psi2fir"
+    ],
+    [
+     "api",
+     ":compiler:fir:raw-fir:light-tree2fir"
+    ],
+    [
+     "api",
+     ":compiler:fir:fir2ir"
+    ],
+    [
+     "api",
+     ":compiler:fir:checkers"
+    ],
+    [
+     "api",
+     ":compiler:fir:checkers:checkers.jvm"
+    ],
+    [
+     "api",
+     ":compiler:fir:checkers:checkers.js"
+    ],
+    [
+     "api",
+     ":compiler:fir:checkers:checkers.native"
+    ],
+    [
+     "api",
+     ":compiler:fir:checkers:checkers.wasm"
+    ],
+    [
+     "api",
+     ":compiler:fir:fir-deserialization"
+    ],
+    [
+     "implementation",
+     ":wasm:wasm.frontend"
+    ],
+    [
+     "implementation",
+     ":native:frontend.native"
+    ],
+    [
+     "api",
+     ":compiler:ir.actualization"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.native"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:resolve"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-serialization"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.backend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.serialization.common"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.tree"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "implementation",
+     ":js:js.config"
+    ],
+    [
+     "implementation",
+     ":js:js.frontend.common"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-klib-metadata"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_entrypoint",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:fir-deserialization": {
+   "dir": "compiler/fir/fir-deserialization",
+   "deps": [
+    [
+     "implementation",
+     ":core:metadata"
+    ],
+    [
+     "implementation",
+     ":core:deserialization.common"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:fir:cones"
+    ],
+    [
+     "api",
+     ":compiler:fir:tree"
+    ],
+    [
+     "api",
+     ":compiler:fir:providers"
+    ],
+    [
+     "api",
+     ":compiler:fir:semantics"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_fir-deserialization",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:fir-jvm": {
+   "dir": "compiler/fir/fir-jvm",
+   "deps": [
+    [
+     "implementation",
+     ":core:compiler.common.jvm"
+    ],
+    [
+     "implementation",
+     ":core:metadata.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-frontend-utils"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:resolve"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:checkers"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-deserialization"
+    ],
+    [
+     "api",
+     ":core:deserialization.common.jvm"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_fir-jvm",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:fir-native": {
+   "dir": "compiler/fir/fir-native",
+   "deps": [
+    [
+     "implementation",
+     ":core:compiler.common.native"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:resolve"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_fir-native",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:fir-serialization": {
+   "dir": "compiler/fir/fir-serialization",
+   "deps": [
+    [
+     "implementation",
+     ":core:compiler.common"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-deserialization"
+    ],
+    [
+     "implementation",
+     ":compiler:serialization"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-klib-metadata"
+    ],
+    [
+     "api",
+     ":compiler:fir:cones"
+    ],
+    [
+     "api",
+     ":compiler:fir:tree"
+    ],
+    [
+     "api",
+     ":compiler:fir:providers"
+    ],
+    [
+     "api",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "api",
+     ":compiler:fir:resolve"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_fir-serialization",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:fir:fir2ir": {
+   "dir": "compiler/fir/fir2ir",
+   "deps": [
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:cones"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:resolve"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:providers"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:tree"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.tree"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.backend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.serialization.common"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-serialization"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-deserialization"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.web"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_fir2ir",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:fir:fir2ir:jvm-backend": {
+   "dir": "compiler/fir/fir2ir/jvm-backend",
+   "deps": [
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:backend.common.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:cones"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:resolve"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:providers"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:tree"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir2ir"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:fir-serialization"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.tree"
+    ],
+    [
+     "api",
+     ":compiler:ir.serialization.common"
+    ],
+    [
+     "implementation",
+     ":compiler:util"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:backend"
+    ],
+    [
+     "implementation",
+     ":compiler:backend.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.actualization"
+    ],
+    [
+     "implementation",
+     ":compiler:serialization"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_jvm-backend",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:providers": {
+   "dir": "compiler/fir/providers",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:resolution.common"
+    ],
+    [
+     "api",
+     ":compiler:fir:cones"
+    ],
+    [
+     "api",
+     ":compiler:fir:tree"
+    ],
+    [
+     "implementation",
+     ":core:util.runtime"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_providers",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-Xconsistent-data-class-copy-visibility",
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:fir:raw-fir:light-tree2fir": {
+   "dir": "compiler/fir/raw-fir/light-tree2fir",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:raw-fir:raw-fir.common"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-impl"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-frontend-utils"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:parser"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin.fir_light-tree2fir",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:fir:raw-fir:psi2fir": {
+   "dir": "compiler/fir/raw-fir/psi2fir",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:raw-fir:raw-fir.common"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-impl"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-frontend-utils"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_psi2fir",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:raw-fir:raw-fir.common": {
+   "dir": "compiler/fir/raw-fir/raw-fir.common",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:tree"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:parser"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_raw-fir.common",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:resolve": {
+   "dir": "compiler/fir/resolve",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:providers"
+    ],
+    [
+     "api",
+     ":compiler:fir:semantics"
+    ],
+    [
+     "implementation",
+     ":core:util.runtime"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_resolve",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.scopes.ScopeFunctionRequiresPrewarm",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:fir:semantics": {
+   "dir": "compiler/fir/semantics",
+   "deps": [
+    [
+     "api",
+     ":compiler:fir:providers"
+    ],
+    [
+     "implementation",
+     ":core:util.runtime"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_semantics",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:fir:tree": {
+   "dir": "compiler/fir/tree",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:container"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:fir:cones"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_tree",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess",
+     "org.jetbrains.kotlin.fir.symbols.SymbolInternals",
+     "org.jetbrains.kotlin.types.model.K2Only"
+    ],
+    "free": [
+     "-XXexplicit-return-types=warning"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:frontend": {
+   "dir": "compiler/frontend",
+   "deps": [
+    [
+     "api",
+     ":kotlin-annotations-jvm"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:config"
+    ],
+    [
+     "implementation",
+     ":compiler:container"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "api",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "api",
+     ":compiler:psi:psi-utils"
+    ],
+    [
+     "api",
+     ":compiler:psi:psi-frontend-utils"
+    ],
+    [
+     "api",
+     ":compiler:psi:parser"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common-psi"
+    ]
+   ],
+   "external": [
+    [
+     "api",
+     "io.vavr:vavr:0.10.4"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_frontend",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [
+     "-Xconsistent-data-class-copy-visibility"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:frontend.common": {
+   "dir": "compiler/frontend.common",
+   "deps": [
+    [
+     "api",
+     ":compiler:config"
+    ],
+    [
+     "implementation",
+     ":compiler:container"
+    ],
+    [
+     "api",
+     ":core:deserialization.common"
+    ],
+    [
+     "api",
+     ":compiler:plugin-api"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_frontend.common",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:frontend.common-psi": {
+   "dir": "compiler/frontend.common-psi",
+   "deps": [
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "api",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "api",
+     ":compiler:psi:psi-impl"
+    ],
+    [
+     "api",
+     ":compiler:psi:psi-frontend-utils"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_frontend.common-psi",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:frontend.common.jvm": {
+   "dir": "compiler/frontend.common.jvm",
+   "deps": [
+    [
+     "api",
+     ":core:deserialization.common.jvm"
+    ],
+    [
+     "api",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "api",
+     ":core:compiler.common.jvm"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ],
+    [
+     "implementation",
+     "io.vavr:vavr:0.10.4"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_frontend.common.jvm",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:frontend.java": {
+   "dir": "compiler/frontend.java",
+   "deps": [
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:container"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "api",
+     ":compiler:resolution.common.jvm"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common.jvm"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "javax.annotation:jsr250-api:1.0"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_frontend.java",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:frontend:cfg": {
+   "dir": "compiler/frontend/cfg",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_cfg",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:ir.actualization": {
+   "dir": "compiler/ir/ir.actualization",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution.common"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_ir.actualization",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:ir.backend.common": {
+   "dir": "compiler/ir/backend.common",
+   "deps": [
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "api",
+     ":compiler:ir.interpreter"
+    ],
+    [
+     "api",
+     ":compiler:ir.serialization.common"
+    ],
+    [
+     "api",
+     ":compiler:ir.validation"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.native"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_ir.backend.common",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:ir.interpreter": {
+   "dir": "compiler/ir/ir.interpreter",
+   "deps": [
+    [
+     "compileOnly",
+     ":compiler:ir.tree"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.js"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.serialization.common"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_ir.interpreter",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:ir.objcinterop": {
+   "dir": "compiler/ir/ir.objcinterop",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.native"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_ir.objcinterop",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:ir.psi2ir": {
+   "dir": "compiler/ir/ir.psi2ir",
+   "deps": [
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution.common"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "api",
+     ":compiler:ir.backend.common"
+    ],
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.serialization.common"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_ir.psi2ir",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.DeprecatedForRemovalCompilerApi",
+     "org.jetbrains.kotlin.K1Deprecation",
+     "org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI",
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:ir.serialization.common": {
+   "dir": "compiler/ir/serialization.common",
+   "deps": [
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "api",
+     ":kotlin-util-klib"
+    ],
+    [
+     "implementation",
+     ":compiler:serialization"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "implementation",
+     ":core:deserialization.common"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-klib-metadata"
+    ],
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "implementation",
+     ":compiler:fir:diagnostic-renderers"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-frontend-utils"
+    ],
+    [
+     "compileOnly",
+     ":compiler:cli-base"
+    ],
+    [
+     "compileOnly",
+     ":compiler:fir:diagnostic-renderers"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_ir.serialization.common",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI",
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:ir.serialization.jvm": {
+   "dir": "compiler/ir/serialization.jvm",
+   "deps": [
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "api",
+     ":compiler:ir.serialization.common"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-klib-metadata"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.java"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_ir.serialization.jvm",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:ir.tree": {
+   "dir": "compiler/ir/ir.tree",
+   "deps": [
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:util"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_ir.tree",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [
+     "-Xconsistent-data-class-copy-visibility"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:ir.validation": {
+   "dir": "compiler/ir/ir.validation",
+   "deps": [
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:ir.tree"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:util.runtime"
+    ],
+    [
+     "implementation",
+     ":kotlin-util-klib"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common-psi"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_ir.validation",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:javac-wrapper": {
+   "dir": "compiler/javac-wrapper",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:frontend.java"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:tools-jar-api:1.8.0_512"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_javac-wrapper",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [
+     "-Xjdk-release=1.8"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": true
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:plugin-api": {
+   "dir": "compiler/plugin-api",
+   "deps": [
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:config"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_plugin-api",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi"
+    ],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:psi:parser": {
+   "dir": "compiler/psi/parser",
+   "deps": [
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_parser",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:psi:psi-api": {
+   "dir": "compiler/psi/psi-api",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_psi-api",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":compiler:psi:psi-frontend-utils": {
+   "dir": "compiler/psi/psi-frontend-utils",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_psi-frontend-utils",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:psi:psi-impl": {
+   "dir": "compiler/psi/psi-impl",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ],
+    [
+     "implementation",
+     ":compiler:psi:parser"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_psi-impl",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:psi:psi-utils": {
+   "dir": "compiler/psi/psi-utils",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:psi:psi-api"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.google.guava:guava:33.3.1-jre"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_psi-utils",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":compiler:resolution": {
+   "dir": "compiler/resolution",
+   "deps": [
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "api",
+     ":compiler:resolution.common"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_resolution",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:resolution.common": {
+   "dir": "compiler/resolution.common",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":compiler:config"
+    ],
+    [
+     "api",
+     ":compiler:util"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_resolution.common",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:resolution.common.jvm": {
+   "dir": "compiler/resolution.common.jvm",
+   "deps": [
+    [
+     "api",
+     ":compiler:resolution.common"
+    ],
+    [
+     "api",
+     ":core:compiler.common"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_resolution.common.jvm",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":compiler:serialization": {
+   "dir": "compiler/serialization",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "api",
+     ":compiler:util"
+    ],
+    [
+     "api",
+     ":compiler:serialization.common"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_serialization",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":compiler:serialization.common": {
+   "dir": "compiler/serialization.common",
+   "deps": [
+    [
+     "api",
+     ":core:metadata"
+    ],
+    [
+     "api",
+     ":core:names"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_serialization.common",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":compiler:util": {
+   "dir": "compiler/util",
+   "deps": [
+    [
+     "api",
+     ":compiler:compiler.version"
+    ],
+    [
+     "api",
+     ":core:util.runtime"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "log4j:log4j:1.2.17"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ],
+    [
+     "compileOnly",
+     "com.jetbrains.intellij.platform:jps-model:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "com.jetbrains.intellij.platform:jps-model-impl:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_util",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xconsistent-data-class-copy-visibility",
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:compiler.common": {
+   "dir": "core/compiler.common",
+   "deps": [
+    [
+     "api",
+     ":core:util.runtime"
+    ],
+    [
+     "api",
+     ":core:names"
+    ],
+    [
+     "api",
+     ":core:language.model"
+    ],
+    [
+     "api",
+     ":core:language.targets"
+    ],
+    [
+     "api",
+     ":kotlin-annotations-jvm"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_compiler.common",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":core:compiler.common.js": {
+   "dir": "core/compiler.common.js",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_compiler.common.js",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:compiler.common.jvm": {
+   "dir": "core/compiler.common.jvm",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_compiler.common.jvm",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:compiler.common.native": {
+   "dir": "core/compiler.common.native",
+   "deps": [
+    [
+     "implementation",
+     ":core:compiler.common"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_compiler.common.native",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:compiler.common.wasm": {
+   "dir": "core/compiler.common.wasm",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.web"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_compiler.common.wasm",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:compiler.common.web": {
+   "dir": "core/compiler.common.web",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_compiler.common.web",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:descriptors": {
+   "dir": "core/descriptors",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":core:util.runtime"
+    ],
+    [
+     "api",
+     ":kotlin-annotations-jvm"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_descriptors",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "disable",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":core:descriptors.jvm": {
+   "dir": "core/descriptors.jvm",
+   "deps": [
+    [
+     "api",
+     ":kotlin-annotations-jvm"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "api",
+     ":core:compiler.common.jvm"
+    ],
+    [
+     "api",
+     ":core:deserialization.common.jvm"
+    ],
+    [
+     "api",
+     ":core:util.runtime"
+    ]
+   ],
+   "external": [
+    [
+     "api",
+     "javax.inject:javax.inject:1"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_descriptors.jvm",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:deserialization": {
+   "dir": "core/deserialization",
+   "deps": [
+    [
+     "api",
+     ":core:metadata"
+    ],
+    [
+     "api",
+     ":core:deserialization.common"
+    ],
+    [
+     "api",
+     ":core:util.runtime"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ]
+   ],
+   "external": [
+    [
+     "api",
+     "javax.inject:javax.inject:1"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_deserialization",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:deserialization.common": {
+   "dir": "core/deserialization.common",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":core:metadata"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_deserialization.common",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:deserialization.common.jvm": {
+   "dir": "core/deserialization.common.jvm",
+   "deps": [
+    [
+     "api",
+     ":core:metadata.jvm"
+    ],
+    [
+     "api",
+     ":core:deserialization.common"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.jvm"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_deserialization.common.jvm",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xconsistent-data-class-copy-visibility"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:language.model": {
+   "dir": "core/language.model",
+   "deps": [],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_language.model",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":core:language.targets": {
+   "dir": "core/language.targets",
+   "deps": [
+    [
+     "api",
+     ":core:language.model"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_language.targets",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":core:language.targets.jvm": {
+   "dir": "core/language.targets.jvm",
+   "deps": [
+    [
+     "api",
+     ":core:language.targets"
+    ]
+   ],
+   "external": [
+    [
+     "implementation",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_language.targets.jvm",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":core:language.version-settings": {
+   "dir": "core/language.version-settings",
+   "deps": [
+    [
+     "api",
+     ":core:language.model"
+    ],
+    [
+     "implementation",
+     ":compiler:compiler.version"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_language.version-settings",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":core:metadata": {
+   "dir": "core/metadata",
+   "deps": [],
+   "external": [
+    [
+     "api",
+     "org.jetbrains.kotlin:protobuf-lite:2.6.1-2"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_metadata",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.0",
+    "languageVersion": "2.0",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":core:metadata.jvm": {
+   "dir": "core/metadata.jvm",
+   "deps": [
+    [
+     "api",
+     ":core:metadata"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_metadata.jvm",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":core:names": {
+   "dir": "core/names",
+   "deps": [],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_names",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":core:util.runtime": {
+   "dir": "core/util.runtime",
+   "deps": [],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_util.runtime",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":js:js.ast": {
+   "dir": "js/js.ast",
+   "deps": [
+    [
+     "implementation",
+     ":core:util.runtime"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "it.unimi.dsi:fastutil:8.5.14"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_js.ast",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":js:js.config": {
+   "dir": "js/js.config",
+   "deps": [
+    [
+     "api",
+     ":compiler:config"
+    ],
+    [
+     "compileOnly",
+     ":core:metadata"
+    ],
+    [
+     "api",
+     ":core:metadata"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_js.config",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":js:js.frontend.common": {
+   "dir": "js/js.frontend.common",
+   "deps": [
+    [
+     "api",
+     ":compiler:frontend.common"
+    ],
+    [
+     "api",
+     ":compiler:resolution.common"
+    ],
+    [
+     "api",
+     ":core:compiler.common.js"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_js.frontend.common",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":kotlin-annotations-jvm": {
+   "dir": "libraries/tools/kotlin-annotations-jvm",
+   "deps": [],
+   "external": [],
+   "moduleName": "kotlin-annotations-jvm",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xallow-kotlin-package"
+    ],
+    "apiVersion": "2.4",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":kotlin-build-common": {
+   "dir": "build-common",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:arguments.common"
+    ],
+    [
+     "implementation",
+     ":compiler:config.jvm"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.java"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":compiler:serialization"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":core:descriptors.jvm"
+    ],
+    [
+     "implementation",
+     ":core:deserialization"
+    ],
+    [
+     "compileOnly",
+     ":core:util.runtime"
+    ],
+    [
+     "compileOnly",
+     ":compiler:backend.common.jvm"
+    ],
+    [
+     "compileOnly",
+     ":compiler:util"
+    ],
+    [
+     "compileOnly",
+     ":compiler:cli-base"
+    ],
+    [
+     "compileOnly",
+     ":compiler:frontend.java"
+    ],
+    [
+     "compileOnly",
+     ":js:js.config"
+    ],
+    [
+     "compileOnly",
+     ":kotlin-util-klib-metadata"
+    ],
+    [
+     "compileOnly",
+     ":compiler:build-tools:kotlin-build-statistics"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "org.jetbrains.kotlin:kotlin-reflect:2.4.21"
+    ],
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ],
+    [
+     "compileOnly",
+     "org.jetbrains.intellij.deps:asm-all:9.6.1"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_kotlin-build-common",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [
+     "-opt-in=org.jetbrains.kotlin.utils.addToStdlib.UnsafeCastFunction",
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":kotlin-util-io": {
+   "dir": "compiler/util-io",
+   "deps": [],
+   "external": [],
+   "moduleName": "kotlin-util-io",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings",
+     "-Xsam-conversions=class"
+    ],
+    "apiVersion": "2.0",
+    "languageVersion": "2.0",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": true,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":kotlin-util-klib": {
+   "dir": "compiler/util-klib",
+   "deps": [
+    [
+     "api",
+     ":kotlin-util-io"
+    ],
+    [
+     "compileOnly",
+     ":core:metadata"
+    ],
+    [
+     "api",
+     ":core:metadata"
+    ]
+   ],
+   "external": [],
+   "moduleName": "kotlin-util-klib",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings",
+     "-Xsam-conversions=class"
+    ],
+    "apiVersion": "2.0",
+    "languageVersion": "2.0",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": true,
+    "javaRelease8": false
+   },
+   "kosabiMode": "class"
+  },
+  ":kotlin-util-klib-metadata": {
+   "dir": "compiler/util-klib-metadata",
+   "deps": [
+    [
+     "compileOnly",
+     ":core:descriptors"
+    ],
+    [
+     "compileOnly",
+     ":compiler:config.jvm"
+    ],
+    [
+     "compileOnly",
+     ":compiler:frontend"
+    ],
+    [
+     "compileOnly",
+     ":core:deserialization"
+    ],
+    [
+     "compileOnly",
+     ":core:compiler.common.native"
+    ],
+    [
+     "compileOnly",
+     ":compiler:serialization"
+    ],
+    [
+     "compileOnly",
+     ":native:kotlin-native-utils"
+    ],
+    [
+     "compileOnly",
+     ":native:native.config"
+    ],
+    [
+     "api",
+     ":kotlin-util-io"
+    ],
+    [
+     "api",
+     ":kotlin-util-klib"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_kotlin-util-klib-metadata",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.0",
+    "languageVersion": "2.0",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":native:base": {
+   "dir": "native/base",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:cli-base"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.native"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":native:frontend.native"
+    ],
+    [
+     "api",
+     ":native:binary-options"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_base",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.backend.konan.InternalKotlinNativeApi"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":native:binary-options": {
+   "dir": "native/binary-options",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:config"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_binary-options",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":native:frontend.native": {
+   "dir": "native/frontend",
+   "deps": [
+    [
+     "implementation",
+     ":compiler:container"
+    ],
+    [
+     "implementation",
+     ":compiler:resolution"
+    ],
+    [
+     "implementation",
+     ":core:descriptors"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.java"
+    ],
+    [
+     "implementation",
+     ":core:compiler.common.native"
+    ],
+    [
+     "implementation",
+     ":compiler:ir.objcinterop"
+    ],
+    [
+     "api",
+     ":native:kotlin-native-utils"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_frontend.native",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":native:kotlin-native-utils": {
+   "dir": "native/utils",
+   "deps": [
+    [
+     "api",
+     ":kotlin-util-io"
+    ],
+    [
+     "api",
+     ":kotlin-util-klib"
+    ]
+   ],
+   "external": [],
+   "moduleName": "kotlin-native-utils",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings",
+     "-Xsam-conversions=class"
+    ],
+    "apiVersion": "2.0",
+    "languageVersion": "2.0",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": true,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":native:native.config": {
+   "dir": "native/native.config",
+   "deps": [
+    [
+     "api",
+     ":core:compiler.common"
+    ],
+    [
+     "api",
+     ":core:language.model"
+    ],
+    [
+     "api",
+     ":core:language.targets"
+    ],
+    [
+     "api",
+     ":compiler:config"
+    ],
+    [
+     "api",
+     ":native:kotlin-native-utils"
+    ],
+    [
+     "compileOnly",
+     ":core:metadata"
+    ],
+    [
+     "api",
+     ":core:metadata"
+    ]
+   ],
+   "external": [
+    [
+     "compileOnly",
+     "local:intellij-core:251.27812.49"
+    ]
+   ],
+   "moduleName": "org.jetbrains.kotlin_native.config",
+   "options": {
+    "optIns": [],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  },
+  ":wasm:wasm.config": {
+   "dir": "wasm/wasm.config",
+   "deps": [
+    [
+     "api",
+     ":compiler:config"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_wasm.config",
+   "options": {
+    "optIns": [],
+    "free": [
+     "-Xsuppress-version-warnings"
+    ],
+    "apiVersion": "2.2",
+    "languageVersion": "2.2",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "flat"
+  },
+  ":wasm:wasm.frontend": {
+   "dir": "wasm/wasm.frontend",
+   "deps": [
+    [
+     "api",
+     ":compiler:config"
+    ],
+    [
+     "api",
+     ":wasm:wasm.config"
+    ],
+    [
+     "implementation",
+     ":compiler:frontend.common"
+    ],
+    [
+     "implementation",
+     ":core:names"
+    ]
+   ],
+   "external": [],
+   "moduleName": "org.jetbrains.kotlin_wasm.frontend",
+   "options": {
+    "optIns": [
+     "org.jetbrains.kotlin.K1Deprecation"
+    ],
+    "free": [],
+    "apiVersion": "2.2",
+    "languageVersion": "2.4",
+    "jvmDefault": "no-compatibility",
+    "gradleCompat": false,
+    "javaRelease8": false
+   },
+   "kosabiMode": "chained"
+  }
+ }
+}

@@ -1,0 +1,156 @@
+{
+ "com.google.code.findbugs:jsr305:3.0.2": {
+  "sha1": "25ea2e8b0c338a877313bd4672d3fe056ea78f0d",
+  "sha256": "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"
+ },
+ "com.google.code.gson:gson:2.11.0": {
+  "sha1": "527175ca6d81050b53bdd4c457a6d6e017626b0e",
+  "sha256": "57928d6e5a6edeb2abd3770a8f95ba44dce45f3b23b7a9dc2b309c581552a78b"
+ },
+ "com.google.errorprone:error_prone_annotations:2.28.0": {
+  "sha1": "59fc00087ce372de42e394d2c789295dff2d19f0",
+  "sha256": "f3fc8a3a0a4020706a373b00e7f57c2512dd26d1f83d28c7d38768f8682b231e"
+ },
+ "com.google.guava:failureaccess:1.0.2": {
+  "sha1": "c4a06a64e650562f30b7bf9aaec1bfed43aca12b",
+  "sha256": "8a8f81cf9b359e3f6dfa691a1e776985c061ef2f223c9b2c80753e1b458e8064"
+ },
+ "com.google.guava:guava:33.3.1-jre": {
+  "sha1": "852f8b363da0111e819460021ca693cacca3e8db",
+  "sha256": "4bf0e2c5af8e4525c96e8fde17a4f7307f97f8478f11c4c8e35a0e3298ae4e90"
+ },
+ "com.google.j2objc:j2objc-annotations:3.0.0": {
+  "sha1": "7399e65dd7e9ff3404f4535b2f017093bdb134c7",
+  "sha256": "88241573467ddca44ffd4d74aa04c2bbfd11bf7c17e0c342c94c9de7a70a7c64"
+ },
+ "com.jetbrains.intellij.java:java-frontback-psi-impl:251.27812.49": {
+  "sha1": "2f602ec64f97110aaef9a8690a27f9d2ee9f45af",
+  "sha256": "6626d048e289da02393200a581b3c08bfcf1454b219775d0eae39e86b6244dbe"
+ },
+ "com.jetbrains.intellij.java:java-frontback-psi:251.27812.49": {
+  "sha1": "5ca1f4189b40b7b50dd131a181730f4be24a053c",
+  "sha256": "9feaa3d907d7bee5903fef947b053e1dbafca0d06c2822e29b789c9bd0964e75"
+ },
+ "com.jetbrains.intellij.java:java-psi-impl:251.27812.49": {
+  "sha1": "cf5c464c521e59507d75046cceeac5490d2d34d4",
+  "sha256": "d47d88dcda91e65da292686bca326805c745025326edfbc5b28968cad8e07c22"
+ },
+ "com.jetbrains.intellij.java:java-psi:251.27812.49": {
+  "sha1": "bc51f3b32d361fd42bb20f1b72a27ae7050a1527",
+  "sha256": "f56029ff30dc3e8f1f0136a77aef739b14e09f3c1928e5b1a6e81186336fd3fa"
+ },
+ "com.jetbrains.intellij.platform:core-impl:251.27812.49": {
+  "sha1": "9e364509d79432e65273ed125c14b4a2e140e765",
+  "sha256": "747a9c471deedf2f5349d7678e3e30a74e35cff2d7f8cd9af026531da4d014e2"
+ },
+ "com.jetbrains.intellij.platform:core:251.27812.49": {
+  "sha1": "365595cf252eee7f3436822b516d0365ab0e7daa",
+  "sha256": "2a360e0757104021952e79579fa46150c9a599c625a01f46dbb546707e1f6a8f"
+ },
+ "com.jetbrains.intellij.platform:diagnostic:251.27812.49": {
+  "sha1": "bfc585d09cf54835fa98568803ec6929bfcda3a2",
+  "sha256": "89566f24046e2212171c3698423e9242ca4ba3805a316b069ae48f2f83a071cb"
+ },
+ "com.jetbrains.intellij.platform:extensions:251.27812.49": {
+  "sha1": "b3a49773587cf25b8781d474acd19f486e636a17",
+  "sha256": "4eed3f20016072bb53fc738b866a7117d449cb6b7ed8543107740f11b80f6f9c"
+ },
+ "com.jetbrains.intellij.platform:jps-model-impl:251.27812.49": {
+  "sha1": "5747cfdb18e31c3eca8f11b1e728fcb43696211b",
+  "sha256": "90c406cb9b0e8507596af035517e426faf98836acf051f3bfd18ec5aeb58137e"
+ },
+ "com.jetbrains.intellij.platform:jps-model:251.27812.49": {
+  "sha1": "868d5f99d97dccce4dac398b4b3f7f8c631d4559",
+  "sha256": "b8fb2b370b8fdab3d697e37679baf533914062234381b51fd6fac09864c4ab02"
+ },
+ "com.jetbrains.intellij.platform:util-base:251.27812.49": {
+  "sha1": "52395876e8b1a4eab03e13b09cd67b3b95bb5e45",
+  "sha256": "a1624aa6898f4e6f56cc447e7c70d97929aff25de4b297ff87395c744ada2156"
+ },
+ "com.jetbrains.intellij.platform:util-class-loader:251.27812.49": {
+  "sha1": "d13d9a216266af89fafb6b6d59e08abe34eadb78",
+  "sha256": "40d78a8218c592a898014f8b227299eef85e6ae803cf9728ee60bd955b2fb581"
+ },
+ "com.jetbrains.intellij.platform:util-coroutines:251.27812.49": {
+  "sha1": "b49a9e77a1df690e1539c08cee49ad8fb53f317e",
+  "sha256": "b6e463db1726440f56607ff5bc2674614144e3bccb9ed93dbf376b7583ef9779"
+ },
+ "com.jetbrains.intellij.platform:util-jdom:251.27812.49": {
+  "sha1": "cd3c1be97b6654f91a318e37e2696f12493b212b",
+  "sha256": "f59a74e793e3c897d9d0603fbeb08b3f34c9963f1cc918c0c5352eb83cd8a998"
+ },
+ "com.jetbrains.intellij.platform:util-rt:251.27812.49": {
+  "sha1": "9c6c29a19a9b2432ab80c67c06ef012319a5edb3",
+  "sha256": "ef604bacb5fcc4dd55dcc5ecaa887fc70a54e95638ed39a4ca3f4bdfde48846a"
+ },
+ "com.jetbrains.intellij.platform:util-xml-dom:251.27812.49": {
+  "sha1": "7ca655c4e3e028fa80de69a2a3b9f2fb1e21a224",
+  "sha256": "d27e2ab8440cea742bb69415ba043efcf81caae70f6ba1de792b691086901d46"
+ },
+ "com.jetbrains.intellij.platform:util:251.27812.49": {
+  "sha1": "741cbc5c8d00b6b6290709bb05428078321477e9",
+  "sha256": "9394ee3a95e7985a22d07fcc8ce44c24b47e81e9232477093221ddc389ab7c25"
+ },
+ "io.vavr:vavr-match:0.10.4": {
+  "sha1": "64a1405f5846a77ab1c1ef2e86e08b30e3507321",
+  "sha256": "d46f96bf59ccd5800261eec5869a6877ee0a37ea781312e6735be55539f50354"
+ },
+ "io.vavr:vavr:0.10.4": {
+  "sha1": "c120b6912f6e838fdd30638b8fd5ec1c84773319",
+  "sha256": "12622deeea2618b59b284051a9484f1def8ccbebc847c350358f12d325ba9dd5"
+ },
+ "it.unimi.dsi:fastutil:8.5.14": {
+  "sha1": "950f40553c3b66529be037ff08d99687aa98788e",
+  "sha256": "a242589eef95f377922b5816f3a46c6f2a8efb90e3709e3515b778bb7f76e5a4"
+ },
+ "javax.annotation:jsr250-api:1.0": {
+  "sha1": "5025422767732a1ab45d93abfea846513d742dcf",
+  "sha256": "a1a922d0d9b6d183ed3800dfac01d1e1eb159f0e8c6f94736931c1def54a941f"
+ },
+ "javax.inject:javax.inject:1": {
+  "sha1": "6975da39a7040257bd51d21a231b76c915872d38",
+  "sha256": "91c77044a50c481636c32d916fd89c9118a72195390452c81065080f957de7ff"
+ },
+ "log4j:log4j:1.2.17": {
+  "sha1": "5af35056b4d257e4b64b9e8069c0746e8b08629f",
+  "sha256": "1d31696445697720527091754369082a6651bd49781b6005deb94e56753406f9"
+ },
+ "org.checkerframework:checker-qual:3.43.0": {
+  "sha1": "9425eee39e56b116d2b998b7c2cebcbd11a3c98b",
+  "sha256": "3fbc2e98f05854c3df16df9abaa955b91b15b3ecac33623208ed6424640ef0f6"
+ },
+ "org.fusesource.jansi:jansi:2.4.0": {
+  "sha1": "321c614f85f1dea6bb08c1817c60d53b7f3552fd",
+  "sha256": "6cd91991323dd7b2fb28ca93d7ac12af5a86a2f53279e2b35827b30313fd0b9f"
+ },
+ "org.jetbrains.intellij.deps:asm-all:9.6.1": {
+  "sha256": "a72e84efb1406a7ab326e0b28c4376e9e1ebfc08c09f23edff5e6e7249588df7"
+ },
+ "org.jetbrains.kotlin:kotlin-reflect:2.4.21": {
+  "sha1": "0123e9b5b31f85b43025149fb1a34bb569288157",
+  "sha256": "7c9e8bda3cafa85b65692065acd22578b2843292b4e4baa8361bdc9175746e88"
+ },
+ "org.jetbrains.kotlin:kotlin-stdlib:2.4.21": {
+  "sha1": "c343e135bd1e7dd94b7ed76b4159068d888d09db",
+  "sha256": "bd8250210584cb659847dce9cda660f8e9906e5def7fbebcea93dc6dcb6a88a3"
+ },
+ "org.jetbrains.kotlin:protobuf-lite:2.6.1-2": {
+  "sha256": "8709850e226adde3b0985e1cbb79ac675731b664fbd05eda880bdc1079653b82"
+ },
+ "org.jetbrains.kotlinx:kotlinx-collections-immutable-jvm:0.5.1": {
+  "sha1": "75cd0756424334b5b2d637a895fc8daf1d2dbbfa",
+  "sha256": "d5e4bb25d6e90f7471662b3500259e247523a410e6a820dcc4000d386b0c248c"
+ },
+ "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0": {
+  "sha1": "ac1dc37a30a93150b704022f8d895ee1bd3a36b3",
+  "sha256": "9860906a1937490bf5f3b06d2f0e10ef451e65b95b269f22daf68a3d1f5065c5"
+ },
+ "org.jetbrains:annotations:13.0": {
+  "sha1": "919f0dfe192fb4e063e7dacadee7f8bb9a2672a9",
+  "sha256": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478"
+ },
+ "org.jetbrains:annotations:23.0.0": {
+  "sha1": "8cc20c07506ec18e0834947b84a864bfc094484e",
+  "sha256": "7b0f19724082cbfcbc66e5abea2b9bc92cf08a1ea11e191933ed43801eb3cd05"
+ }
+}

@@ -25,3 +25,9 @@ Examples testing the various toolchains included in the prelude.
 ## bootstrap
 
 A sample project that demonstrates configuration of a bootstrap toolchain.
+
+## kotlin_compiler
+
+Builds the Kotlin compiler from JetBrains/kotlin with the prelude's Kotlin
+toolchain. A script generates the BUCK files from a model of the compiler's
+Gradle build.

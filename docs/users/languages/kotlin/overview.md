@@ -103,3 +103,11 @@ Without the `: String`, the target's source-only ABI action fails with
 
 The toolchain enables Kosabi by default. `[kotlin] enable_source_only_abi =
 false` turns it off, and then `source_only` targets build class ABIs instead.
+
+## Building the Kotlin compiler
+
+[`examples/kotlin_compiler`](https://github.com/facebook/buck2/tree/main/examples/kotlin_compiler)
+generates BUCK files for the compiler in
+[JetBrains/kotlin](https://github.com/JetBrains/kotlin) 2.4.21, 102 modules,
+and builds it with the prelude's Kotlin toolchain, with class or source-only
+ABIs.

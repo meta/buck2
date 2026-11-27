@@ -35,6 +35,24 @@ android_binary(
     ],
 )
 
+# App bundle (.aab) for Google Play. bundletool requires a version code, which
+# `manifest_entries` sets here, as `versionCode` in Gradle's `defaultConfig`.
+android_bundle(
+    name = "demoapp_bundle",
+    keystore = ":debug",
+    manifest_entries = {
+        "version_code": 1,
+        "version_name": "1.0",
+    },
+    manifest_skeleton = "src/main/AndroidManifest.xml",
+    primary_dex_patterns = ["^com/facebook/demoapp/"],
+    use_split_dex = True,
+    deps = [
+        ":res",
+        "//app/src/main/java/com/facebook/demoapp/ui:ui",
+    ],
+)
+
 android_resource(
     name = "res",
     package = "com.facebook.demoapp",

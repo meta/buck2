@@ -256,7 +256,7 @@ object StubBytecodeRender {
     val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
 
     classWriter.visit(
-        Opcodes.ASM9,
+        Opcodes.V1_8,
         stub.accessFlags(),
         stub.internalName(),
         stub.signature(),

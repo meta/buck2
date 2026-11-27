@@ -30,7 +30,6 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/cd/command/kotlin:command",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/buildtools:buildtools",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics:analytics",
-        "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/buildtools/snapshot:cp_snapshot_generator_lib",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/kotlinc:kotlinc",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/kotlinc/incremental:incremental",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/usedclasses:usedclasses",

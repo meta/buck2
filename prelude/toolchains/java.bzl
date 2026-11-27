@@ -92,6 +92,8 @@ def javacd_toolchain(name, java, javac, jar, jlink, jmod, jrt_fs_jar, java_for_t
         jar = jar,
         java_for_tests = java_for_tests,
         is_bootstrap_toolchain = False,
+        # The highest ABI generation mode of any target: its own `abi_generation_mode` can only lower it.
+        abi_generation_mode = read_root_config("java", "abi_generation_mode", "class"),
         class_abi_generator = "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi:api-stubber",
         class_loader_bootstrapper = "prelude//toolchains/android/src/com/facebook/buck/cli/bootstrapper:bootstrapper",
         fat_jar_main_class_lib = "prelude//toolchains/android/src/com/facebook/buck/jvm/java/fatjar:fat-jar-main-binary",
@@ -124,8 +126,7 @@ def _java_toolchain_impl(ctx):
             name = ctx.attrs.name,
         ),
         JavaToolchainInfo(
-            # TODO(navidq) make this configurable via buck config
-            abi_generation_mode = AbiGenerationMode("none"),
+            abi_generation_mode = AbiGenerationMode(ctx.attrs.abi_generation_mode),
             compile_and_package = ctx.attrs.compile_and_package,
             class_abi_generator = ctx.attrs.class_abi_generator,
             class_loader_bootstrapper = ctx.attrs.class_loader_bootstrapper,
@@ -171,6 +172,7 @@ _java_toolchain = rule(
     impl = _java_toolchain_impl,
     is_toolchain_rule = True,
     attrs = {
+        "abi_generation_mode": attrs.enum(["class", "none", "source", "source_only"], default = "none"),
         "class_abi_generator": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "class_loader_bootstrapper": attrs.option(attrs.source(), default = None),
         "compile_and_package": attrs.exec_dep(

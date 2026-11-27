@@ -166,11 +166,14 @@ Set the default ABI generation mode in `.buckconfig`:
     abi_generation_mode = source_only
 ```
 
-Possible values: `class`, `source`, `source_only`
+Possible values: `class`, `source`, `source_only`, `none`. With the prelude's
+demo toolchains (`system_demo_toolchains`), the default is `class`.
 
 ### Per-Rule Configuration
 
-Override the global setting for a specific rule:
+Override the global setting for a specific rule. A rule can only choose a mode
+that comes before the global one in the order `none`, `class`, `source`,
+`source_only`; a later mode resolves to the global one.
 
 ```python
 java_library(

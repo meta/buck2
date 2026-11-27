@@ -5,5 +5,7 @@ buck2 binary itself.
 
 ## Tools
 
+- [`maven_to_buck`](maven_to_buck/README.md) — generates BUCK files for
+  Maven dependencies (Java, Kotlin and Android libraries).
 - [`starlark_fmt`](starlark_fmt/README.md) — a formatter for
   Starlark / BUCK files (a buildifier replacement).

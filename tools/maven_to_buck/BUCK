@@ -1,0 +1,15 @@
+load("@fbcode_macros//build_defs:python_binary.bzl", "python_binary")
+load("@fbcode_macros//build_defs:python_library.bzl", "python_library")
+
+oncall("build_infra")
+
+python_library(
+    name = "maven_to_buck_lib",
+    srcs = ["maven_to_buck.py"],
+)
+
+python_binary(
+    name = "maven_to_buck",
+    main_function = "buck2.tools.maven_to_buck.maven_to_buck.main",
+    deps = [":maven_to_buck_lib"],
+)

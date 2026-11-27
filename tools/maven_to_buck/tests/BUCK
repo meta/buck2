@@ -1,0 +1,14 @@
+load("@fbcode_macros//build_defs:python_unittest.bzl", "python_unittest")
+load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
+
+oncall("build_infra")
+
+python_unittest(
+    name = "test_maven_to_buck",
+    srcs = ["test_maven_to_buck.py"],
+    network_access = network_access_utils.none(),
+    deps = [
+        # @oss-disable[end= ]: "//buck2/tools/maven_to_buck:maven_to_buck_lib",
+        "//tools/maven_to_buck:maven_to_buck_lib", # @oss-enable
+    ],
+)

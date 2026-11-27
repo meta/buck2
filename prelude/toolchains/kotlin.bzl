@@ -68,6 +68,7 @@ def kotlincd_toolchain(name, java_binary_for_kotlincd = None, visibility = None)
         kotlinc_protocol = "kotlincd",
         kotlincd_main_class = "com.facebook.buck.jvm.kotlin.cd.workertool.KotlinCDMain",
         kotlincd_worker = _KOTLINCD_WORKER if _persistent_workers_enabled() else None,
+        jvm_abi_gen_plugin = "prelude//toolchains/android/third-party:jvm-abi-gen",
         kosabi_jvm_abi_gen_k2_plugin = _KOSABI_PLUGINS + "/k2-jvm-abi-gen:k2-jvm-abi-gen" if source_only_abi else None,
         kosabi_stubs_gen_k2_plugin = _KOSABI_PLUGINS + "/stubsgen:stubsgen_k2" if source_only_abi else None,
         visibility = visibility,

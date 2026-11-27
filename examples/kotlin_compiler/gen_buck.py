@@ -296,6 +296,12 @@ def source_roots(mdir: Path) -> list:
     return roots
 
 
+# Class ABI members in declaration order, as in the class jars that Gradle compiles against.
+JVM_ABI_GEN_PRESERVE_DECLARATION_ORDER = (
+    "plugin:org.jetbrains.kotlin.jvm.abi:preserveDeclarationOrder=true"
+)
+
+
 def kotlinc_args(info: dict) -> list:
     o = info["options"]
     args = list(GRADLE_COMPAT_ARGS if o["gradleCompat"] else COMMON_ARGS)
@@ -305,6 +311,7 @@ def kotlinc_args(info: dict) -> list:
     args += [f"-opt-in={x}" for x in o["optIns"]]
     args += o["free"]
     args += ["-module-name", info["moduleName"]]
+    args += ["-P", JVM_ABI_GEN_PRESERVE_DECLARATION_ORDER]
     return args
 
 

@@ -73,17 +73,20 @@ java -cp "out:$STDLIB" HelloKt
 `python3 ../buck2/examples/kotlin_compiler/gen_buck.py --abi kosabi` gives 79 of the modules source-only ABIs:
 Buck2 builds their ABI jars from the sources with the Kosabi compiler plugins,
 so the modules that depend on them can compile before they finish. The classes
-are identical to those of the default class ABIs. A clean build gets only a
-little shorter: on a 174-core Linux machine it takes 162 seconds with class ABIs
-and 158 with source-only ABIs (medians of three). About half of that builds the
+are identical to those of the default class ABIs. A clean build takes about as
+long: on a 174-core Linux machine it takes 146 seconds with class ABIs and 145
+with source-only ABIs (medians of three). About half of that builds the
 prelude's own Kotlin tools, and six modules on the longest dependency chain keep
 class ABIs.
 
 ## Known gaps
 
-- Compared with JetBrains' Gradle build of the same modules, 4 of 16282 class
+- Compared with JetBrains' Gradle build of the same modules, 8 of 16282 class
   files differ: `CoreProgressManager`, `FirObjCInteropKt`,
-  `Fir2IrDeclarationStorage` and `CallAndReferenceGenerator`.
+  `Fir2IrDeclarationStorage`, `CallAndReferenceGenerator`, and four classes of
+  `:compiler:fir:resolve` named `FirInvokeResolveTowerExtension$…$$inlined$…`,
+  whose inlined suspend lambdas have one more `nop` because the module compiles
+  against the `jvm-abi-gen` class ABIs of its dependencies.
 - `asm-all` and `protobuf-lite` come from JetBrains' repositories (through
   `cache-redirector.jetbrains.com`), not from Maven Central. Where those
   repositories cannot be reached, `-c kotlin_compiler.asm-all_url=<url>

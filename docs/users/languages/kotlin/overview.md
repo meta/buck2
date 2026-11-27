@@ -87,6 +87,19 @@ compiles every Kotlin target of a build, so the compiles share its startup and
 its JIT-compiled compiler. `[build] use_persistent_workers = false` gives each
 compile a JVM of its own instead.
 
+## Class ABIs
+
+A target with class ABIs, the default, gets its ABI JAR from JetBrains'
+`jvm-abi-gen` compiler plugin, in the compile that builds its library JAR.
+`jvm-abi-gen` sorts the members of each class in the ABI JAR by name. Code that
+Kotlin generates from another target's declarations, such as delegated members,
+follows the order of that target's ABI JAR. To keep the members in declaration
+order, as in the library JAR, give the target
+
+```python
+extra_kotlinc_arguments = ["-P", "plugin:org.jetbrains.kotlin.jvm.abi:preserveDeclarationOrder=true"],
+```
+
 ## Source-only ABIs
 
 A target with `abi_generation_mode = "source_only"` gets its ABI JAR from

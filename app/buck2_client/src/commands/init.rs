@@ -27,6 +27,8 @@ use buck2_fs::fs_util;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_util::process::background_command;
 
+use crate::commands::init_template::Template;
+
 /// Initializes a buck2 project at the provided path.
 #[derive(Debug, clap::Parser)]
 #[clap(name = "init", about = "Initialize a buck2 project")]
@@ -47,6 +49,10 @@ pub struct InitCommand {
     /// file.
     #[clap(long)]
     git: bool,
+
+    /// The sample project to write next to the configuration.
+    #[clap(long, value_enum, default_value_t, conflicts_with = "no_prelude")]
+    template: Template,
 
     #[clap(flatten)]
     console_opts: CommonConsoleOptions,
@@ -119,16 +125,40 @@ fn exec_impl(
         }
     }
 
-    set_up_project(&absolute, git, !cmd.no_prelude)
+    let template = (!cmd.no_prelude).then_some(cmd.template);
+    let android_sdk = std::env::var("ANDROID_HOME")
+        .or_else(|_| std::env::var("ANDROID_SDK_ROOT"))
+        .ok();
+    set_up_project(&absolute, git, template, android_sdk.as_deref())?;
+    if let Some(next_step) = template.and_then(next_step) {
+        buck2_client_ctx::println!("{}", next_step)?;
+    }
+    Ok(())
 }
 
-fn initialize_buckconfig(repo_root: &AbsPath, prelude: bool, git: bool) -> buck2_error::Result<()> {
+fn next_step(template: Template) -> Option<&'static str> {
+    match template {
+        Template::Genrule => None,
+        Template::Kotlin => Some("Run the Kotlin program with `buck2 run //:main`."),
+        Template::Android => Some(
+            "Build the app with `buck2 build //:app`, and install it with `buck2 install //:app`.",
+        ),
+    }
+}
+
+/// `template` is `None` for a project without the prelude.
+fn initialize_buckconfig(
+    repo_root: &AbsPath,
+    template: Option<Template>,
+    git: bool,
+    android_sdk: Option<&str>,
+) -> buck2_error::Result<()> {
     let mut buckconfig = std::fs::File::create(repo_root.join(".buckconfig"))?;
     writeln!(buckconfig, "[cells]")?;
     writeln!(buckconfig, "  root = .")?;
 
     // Add additional configs that depend on prelude / no-prelude mode
-    if prelude {
+    if template.is_some() {
         writeln!(buckconfig, "  prelude = prelude")?;
         writeln!(buckconfig, "  toolchains = toolchains")?;
         writeln!(buckconfig, "  none = none")?;
@@ -167,6 +197,21 @@ fn initialize_buckconfig(repo_root: &AbsPath, prelude: bool, git: bool) -> buck2
         )?;
     }
 
+    if template == Some(Template::Android) {
+        writeln!(buckconfig)?;
+        writeln!(buckconfig, "[android]")?;
+        match android_sdk {
+            Some(android_sdk) => writeln!(buckconfig, "  sdk_path = {android_sdk}")?,
+            None => {
+                writeln!(
+                    buckconfig,
+                    "  # The Android SDK; `/opt/android_sdk` when unset."
+                )?;
+                writeln!(buckconfig, "  # sdk_path = /path/to/android/sdk")?;
+            }
+        }
+    }
+
     if git {
         writeln!(buckconfig)?;
         writeln!(buckconfig, "[project]")?;
@@ -190,22 +235,72 @@ system_demo_toolchains()
     Ok(())
 }
 
-fn initialize_root_buck(repo_root: &AbsPath, prelude: bool) -> buck2_error::Result<()> {
-    let mut buck = std::fs::File::create(repo_root.join("BUCK"))?;
-
-    if prelude {
-        writeln!(
-            buck,
-            "# A list of available rules and their signatures can be found here: https://buck2.build/docs/prelude/globals/"
-        )?;
-        writeln!(buck)?;
-        writeln!(buck, "genrule(")?;
-        writeln!(buck, "    name = \"hello_world\",")?;
-        writeln!(buck, "    out = \"out.txt\",")?;
-        writeln!(buck, "    cmd = \"echo BUILT BY BUCK2> $OUT\",")?;
-        writeln!(buck, ")")?;
+/// Writes the sample project, or an empty `BUCK` file for a project without the prelude. Files that
+/// already exist are left alone.
+fn write_sample(repo_root: &AbsPath, template: Option<Template>) -> buck2_error::Result<()> {
+    let Some(template) = template else {
+        fs_util::write(repo_root.join("BUCK"), "").categorize_internal()?;
+        return Ok(());
+    };
+    for (path, contents) in template.files() {
+        let path = repo_root.join(path);
+        if path.exists() {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs_util::create_dir_all(parent)?;
+        }
+        fs_util::write(path, contents).categorize_internal()?;
     }
-    // TODO: Add a doc pointers for rules
+    if template == Template::Android && !repo_root.join("debug.keystore").exists() {
+        create_debug_keystore(repo_root)?;
+    }
+    Ok(())
+}
+
+/// Creates the keystore that signs debug builds of the Android sample, as Android Studio does,
+/// with the JDK's `keytool`. Without `keytool`, says how to create it later.
+fn create_debug_keystore(repo_root: &AbsPath) -> buck2_error::Result<()> {
+    let args = [
+        "-genkeypair",
+        "-keystore",
+        "debug.keystore",
+        "-storepass",
+        "android",
+        "-keypass",
+        "android",
+        "-alias",
+        "androiddebugkey",
+        "-keyalg",
+        "RSA",
+        "-keysize",
+        "2048",
+        "-validity",
+        "10000",
+        "-dname",
+        "CN=Android Debug,O=Android,C=US",
+    ];
+    let problem = match background_command("keytool")
+        .args(args)
+        .current_dir(repo_root)
+        .output()
+    {
+        Ok(output) if output.status.success() => return Ok(()),
+        Ok(output) => String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        Err(e) if e.kind() == ErrorKind::NotFound => "`keytool` is not on `PATH`".to_owned(),
+        Err(e) => e.to_string(),
+    };
+    buck2_client_ctx::eprintln!(
+        "Warning: could not create `debug.keystore`: {}\nInstall a JDK and run in `{}`:\n  keytool {}",
+        problem,
+        repo_root.display(),
+        args.map(|arg| if arg.contains(' ') {
+            format!("'{arg}'")
+        } else {
+            arg.to_owned()
+        })
+        .join(" ")
+    )?;
     Ok(())
 }
 
@@ -223,7 +318,12 @@ fn set_up_buckroot(repo_root: &AbsPath) -> buck2_error::Result<()> {
     Ok(())
 }
 
-fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> buck2_error::Result<()> {
+fn set_up_project(
+    repo_root: &AbsPath,
+    git: bool,
+    template: Option<Template>,
+    android_sdk: Option<&str>,
+) -> buck2_error::Result<()> {
     set_up_buckroot(repo_root)?;
 
     if git {
@@ -249,8 +349,8 @@ fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> buck2_error:
         return Ok(());
     }
 
-    initialize_buckconfig(repo_root, prelude, git)?;
-    if prelude {
+    initialize_buckconfig(repo_root, template, git, android_sdk)?;
+    if template.is_some() {
         let toolchains = repo_root.join("toolchains");
         if !toolchains.exists() {
             fs_util::create_dir(&toolchains).categorize_internal()?;
@@ -258,7 +358,7 @@ fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> buck2_error:
         }
     }
     if !repo_root.join("BUCK").exists() {
-        initialize_root_buck(repo_root, prelude)?;
+        write_sample(repo_root, template)?;
     }
     Ok(())
 }
@@ -269,9 +369,10 @@ mod tests {
     use buck2_fs::paths::abs_path::AbsPath;
 
     use crate::commands::init::initialize_buckconfig;
-    use crate::commands::init::initialize_root_buck;
     use crate::commands::init::set_up_gitignore;
     use crate::commands::init::set_up_project;
+    use crate::commands::init::write_sample;
+    use crate::commands::init_template::Template;
 
     #[test]
     fn test_set_up_project_with_prelude_no_git() -> buck2_error::Result<()> {
@@ -281,7 +382,7 @@ mod tests {
         fs_util::create_dir_all(tempdir_path)?;
 
         // no git, with prelude
-        set_up_project(tempdir_path, false, true)?;
+        set_up_project(tempdir_path, false, Some(Template::Genrule), None)?;
         assert!(tempdir_path.join(".buckconfig").exists());
         assert!(tempdir_path.join("toolchains").exists());
         assert!(tempdir_path.join("toolchains/BUCK").exists());
@@ -329,7 +430,7 @@ mod tests {
         fs_util::create_dir_all(tempdir_path)?;
 
         let buckconfig_path = tempdir_path.join(".buckconfig");
-        initialize_buckconfig(tempdir_path, true, true)?;
+        initialize_buckconfig(tempdir_path, Some(Template::Genrule), true, None)?;
         let actual_buckconfig = fs_util::read_to_string(buckconfig_path)?;
         let expected_buckconfig = "[cells]
   root = .
@@ -373,7 +474,7 @@ mod tests {
         fs_util::create_dir_all(tempdir_path)?;
 
         let buckconfig_path = tempdir_path.join(".buckconfig");
-        initialize_buckconfig(tempdir_path, false, false)?;
+        initialize_buckconfig(tempdir_path, None, false, None)?;
         let actual_buckconfig = fs_util::read_to_string(buckconfig_path)?;
         let expected_buckconfig = "[cells]
   root = .
@@ -391,7 +492,7 @@ mod tests {
         fs_util::create_dir_all(tempdir_path)?;
 
         let buck_path = tempdir_path.join("BUCK");
-        initialize_root_buck(tempdir_path, true)?;
+        write_sample(tempdir_path, Some(Template::Genrule))?;
         let actual_buck = fs_util::read_to_string(buck_path)?;
         let expected_buck = "# A list of available rules and their signatures can be found here: https://buck2.build/docs/prelude/globals/
 
@@ -402,6 +503,62 @@ genrule(
 )
 ";
         assert_eq!(actual_buck, expected_buck);
+        Ok(())
+    }
+
+    #[test]
+    fn test_buckconfig_generation_for_android() -> buck2_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let tempdir_path = AbsPath::new(tempdir.path())?;
+        let buckconfig_path = tempdir_path.join(".buckconfig");
+
+        initialize_buckconfig(tempdir_path, Some(Template::Android), false, Some("/sdk"))?;
+        let buckconfig = fs_util::read_to_string(&buckconfig_path)?;
+        assert!(
+            buckconfig.ends_with("\n[android]\n  sdk_path = /sdk\n"),
+            "`$ANDROID_HOME` should become `[android] sdk_path`: {buckconfig}"
+        );
+
+        initialize_buckconfig(tempdir_path, Some(Template::Android), false, None)?;
+        let buckconfig = fs_util::read_to_string(&buckconfig_path)?;
+        assert!(
+            buckconfig.contains("\n[android]\n  # The Android SDK"),
+            "without `$ANDROID_HOME`, `sdk_path` should be a commented-out hint: {buckconfig}"
+        );
+
+        initialize_buckconfig(tempdir_path, Some(Template::Kotlin), false, Some("/sdk"))?;
+        let buckconfig = fs_util::read_to_string(&buckconfig_path)?;
+        assert!(
+            !buckconfig.contains("[android]"),
+            "only the Android template should set `[android]`: {buckconfig}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_set_up_project_with_kotlin_template() -> buck2_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let tempdir_path = AbsPath::new(tempdir.path())?;
+
+        set_up_project(tempdir_path, false, Some(Template::Kotlin), None)?;
+        let buck = fs_util::read_to_string(tempdir_path.join("BUCK"))?;
+        assert!(buck.contains("kotlin_library("), "{buck}");
+        assert!(tempdir_path.join("src/com/example/Main.kt").exists());
+        assert!(tempdir_path.join("toolchains/BUCK").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_sample_keeps_existing_files() -> buck2_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let tempdir_path = AbsPath::new(tempdir.path())?;
+        let main = tempdir_path.join("src/com/example/Main.kt");
+        fs_util::create_dir_all(main.parent().unwrap())?;
+        fs_util::write(&main, "mine")?;
+
+        write_sample(tempdir_path, Some(Template::Kotlin))?;
+        assert_eq!(fs_util::read_to_string(&main)?, "mine");
+        assert!(tempdir_path.join("BUCK").exists());
         Ok(())
     }
 }

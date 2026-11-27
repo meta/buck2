@@ -18,6 +18,7 @@ pub mod expand_external_cell;
 pub mod explain;
 pub mod help_env;
 pub mod init;
+pub mod init_template;
 pub mod install;
 pub mod kill;
 pub mod killall;

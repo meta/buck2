@@ -59,8 +59,11 @@ data class InterfaceMethodInfo(
 // Private classes the ABI must keep as stubs, or consumers break: a kept sealed
 // type's metadata names every subclass in `sealedSubclasses` (dropping one lets
 // consumers compile a non-exhaustive `when` that throws NoWhenBranchMatchedException),
-// and annotation arguments name classes javac annotation processors read
-// (a missing one surfaces as an ERROR type). Collect fq names transitively, plus
+// annotation arguments name classes javac annotation processors read
+// (a missing one surfaces as an ERROR type), and a kept declaration's own
+// annotations name their annotation class in the annotation table and Kotlin
+// metadata (dropping a private one dangles those references and silently drops
+// its semantics, e.g. `@DslMarker` scoping). Collect fq names transitively, plus
 // private enclosing classes (a kept nested class needs its outers as stubs).
 // Only classes that would otherwise be dropped need listing, but recording the
 // full set is harmless.
@@ -136,7 +139,7 @@ private fun keepSealedSubclasses(classes: List<IrClass>, keep: MutableSet<String
 // The stripper keeps a private class as a shell: only its annotations, supertypes,
 // constructors, nested classes and constants survive.
 private fun scanKeptPrivateClass(klass: IrClass, keep: MutableSet<String>) {
-  scanAnnotationsForClassLiterals(klass, keep)
+  scanAnnotations(klass, keep)
   scanSignatures(klass, keep)
   klass.declarations
       .filter { it is IrClass || it is IrConstructor || (it as? IrProperty)?.isConst == true }
@@ -171,20 +174,20 @@ private fun scanKeptDeclaration(
 ) {
   val kept = ownerKept && isKeptOwner(declaration)
   if (kept) {
-    scanAnnotationsForClassLiterals(declaration, keep)
+    scanAnnotations(declaration, keep)
     scanSignatures(declaration, keep)
     if (declaration is IrFunction) {
-      declaration.compatValueParameters.forEach { scanAnnotationsForClassLiterals(it, keep) }
+      declaration.compatValueParameters.forEach { scanAnnotations(it, keep) }
     }
     if (declaration is IrProperty) {
       for (accessor in listOfNotNull(declaration.getter, declaration.setter)) {
         if (!isKeptOwner(accessor)) continue
-        scanAnnotationsForClassLiterals(accessor, keep)
+        scanAnnotations(accessor, keep)
         scanSignatures(accessor, keep)
-        accessor.compatValueParameters.forEach { scanAnnotationsForClassLiterals(it, keep) }
+        accessor.compatValueParameters.forEach { scanAnnotations(it, keep) }
       }
       declaration.backingField?.let {
-        scanAnnotationsForClassLiterals(it, keep)
+        scanAnnotations(it, keep)
         scanSignatures(it, keep)
       }
     }
@@ -240,11 +243,16 @@ private fun collectClassesFromType(
   }
 }
 
-private fun scanAnnotationsForClassLiterals(
+// Annotations on a kept declaration survive stripping (only SOURCE-retention and
+// error-typed ones go first), so their annotation class must stay as a stub: the
+// annotation table and Kotlin metadata name it. jvm-abi-gen likewise copies
+// annotation classes unchanged into the class ABI.
+private fun scanAnnotations(
     owner: IrAnnotationContainer,
     keep: MutableSet<String>,
 ) {
   for (annotation in owner.annotations) {
+    (annotation.symbol.owner.parent as? IrClass)?.let { keep.addWithOuters(it) }
     annotation.acceptChildren(
         object : IrElementVisitorVoidCompat() {
           override fun visitElement(element: IrElement) {

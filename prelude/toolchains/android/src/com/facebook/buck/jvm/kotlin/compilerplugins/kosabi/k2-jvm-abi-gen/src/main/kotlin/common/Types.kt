@@ -16,7 +16,6 @@
 
 package com.facebook
 
-import com.facebook.kotlin.compilercompat.compatValueParameters
 import org.jetbrains.kotlin.GeneratedDeclarationKey
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities

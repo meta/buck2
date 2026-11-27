@@ -17,10 +17,6 @@
 package com.facebook
 
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isStub
-import com.facebook.kotlin.compilercompat.compatValueParameters
-import com.facebook.kotlin.compilercompat.getValueArgumentCompat
-import com.facebook.kotlin.compilercompat.putValueArgumentCompat
-import com.facebook.kotlin.compilercompat.valueArgumentsCountCompat
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder

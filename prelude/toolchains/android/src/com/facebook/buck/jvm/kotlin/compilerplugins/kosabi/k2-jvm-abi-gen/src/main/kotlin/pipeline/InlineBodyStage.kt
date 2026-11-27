@@ -21,9 +21,6 @@ import com.facebook.buck.jvm.kotlin.compilerplugins.common.InlineBodyKeepability
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.foldableConstLiteral
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isFoldableConst
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isStub
-import com.facebook.kotlin.compilercompat.compatValueParameters
-import com.facebook.kotlin.compilercompat.getValueArgumentCompat
-import com.facebook.kotlin.compilercompat.valueArgumentsCountCompat
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Modifier
 import java.util.Collections

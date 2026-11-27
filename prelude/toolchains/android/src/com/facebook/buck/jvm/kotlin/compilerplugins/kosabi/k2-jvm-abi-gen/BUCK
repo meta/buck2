@@ -43,6 +43,7 @@ _KOTLIN_25_SHARED_COMPAT_SRCS = [
         "IrAnnotationCompat.kt",
         "IrGenerationExtensionsCompat.kt",
         "IrNonAbiStripper.kt",
+        "IrValueArgumentsCompat.kt",
         "IrVisitorCompat.kt",
         "JavaClassResolverCompat.kt",
         "MetadataVersionCompat.kt",
@@ -112,7 +113,6 @@ buck_kotlin_library(
         "PUBLIC",
     ],
     deps = [
-        "fbsource//fbandroid/java/com/facebook/kotlin/compilercompat:compilercompat",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/common:common",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/kosabi/common/stub:stub",
         "prelude//toolchains/android/third-party:kotlin-metadata-jvm",

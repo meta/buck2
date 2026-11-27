@@ -13,7 +13,6 @@
 
 package com.facebook
 
-import com.facebook.kotlin.compilercompat.compatValueParameters
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.createIrBuilder
 import org.jetbrains.kotlin.descriptors.InlineClassRepresentation

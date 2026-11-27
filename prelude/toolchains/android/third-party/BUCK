@@ -11,8 +11,8 @@ source_listing()
 third_party_jar(
     name = "aapt2-proto-prebuilt",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/android/tools/build/aapt2-proto:aapt2-proto",
-    sha1 = "605bc2d642e5812469ff0333df1b65ead289ccd8",
-    url = "mvn:https://maven.google.com:com.android.tools.build:aapt2-proto:jar:8.7.3-12006047",
+    sha1 = "51af1204c5db7bee934f4ca7693be2c42effc635",
+    url = "mvn:https://maven.google.com:com.android.tools.build:aapt2-proto:jar:9.5.0-16666295",
 )
 
 buck_java_library(
@@ -30,16 +30,16 @@ buck_java_library(
 third_party_jar(
     name = "android-annotations",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/android/tools/annotations:annotations",
-    sha1 = "1946e7f75bc1615b4abfc0f83899934dfcbdf1fc",
-    url = "mvn:https://maven.google.com:com.android.tools:annotations:jar:31.7.3",
+    sha1 = "3bd50024ad666dac7a260634764cada58b5b7d27",
+    url = "mvn:https://maven.google.com:com.android.tools:annotations:jar:32.5.0",
     visibility = ["PUBLIC"],
 )
 
 third_party_jar(
     name = "sdklib",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/android/tools/sdklib:sdklib",
-    sha1 = "0adb7cac2ab282100e2b8b6d66b997a69ed06adf",
-    url = "mvn:https://maven.google.com:com.android.tools:sdklib:jar:31.7.3",
+    sha1 = "e5685666b2cb57b54e7372b714022defd9bbc34f",
+    url = "mvn:https://maven.google.com:com.android.tools:sdklib:jar:32.5.0",
     visibility = [
         "prelude//toolchains/android/third-party/aosp:aosp",
     ],
@@ -76,16 +76,16 @@ buck_java_library(
 third_party_jar(
     name = "android-common",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/android/tools/common:common",
-    sha1 = "c3df7b51ee1a72acf051e0e5efbeb8023fb4ea57",
-    url = "mvn:https://maven.google.com:com.android.tools:common:jar:31.7.3",
+    sha1 = "3b4ccff8d0eb5a4592058c9145cbabb57bfb5941",
+    url = "mvn:https://maven.google.com:com.android.tools:common:jar:32.5.0",
     visibility = ["PUBLIC"],
 )
 
 third_party_jar(
     name = "sdk-common",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/android/tools/sdk-common:sdk-common",
-    sha1 = "d17c3d28724a5f3e90a5ae053714627b740ff80c",
-    url = "mvn:https://maven.google.com:com.android.tools:sdk-common:jar:31.7.3",
+    sha1 = "c8a3c71756d8018070193771448d6ab298f87cf7",
+    url = "mvn:https://maven.google.com:com.android.tools:sdk-common:jar:32.5.0",
     visibility = [
         "prelude//toolchains/android/third-party/aosp:aosp",
     ],
@@ -95,8 +95,8 @@ third_party_jar(
 third_party_jar(
     name = "layoutlib-api",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/android/tools/layoutlib/layoutlib-api:layoutlib-api",
-    sha1 = "6abada4555fa60825ea5f353443a7e561445c4f0",
-    url = "mvn:https://maven.google.com:com.android.tools.layoutlib:layoutlib-api:jar:31.7.3",
+    sha1 = "8f655b3d30a60639f6ece73c9721caa86966e9ed",
+    url = "mvn:https://maven.google.com:com.android.tools.layoutlib:layoutlib-api:jar:32.5.0",
     visibility = [
         "prelude//toolchains/android/src/com/facebook/buck/android/aapt:merge_android_resource_sources",
     ],
@@ -105,8 +105,8 @@ third_party_jar(
 third_party_jar(
     name = "ddmlib",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/android/tools/ddms/ddmlib:ddmlib",
-    sha1 = "525b44de6936a7c487095652f014d0bfc84bb9ad",
-    url = "mvn:https://maven.google.com:com.android.tools.ddms:ddmlib:jar:31.7.3",
+    sha1 = "c505a88bbf63c3d7986d139b95fc193172f91ef2",
+    url = "mvn:https://maven.google.com:com.android.tools.ddms:ddmlib:jar:32.5.0",
     visibility = ["PUBLIC"],
     deps = [
         ":android-common",
@@ -119,13 +119,15 @@ third_party_jar(
 third_party_jar(
     name = "manifest-merger",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/com/android/tools/build/manifest-merger:manifest-merger",
-    sha1 = "0d0489e76e4eb785336317add6b65d57b928a429",
-    url = "mvn:com.android.tools.build:manifest-merger:jar:31.7.3",
+    sha1 = "97a22e95ae700b43c16a83f9bbb733ef7ef31383",
+    url = "mvn:https://maven.google.com:com.android.tools.build:manifest-merger:jar:32.5.0",
     visibility = [
         "prelude//toolchains/android/src/com/facebook/buck/android/manifest:manifest",
         "prelude//toolchains/android/third-party:manifest-merger",
         "prelude//toolchains/android/third-party/aosp:aosp",
     ],
+    # manifest-merger 32.x needs gson at runtime (ManifestMerger2.createNavigationMap).
+    deps = [":gson"],
 )
 # ===   End: android
 
@@ -155,22 +157,22 @@ buck_java_library(
 third_party_jar(
     name = "asm-jar",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/ow2/asm/asm:asm__toolchain",
-    sha1 = "073d7b3086e14beb604ced229c302feff6449723",
-    url = "mvn:org.ow2.asm:asm:jar:9.7",
+    sha1 = "ada2141c0cc52ee8f5c48cd5fa4ce0e794f22236",
+    url = "mvn:org.ow2.asm:asm:jar:9.10.1",
 )
 
 third_party_jar(
     name = "asm-tree",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/ow2/asm/asm-tree:asm-tree__toolchain",
-    sha1 = "e446a17b175bfb733b87c5c2560ccb4e57d69f1a",
-    url = "mvn:org.ow2.asm:asm-tree:jar:9.7",
+    sha1 = "e244332a17564c1d1572449399a842de35881be2",
+    url = "mvn:org.ow2.asm:asm-tree:jar:9.10.1",
 )
 
 third_party_jar(
     name = "asm-util",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/ow2/asm/asm-util:asm-util__toolchain",
-    sha1 = "c0655519f24d92af2202cb681cd7c1569df6ead6",
-    url = "mvn:org.ow2.asm:asm-util:jar:9.7",
+    sha1 = "7bb9d450e8d4cbf9f9e04096c44bbfe7fba80b15",
+    url = "mvn:org.ow2.asm:asm-util:jar:9.10.1",
 )
 # ===   End: asm
 
@@ -844,8 +846,8 @@ third_party_jar(
 third_party_jar(
     name = "kotlin-annotations",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/jetbrains/annotations:annotations__toolchain",
-    sha1 = "919f0dfe192fb4e063e7dacadee7f8bb9a2672a9",
-    url = "mvn:org.jetbrains:annotations:jar:13.0",
+    sha1 = "c1e9226d7ca6661020c58c94397da0cc3673d5e4",
+    url = "mvn:org.jetbrains:annotations:jar:26.1.0",
     visibility = ["PUBLIC"],
 )
 

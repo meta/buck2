@@ -32,14 +32,29 @@ system_java_tool = rule(
 )
 
 def _system_java_lib_impl(ctx):
-    output = ctx.actions.declare_output(paths.basename(ctx.attrs.jar), has_content_based_path = False)
-    ctx.actions.run(cmd_args(["ln", "-s", ctx.attrs.jar, output.as_output()]), category = "{}_symlink".format(ctx.attrs.name))
+    if ctx.attrs.jar:
+        output = ctx.actions.declare_output(paths.basename(ctx.attrs.jar), has_content_based_path = False)
+        ctx.actions.run(cmd_args(["ln", "-s", ctx.attrs.jar, output.as_output()]), category = "{}_symlink".format(ctx.attrs.name))
+    else:
+        output = ctx.actions.declare_output("jrt-fs.jar", has_content_based_path = False)
+        ctx.actions.run(
+            cmd_args([
+                "sh",
+                "-c",
+                'ln -s "$(java -XshowSettings:properties -version 2>&1 | sed -n "s/^ *java.home = //p")/lib/jrt-fs.jar" "$1"',
+                "--",
+                output.as_output(),
+            ]),
+            category = "{}_symlink".format(ctx.attrs.name),
+            local_only = True,
+        )
     return [DefaultInfo(default_output = output)]
 
 system_java_lib = rule(
     impl = _system_java_lib_impl,
     attrs = {
-        "jar": attrs.string(),
+        # Absolute path of the jar. Without it, the `jrt-fs.jar` of the JDK whose `java` is on `PATH`.
+        "jar": attrs.option(attrs.string(), default = None),
     },
 )
 

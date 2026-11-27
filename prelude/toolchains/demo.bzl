@@ -169,40 +169,18 @@ def system_demo_toolchains():
         ],
     )
 
-    java_home = read_root_config("java", "java_home", "/usr/local/java-runtime/impl/17")
-    system_java_tool(
-        name = "java_tool",
-        tool_name = java_home + "/bin/java",
-        visibility = ["PUBLIC"],
-    )
-
-    system_java_tool(
-        name = "javac_tool",
-        tool_name = java_home + "/bin/javac",
-        visibility = ["PUBLIC"],
-    )
-
-    system_java_tool(
-        name = "jar_tool",
-        tool_name = java_home + "/bin/jar",
-        visibility = ["PUBLIC"],
-    )
-
-    system_java_tool(
-        name = "jlink_tool",
-        tool_name = java_home + "/bin/jlink",
-        visibility = ["PUBLIC"],
-    )
-
-    system_java_tool(
-        name = "jmod_tool",
-        tool_name = java_home + "/bin/jmod",
-        visibility = ["PUBLIC"],
-    )
+    # The JDK in `[java] java_home`, else the one whose `java` is on `PATH`.
+    java_home = read_root_config("java", "java_home", None)
+    for tool in ["java", "javac", "jar", "jlink", "jmod"]:
+        system_java_tool(
+            name = tool + "_tool",
+            tool_name = java_home + "/bin/" + tool if java_home else tool,
+            visibility = ["PUBLIC"],
+        )
 
     system_java_lib(
         name = "jrt_fs_jar",
-        jar = java_home + "/lib/jrt-fs.jar",
+        jar = java_home + "/lib/jrt-fs.jar" if java_home else None,
     )
 
     kotlincd_toolchain(

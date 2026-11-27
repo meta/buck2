@@ -206,6 +206,26 @@ third_party_jar(
     sha1 = "659feffdd12280201c8aacb8f7be94f9a883c824",
     url = "mvn:org.apache.commons:commons-compress:jar:1.26.0",
     visibility = ["PUBLIC"],
+    deps = [
+        ":commons-io",
+        ":commons-lang3",
+    ],
+)
+
+third_party_jar(
+    name = "commons-io",
+    # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/commons-io/commons-io:commons-io",
+    sha1 = "f11560da189ab563a5c8e351941415430e9304ea",
+    url = "mvn:commons-io:commons-io:jar:2.15.1",
+    visibility = ["PUBLIC"],
+)
+
+third_party_jar(
+    name = "commons-lang3",
+    # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/apache/commons/commons-lang3:commons-lang3",
+    sha1 = "1ed471194b02f2c6cb734a0cd6f6f107c673afae",
+    url = "mvn:org.apache.commons:commons-lang3:jar:3.14.0",
+    visibility = ["PUBLIC"],
 )
 # ===   End: commons-compress
 

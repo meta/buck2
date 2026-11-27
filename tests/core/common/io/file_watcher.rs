@@ -11,6 +11,8 @@
 //! The file watcher events of a command, from its event log.
 
 use std::path::Path;
+use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::Context;
 use buck2_e2e::Buck;
@@ -158,6 +160,30 @@ pub async fn get_file_watcher_events_for(
         })?;
 
     Ok((fresh_instance, file_watcher_events))
+}
+
+/// Polls `get_file_watcher_events` until every event of `required` is reported, or `timeout`
+/// elapses. File watcher backends deliver asynchronously (FSEvents behind `RustNotify` on macOS
+/// coalesces with latency in particular), so a `targets` issued right after the filesystem change
+/// can observe an empty event list. Each poll re-runs `targets`, which drains the watcher queue,
+/// so events arriving late are picked up by a later poll.
+pub async fn get_file_watcher_events_with_retry(
+    buck: &Buck,
+    required: &[FileWatcherEvent],
+    timeout: Duration,
+) -> anyhow::Result<(bool, Vec<FileWatcherEvent>)> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let (is_fresh_instance, results) = get_file_watcher_events(buck).await?;
+        if required.iter().all(|req| results.contains(req)) {
+            return Ok((is_fresh_instance, results));
+        }
+        // A fresh instance drops the incremental events, so polling further cannot recover them.
+        if is_fresh_instance || Instant::now() >= deadline {
+            return Ok((is_fresh_instance, results));
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 fn parse_events(filtered_events: &[Value]) -> anyhow::Result<Vec<FileWatcherEvent>> {

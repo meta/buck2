@@ -11,6 +11,7 @@
 //! File watcher tests of directories.
 
 use std::fs;
+use std::time::Duration;
 
 use buck2_e2e::Buck;
 
@@ -19,6 +20,7 @@ use crate::file_watcher::FileWatcherEventType;
 use crate::file_watcher::FileWatcherKind;
 use crate::file_watcher::FileWatcherProvider;
 use crate::file_watcher::get_file_watcher_events;
+use crate::file_watcher::get_file_watcher_events_with_retry;
 use crate::file_watcher_tests::FileSystemType;
 use crate::file_watcher_tests::setup_file_watcher_test;
 use crate::file_watcher_tests::verify_results;
@@ -70,7 +72,8 @@ pub async fn run_remove_directory_test(
         )]
     };
 
-    let (is_fresh_instance, results) = get_file_watcher_events(buck).await?;
+    let (is_fresh_instance, results) =
+        get_file_watcher_events_with_retry(buck, &required, Duration::from_secs(15)).await?;
     assert!(!is_fresh_instance);
     verify_results(&results, &required);
     Ok(())

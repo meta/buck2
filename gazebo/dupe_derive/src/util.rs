@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use std::iter;
+use core::iter;
 
 use proc_macro2::TokenStream;
 use quote::quote;

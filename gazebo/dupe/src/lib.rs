@@ -9,21 +9,39 @@
  */
 
 //! A cheap version of [`Clone`].
+//!
+//! # Features
+//!
+//! - `alloc`: [`Dupe`] impls for `Arc`, `Rc` and their `Weak` pointers.
+//! - `derive` (default): re-exports the derive macros from `dupe_derive`.
+//! - `std` (default): implies `alloc`; adds impls for `std`-only types
+//!   such as `Instant`, `SystemTime` and `ThreadId`.
+//!
+//! With `default-features = false` this crate is `no_std`.
+
+#![no_std]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(any(feature = "std", test))]
+extern crate std;
 
 pub mod __macro_refs;
 pub(crate) mod iter;
 pub(crate) mod option;
 pub(crate) mod result;
 
-use std::cell::Cell;
-use std::mem::ManuallyDrop;
-use std::num::*;
-use std::rc::Rc;
-use std::sync::Arc;
+use core::cell::Cell;
+use core::mem::ManuallyDrop;
+use core::num::*;
 
+#[cfg(feature = "derive")]
 pub use dupe_derive::Clone_;
+#[cfg(feature = "derive")]
 pub use dupe_derive::Copy_;
+#[cfg(feature = "derive")]
 pub use dupe_derive::Dupe;
+#[cfg(feature = "derive")]
 pub use dupe_derive::Dupe_;
 
 pub use crate::iter::IterDupedExt;
@@ -32,7 +50,8 @@ pub use crate::result::ResultDupedErrExt;
 pub use crate::result::ResultDupedExt;
 
 /// Like [`Clone`], but should only be available if [`Clone`] is
-/// constant time and zero allocation (e.g. a few [`Arc`] bumps).
+/// constant time and zero allocation (e.g. a few
+/// [`Arc`](https://doc.rust-lang.org/alloc/sync/struct.Arc.html) bumps).
 /// The implementation of `dupe` should _always_ call `clone`.
 pub trait Dupe: Clone {
     #[inline]
@@ -45,20 +64,24 @@ pub trait Dupe: Clone {
 impl<A: ?Sized> Dupe for &A {}
 impl<A: ?Sized> Dupe for *const A {}
 impl<A: ?Sized> Dupe for *mut A {}
-impl<A: ?Sized> Dupe for Arc<A> {}
-impl<A: ?Sized> Dupe for std::sync::Weak<A> {}
-impl<A: ?Sized> Dupe for Rc<A> {}
-impl<A: ?Sized> Dupe for std::rc::Weak<A> {}
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
+impl<A: ?Sized> Dupe for alloc::sync::Arc<A> {}
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
+impl<A: ?Sized> Dupe for alloc::sync::Weak<A> {}
+#[cfg(feature = "alloc")]
+impl<A: ?Sized> Dupe for alloc::rc::Rc<A> {}
+#[cfg(feature = "alloc")]
+impl<A: ?Sized> Dupe for alloc::rc::Weak<A> {}
 impl<A: Copy> Dupe for Cell<A> {}
 impl<A: Dupe> Dupe for ManuallyDrop<A> {}
 
 // Small containers
 impl<A: Dupe> Dupe for Option<A> {}
 impl<T: Dupe, E: Dupe> Dupe for Result<T, E> {}
-impl<A: Dupe> Dupe for std::ops::Bound<A> {}
-impl<A: Dupe> Dupe for std::pin::Pin<A> {}
-impl<A: Dupe> Dupe for std::ptr::NonNull<A> {}
-impl<A: Dupe> Dupe for std::task::Poll<A> {}
+impl<A: Dupe> Dupe for core::ops::Bound<A> {}
+impl<A: Dupe> Dupe for core::pin::Pin<A> {}
+impl<A: Dupe> Dupe for core::ptr::NonNull<A> {}
+impl<A: Dupe> Dupe for core::task::Poll<A> {}
 impl Dupe for () {}
 impl<A: Dupe> Dupe for (A,) {}
 impl<A: Dupe, B: Dupe> Dupe for (A, B) {}
@@ -112,18 +135,23 @@ impl Dupe for NonZeroI64 {}
 impl Dupe for NonZeroI128 {}
 impl Dupe for NonZeroIsize {}
 
+// Other core types that are Copyable
+impl Dupe for core::any::TypeId {}
+impl Dupe for core::marker::PhantomPinned {}
+impl Dupe for core::net::Ipv4Addr {}
+impl Dupe for core::net::Ipv6Addr {}
+impl Dupe for core::net::SocketAddrV4 {}
+impl Dupe for core::net::SocketAddrV6 {}
+impl Dupe for core::time::Duration {}
+impl<T: ?Sized> Dupe for core::marker::PhantomData<T> {}
+
 // Other std types that are Copyable
-impl Dupe for std::any::TypeId {}
-impl Dupe for std::marker::PhantomPinned {}
-impl Dupe for std::net::Ipv4Addr {}
-impl Dupe for std::net::Ipv6Addr {}
-impl Dupe for std::net::SocketAddrV4 {}
-impl Dupe for std::net::SocketAddrV6 {}
+#[cfg(feature = "std")]
 impl Dupe for std::thread::ThreadId {}
+#[cfg(feature = "std")]
 impl Dupe for std::time::Instant {}
+#[cfg(feature = "std")]
 impl Dupe for std::time::SystemTime {}
-impl Dupe for std::time::Duration {}
-impl<T: ?Sized> Dupe for std::marker::PhantomData<T> {}
 
 impl<R> Dupe for fn() -> R {}
 impl<A1, R> Dupe for fn(A1) -> R {}
@@ -149,12 +177,15 @@ impl<A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, R> Dupe
 }
 // Rust goes up to 12 arguments for traits, so we follow
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "alloc", feature = "derive")))]
 mod tests {
     use super::*;
-    #[allow(unused_imports)] // Not actually unused, this makes testing the derive macro work
+    // Not actually unused, this makes testing the derive macro work
+    #[cfg(feature = "derive")]
+    #[allow(unused_imports)]
     use crate as dupe;
 
+    #[cfg(feature = "derive")]
     #[test]
     fn test_dupe_generic() {
         #[derive(Clone, Dupe, Debug, PartialEq, Eq)]
@@ -176,8 +207,11 @@ mod tests {
         assert_eq!(x, Dupe::dupe(&x));
     }
 
+    #[cfg(all(feature = "alloc", feature = "derive"))]
     #[test]
     fn test_dupe_() {
+        use alloc::sync::Arc;
+
         #[derive(Debug, PartialEq, Eq)]
         struct NoClone();
         #[derive(Dupe_, Debug, PartialEq, Eq)]
@@ -199,6 +233,7 @@ mod tests {
         assert_eq!(x, Dupe::dupe(&x));
     }
 
+    #[cfg(feature = "derive")]
     #[test]
     fn test_dupe_enum() {
         #[derive(Clone, Dupe, Debug, PartialEq, Eq)]
@@ -233,11 +268,12 @@ mod tests {
         assert_eq!(x, Dupe::dupe(&x));
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn test_dupe_fn()
     where
         fn(usize): Dupe,
-        fn(String, Vec<usize>) -> bool: Dupe,
+        fn(alloc::string::String, alloc::vec::Vec<usize>) -> bool: Dupe,
     {
         // Tests are in the where
     }

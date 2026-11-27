@@ -61,6 +61,41 @@ jobs:
     - name: Run rustdoc
       run: python3 test.py --ci --git --rustdoc-only
       shell: bash
+  # `dupe` is `no_std` without its default features. Buck and the other jobs
+  # build only the default features, so this job lints and tests each feature
+  # set by itself. It also builds the `no_std` sets for a bare-metal target,
+  # where an accidental `std` path fails to compile.
+  dupe-features:
+    name: dupe features
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_rust_toolchain
+      with:
+        components: clippy
+        targets: thumbv7m-none-eabi
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: buck2-dupe-features
+        cache-on-failure: true
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Lint and test each feature set
+      run: |-
+        for features in "" alloc derive alloc,derive std; do
+          echo "::group::features: [$features]"
+          cargo clippy -p dupe --no-default-features --features="$features" --tests -- --deny=warnings
+          cargo test -p dupe --no-default-features --features="$features"
+          echo "::endgroup::"
+        done
+      shell: bash
+    - name: Lint each no_std feature set for thumbv7m-none-eabi
+      run: |-
+        for features in "" alloc derive alloc,derive; do
+          echo "::group::features: [$features]"
+          cargo clippy -p dupe --no-default-features --features="$features" --target=thumbv7m-none-eabi -- --deny=warnings
+          echo "::endgroup::"
+        done
+      shell: bash
   test:
     name: test (${{ matrix.name }})
     strategy:

@@ -9,15 +9,34 @@ rust_library(
     ),
     autocargo = {
         "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    "dupe_derive": {"optional": True},
+                },
+            },
+            "features": {
+                "alloc": [],
+                "default": [
+                    "derive",
+                    "std",
+                ],
+                "derive": ["dep:dupe_derive"],
+                "std": ["alloc"],
+            },
             "package": {
                 "authors": ["Facebook"],
                 "categories": ["rust-patterns"],
                 "description": "Marker for types which are cheap to clone",
                 "documentation": "https://docs.rs/dupe",
-                "version": "0.9.1",
+                "version": "0.9.2",
             },
         },
     },
+    features = [
+        "alloc",
+        "derive",
+        "std",
+    ],
     deps = [
         "//buck2/gazebo/dupe_derive:dupe_derive",
     ],

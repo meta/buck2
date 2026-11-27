@@ -2,7 +2,7 @@
 
 [package]
 name = "dupe_derive"
-version = "0.9.1"
+version = "0.9.2"
 authors = ["Facebook"]
 edition.workspace = true
 description = "Derive Dupe"

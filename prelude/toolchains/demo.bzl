@@ -176,6 +176,8 @@ def system_demo_toolchains():
         system_java_tool(
             name = tool + "_tool",
             tool_name = java_home + "/bin/" + tool if java_home else tool,
+            java_home = java_home,
+            java_version = read_root_config("java", "buck2_java_version", "21"),
             visibility = ["PUBLIC"],
         )
 

@@ -42,15 +42,38 @@ def use_persistent_workers():
     return _read_bool("build", "use_persistent_workers", True)
 
 def _system_java_tool_impl(ctx):
-    return [
-        DefaultInfo(),
-        RunInfo([ctx.attrs.tool_name]),
-    ]
+    if not ctx.attrs.java_version:
+        return [DefaultInfo(), RunInfo([ctx.attrs.tool_name])]
+
+    # A missing or too old JDK fails here, with a message naming the fix, instead of in the first
+    # action that runs the tool.
+    checked = ctx.actions.declare_output("jdk_checked", has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args(
+            ctx.attrs._check_jdk[RunInfo],
+            "--tool",
+            ctx.attrs.tool_name,
+            "--java-home",
+            ctx.attrs.java_home or "",
+            "--java-version",
+            ctx.attrs.java_version,
+            "--output",
+            checked.as_output(),
+        ),
+        category = "jdk_check",
+        local_only = True,
+    )
+    return [DefaultInfo(), RunInfo(cmd_args(ctx.attrs.tool_name, hidden = checked))]
 
 system_java_tool = rule(
     impl = _system_java_tool_impl,
     attrs = {
+        # `[java] java_home`, if set: only for the message when the tool is missing.
+        "java_home": attrs.option(attrs.string(), default = None),
+        # The oldest Java the JDK may be, `[java] buck2_java_version`; unset skips the check.
+        "java_version": attrs.option(attrs.string(), default = None),
         "tool_name": attrs.string(),
+        "_check_jdk": attrs.exec_dep(default = "prelude//java/tools:check_jdk", providers = [RunInfo]),
     },
 )
 

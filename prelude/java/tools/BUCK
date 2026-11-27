@@ -13,6 +13,12 @@ prelude.python_bootstrap_library(
 )
 
 prelude.python_bootstrap_binary(
+    name = "check_jdk",
+    main = "check_jdk.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
     name = "compiler_class_to_source_map",
     main = "compiler_class_to_source_map.py",
     visibility = ["PUBLIC"],
@@ -114,6 +120,15 @@ prelude.python_library(
         "utils.py",
     ],
     typing = True,
+)
+
+prelude.python_test(
+    name = "test_check_jdk",
+    srcs = [
+        "check_jdk.py",
+        "tests/test_check_jdk.py",
+    ],
+    base_module = "",
 )
 
 prelude.python_test(

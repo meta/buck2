@@ -6,27 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-def _get_artifacts(sources: Artifact) -> list[Artifact]:
-    return [sources]
-
-RustSourcesTSet = transitive_set(
-    args_projections = {
-        "artifacts": _get_artifacts,
-    },
-)
-
-# The sources of a crate and of its transitive library dependencies.
-#
-# They are inputs of every compile that depends on the crate, for crate hashes that are the same
-# wherever the compile runs (https://github.com/rust-lang/rust/issues/153898): rustc desugars a
-# format string differently depending on whether it can read the string back from the file it is
-# in, and a `macro_rules!` macro of a dependency expands to strings in that dependency's files.
-# A proc macro has no way to expand to a string that reads back from its own files, or from
-# those of what it is built from, so those are not in here. `test_rust_build_reproducibility`
-# covers both kinds of macro.
+# The sources of one crate, in a directory. A `rust_filegroup` has it for `srcs_filegroup`, and
+# a rule that compiles a crate has it for that crate.
 RustSources = provider(
     fields = {
-        "tset": RustSourcesTSet,
+        "srcs": Artifact,
     }
 )
 
@@ -130,14 +114,9 @@ def symlinked_srcs(ctx: AnalysisContext) -> Artifact:
 
 def _rust_filegroup_impl(ctx: AnalysisContext) -> list[Provider]:
     srcs = symlinked_srcs(ctx)
-    tset = ctx.actions.tset(
-        RustSourcesTSet,
-        value = srcs,
-        children = [],
-    )
     return [
         DefaultInfo(default_output = srcs),
-        RustSources(tset = tset),
+        RustSources(srcs = srcs),
     ]
 
 rust_filegroup = rule(

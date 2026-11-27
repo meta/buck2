@@ -106,6 +106,8 @@ def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact, arch: str | None = Non
             dep_metadata_kind = MetadataKind("full"),
             arch = arch,
             cwd = cwd,
+            # The build script only probes the compiler with what it is given here.
+            sources = False,
         )
 
         null_path = "nul" if ctx.attrs._exec_os_type[OsLookup].os == Os("windows") else "/dev/null"

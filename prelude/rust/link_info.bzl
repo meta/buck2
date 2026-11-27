@@ -187,6 +187,15 @@ RustCrate = record(
     crate = field(CrateName),
     # `RustLinkStrategyInfo.outputs` of each link strategy.
     outputs = field(dict[LinkStrategy, dict[MetadataKind, Artifact]]),
+    # The crate's sources. They are inputs of every compile that depends on the crate, for crate
+    # hashes that are the same wherever the compile runs
+    # (https://github.com/rust-lang/rust/issues/153898): rustc desugars a format string
+    # differently depending on whether it can read the string back from the file it is in, and a
+    # `macro_rules!` macro of a dependency expands to strings in that dependency's files. A proc
+    # macro has no way to expand to a string that reads back from its own files, or from those
+    # of what it is built from, so those are not inputs. `test_rust_build_reproducibility`
+    # covers both kinds of macro.
+    srcs = field(Artifact),
     # The proc macros among the crate's dependencies, as keys into `get_available_proc_macros`.
     # A dependent has to load them too, and each dependent gets them from its own plugins.
     proc_macro_deps = field(list[TargetLabel]),
@@ -194,7 +203,10 @@ RustCrate = record(
 
 # The projections of `RustCrateGraph` for one choice of each crate's artifact.
 CrateArtifactsProjection = record(
-    # Projects a crate to the artifact.
+    # Projects a crate to the artifact and to `RustCrate.srcs`, which is everything of the crate
+    # that a compile against the artifact has to have as an input. Sources are in the same
+    # projection as the artifacts so that an action takes one projection: the input directories
+    # of two projections over the same crates are merged again for every action.
     args = field(str),
     # Projects a crate to what `transitive_dependency_symlinks.py` needs to know about the
     # artifact, or to `null` if the crate has no such artifact.
@@ -208,7 +220,7 @@ def _crate_artifacts_projection(link_strategy: LinkStrategy, metadata_kind: Meta
 def _project_artifact_args(link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> typing.Callable[[RustCrate], list[Artifact]]:
     def project(crate: RustCrate) -> list[Artifact]:
         artifact = crate.outputs[link_strategy].get(metadata_kind)
-        return [artifact] if artifact else []
+        return [crate.srcs, artifact] if artifact else [crate.srcs]
 
     return project
 
@@ -320,23 +332,22 @@ RustLinkInfo = provider(
     },
 )
 
-def _adjust_link_strategy_for_rust_dependencies(toolchain_info: RustToolchainInfo, dep_link_strategy: LinkStrategy) -> LinkStrategy:
+def strategy_info_link_strategy(toolchain_info: RustToolchainInfo, dep_link_strategy: LinkStrategy) -> LinkStrategy:
+    """The key of `RustLinkInfo.strategies` and `RustCrate.outputs` that `strategy_info` reads."""
     if dep_link_strategy == LinkStrategy("shared") and not toolchain_info.advanced_unstable_linking:
         return DEFAULT_STATIC_LINK_STRATEGY
     else:
         return dep_link_strategy
 
 def strategy_info(toolchain_info: RustToolchainInfo, info: RustLinkInfo, dep_link_strategy: LinkStrategy) -> RustLinkStrategyInfo:
-    rust_dep_link_strategy = _adjust_link_strategy_for_rust_dependencies(toolchain_info, dep_link_strategy)
-
-    return info.strategies[rust_dep_link_strategy]
+    return info.strategies[strategy_info_link_strategy(toolchain_info, dep_link_strategy)]
 
 def crate_artifacts_projection(toolchain_info: RustToolchainInfo, dep_link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> CrateArtifactsProjection:
     """
     The projections of `RustCrateGraph` for the artifact that is
     `strategy_info(...).outputs[metadata_kind]` of each crate.
     """
-    return _crate_artifacts_projection(_adjust_link_strategy_for_rust_dependencies(toolchain_info, dep_link_strategy), metadata_kind)
+    return _crate_artifacts_projection(strategy_info_link_strategy(toolchain_info, dep_link_strategy), metadata_kind)
 
 # Any dependency of a Rust crate
 RustOrNativeDependency = record(
@@ -615,7 +626,7 @@ def crate_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> RustCrate
     """The Rust dependencies of the crate being analyzed."""
     return resolve_crate_deps(ctx, resolve_rust_deps(ctx, dep_ctx), crate = ctx.label)
 
-def crate_graph(ctx: AnalysisContext, deps: RustCrateDeps, strategies: dict[LinkStrategy, RustLinkStrategyInfo]) -> RustCrateGraph:
+def crate_graph(ctx: AnalysisContext, deps: RustCrateDeps, strategies: dict[LinkStrategy, RustLinkStrategyInfo], srcs: Artifact) -> RustCrateGraph:
     """The value of `RustLinkInfo.crates` for the library being analyzed."""
     return ctx.actions.tset(
         RustCrateGraph,
@@ -624,6 +635,7 @@ def crate_graph(ctx: AnalysisContext, deps: RustCrateDeps, strategies: dict[Link
             label = ctx.label.configured_target(),
             crate = attr_crate(ctx),
             outputs = {link_strategy: info.outputs for link_strategy, info in strategies.items()},
+            srcs = srcs,
             proc_macro_deps = [dep.dep.label.raw_target() for dep in deps.direct if not isinstance(dep.info, RustLinkInfo)],
         ),
         children = [deps.crates],

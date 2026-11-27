@@ -139,7 +139,7 @@ def _rust_tooling_providers(ctx: AnalysisContext, compile_ctx: CompileContext, p
             clippy_incr = clippy_artifacts[True],
             remarks = None,
         ),
-        RustSources(tset = compile_ctx.transitive_srcs),
+        RustSources(srcs = compile_ctx.symlinked_srcs),
         rust_analyzer_provider(
             ctx = ctx,
             compile_ctx = compile_ctx,

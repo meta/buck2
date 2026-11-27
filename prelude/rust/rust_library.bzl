@@ -138,11 +138,7 @@ load(":proc_macro_alias.bzl", "rust_proc_macro_alias", "rust_proc_macro_arch_agg
 load(":profile.bzl", "make_profile_providers")
 load(":resources.bzl", "rust_attr_resources")
 load(":rust_toolchain.bzl", "RustToolchainInfo", "toolchain_supports_miri")
-load(
-    ":sources.bzl",
-    "RustSources",
-    "RustSourcesTSet",
-)
+load(":sources.bzl", "RustSources")
 load(":targets.bzl", "targets")
 
 transition_alias = rule(
@@ -511,7 +507,6 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
         check_artifacts = output_as_diag_subtargets(diag_artifacts[incr_enabled], clippy_artifacts[incr_enabled]),
         expand = expand,
         sources = compile_ctx.symlinked_srcs,
-        transitive_srcs = compile_ctx.transitive_srcs,
         rustdoc_coverage = rustdoc_coverage,
         named_deps_names = write_named_deps_names(ctx, compile_ctx),
         profiles = profiles,
@@ -791,7 +786,6 @@ def _default_providers(
     check_artifacts: dict[str, Artifact | None],
     expand: Artifact | None,
     sources: Artifact,
-    transitive_srcs: RustSourcesTSet,
     rustdoc_coverage: Artifact | None,
     named_deps_names: Artifact | None,
     profiles: list[Provider],
@@ -872,11 +866,7 @@ def _default_providers(
         )
     )
 
-    providers.append(
-        RustSources(
-            tset = transitive_srcs,
-        )
-    )
+    providers.append(RustSources(srcs = sources))
 
     return providers
 
@@ -1016,7 +1006,7 @@ def _advanced_unstable_link_providers(
         RustLinkInfo(
             crate = crate,
             strategies = rust_artifacts,
-            crates = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts),
+            crates = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts, compile_ctx.symlinked_srcs),
             link_graph = ctx.actions.tset(
                 RustLinkGraph,
                 value = RustLinkGraphNode(
@@ -1060,7 +1050,7 @@ def _stable_link_providers(
     rust_link_info = RustLinkInfo(
         crate = crate,
         strategies = rust_artifacts,
-        crates = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts),
+        crates = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts, compile_ctx.symlinked_srcs),
         link_graph = compile_ctx.inherited_link_deps.graph,
         shared_libs = merge_shared_libraries(
             ctx.actions,

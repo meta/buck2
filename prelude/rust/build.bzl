@@ -130,7 +130,6 @@ load(
     "RustCrateDeps",  # @unused Used as a type
     "RustCrateGraph",  # @unused Used as a type
     "RustCxxLinkGroupInfo",  # @unused Used as a type
-    "RustLinkInfo",
     "RustProcMacroArchInfo",
     "RustProcMacroInfo",
     "attr_crate",
@@ -144,8 +143,8 @@ load(
     "inherited_rust_external_debug_info",
     "inherited_shared_libs",
     "normalize_crate",
-    "resolve_deps",
     "strategy_info",
+    "strategy_info_link_strategy",
 )
 load(
     ":outputs.bzl",
@@ -157,11 +156,6 @@ load(
 )
 load(":resources.bzl", "rust_attr_resources")
 load(":rust_toolchain.bzl", "PanicRuntime", "RustToolchainInfo")
-load(
-    ":sources.bzl",
-    "RustSources",
-    "RustSourcesTSet",
-)
 
 def generate_rustdoc(
     ctx: AnalysisContext,
@@ -384,11 +378,6 @@ def generate_rustdoc_test(
         doc_crate_deps = crate_deps(ctx, doc_dep_ctx)
     else:
         doc_crate_deps = compile_ctx.crate_deps
-    transitive_srcs = ctx.actions.tset(
-        RustSourcesTSet,
-        value = compile_ctx.symlinked_srcs,
-        children = [d.dep[RustSources].tset for d in resolve_deps(ctx, doc_dep_ctx) if RustLinkInfo in d.dep and RustSources in d.dep],
-    )
 
     resources = create_resource_db(
         ctx = ctx,
@@ -527,7 +516,6 @@ def generate_rustdoc_test(
             delimiter = "",
         ),
         hidden = [
-            transitive_srcs.project_as_args("artifacts"),
             link_args_output.hidden,
             executable_args.runtime_files,
         ],
@@ -1187,8 +1175,17 @@ def dependency_args(
     dep_metadata_kind: MetadataKind,
     arch: str | None = None,
     cwd: Artifact | None = None,
+    # Whether the dependencies' sources are inputs along with their artifacts. Compiles need
+    # that (https://github.com/rust-lang/rust/issues/153898). Without it, every artifact is
+    # an input of its own, which only suits a small graph.
+    sources: bool = True,
 ) -> (cmd_args, cmd_args, list[(CrateName, Label)]):
-    args = cmd_args()
+    projection = crate_artifacts_projection(toolchain_info, dep_link_strategy, dep_metadata_kind)
+    if sources:
+        args = cmd_args(hidden = crate_deps.crates.project_as_args(projection.args))
+    else:
+        rust_dep_link_strategy = strategy_info_link_strategy(toolchain_info, dep_link_strategy)
+        args = cmd_args(hidden = [crate.outputs[rust_dep_link_strategy].get(dep_metadata_kind) or [] for crate in crate_deps.crates.traverse()])
     crate_targets = []
     available_proc_macros = get_available_proc_macros(ctx)
 
@@ -1280,7 +1277,7 @@ def dependency_args(
         transitive_dependency_dirs,
         prefix,
         crate_deps.crates,
-        crate_artifacts_projection(toolchain_info, dep_link_strategy, dep_metadata_kind),
+        projection,
         proc_macros,
         arch,
         cwd,
@@ -1293,6 +1290,7 @@ def symlinked_dirs(
     internal_tools_info: RustInternalToolsInfo,
     transitive_dependency_dirs: set,
     prefix: str,
+    # The caller has to make the artifacts of these crates inputs of whatever uses the result.
     crates: RustCrateGraph,
     # Which of the crates' artifacts.
     projection: CrateArtifactsProjection,
@@ -1355,10 +1353,7 @@ def symlinked_dirs(
         # Reference the directory Artifact (not the dirs file), so all of its children are included.
         transitive_dependency_dir,
         format = "@{}/dirs",
-        hidden = [
-            crates.project_as_args(projection.args),
-            [proc_macro.artifact for proc_macro in proc_macros],
-        ],
+        hidden = [proc_macro.artifact for proc_macro in proc_macros],
     )
 
 def _lintify(flag: str, clippy: bool, lints: list[str | ResolvedStringWithMacros]) -> cmd_args:
@@ -1604,7 +1599,7 @@ def _compute_common_args(
                 dep_link_strategy = params.dep_link_strategy,
                 dep_metadata_kind = dep_metadata_kind,
             )
-            dep_args.add(cmd_args(hidden = compile_ctx.transitive_srcs.project_as_args("artifacts")))
+            dep_args.add(cmd_args(hidden = compile_ctx.symlinked_srcs))
             dep_args.add(dep_argsfiles)
             if crate_type == CrateType("proc-macro"):
                 dep_args.add("--extern=proc_macro")
@@ -1624,7 +1619,7 @@ def _compute_common_args(
                     dep_metadata_kind = dep_metadata_kind,
                     arch = arch,
                 )
-                arch_dep_args.add(cmd_args(hidden = compile_ctx.transitive_srcs.project_as_args("artifacts")), arch_dep_argsfiles)
+                arch_dep_args.add(cmd_args(hidden = compile_ctx.symlinked_srcs), arch_dep_argsfiles)
                 if crate_type == CrateType("proc-macro"):
                     arch_dep_args.add("--extern=proc_macro")
                 if crate_map != None and crate_map != arch_crate_map:
@@ -2179,7 +2174,7 @@ def _rustc_invoke(
         cmd_args(diag_txt.as_output(), format = "--diag-txt={}"),
         ["--remap-cwd-prefix=."] if not toolchain_info.nightly_features else [],
         "--buck-target={}".format(ctx.label.raw_target()),
-        hidden = [compile_ctx.transitive_srcs.project_as_args("artifacts")] + ([rustc_bin] if arch_programs == None else []),
+        hidden = [compile_ctx.symlinked_srcs] + ([rustc_bin] if arch_programs == None else []),
     )
 
     compile_cmd.add(crate_map_args)

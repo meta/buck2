@@ -28,10 +28,8 @@ load(
     ":link_info.bzl",
     "RustCrateDeps",
     "RustInheritedLinkDeps",
-    "RustLinkInfo",
     "crate_deps",
     "inherited_link_deps",
-    "resolve_deps",
 )
 load(
     ":rust_toolchain.bzl",
@@ -39,12 +37,7 @@ load(
     "RustToolchainInfo",
     "get_rust_arch_toolchain_info",
 )
-load(
-    ":sources.bzl",
-    "RustSources",
-    "RustSourcesTSet",
-    "symlinked_srcs",
-)
+load(":sources.bzl", "symlinked_srcs")
 
 # Struct for sharing common args between rustc and rustdoc
 # (rustdoc just relays bunch of the same args to rustc when trying to gen docs)
@@ -104,8 +97,6 @@ CompileContext = record(
     soname = field(str | None),
     # Symlink root containing all sources.
     symlinked_srcs = field(Artifact),
-    # All sources of transitive Rust dependencies, not including doc dependencies.
-    transitive_srcs = field(RustSourcesTSet),
     # Linker args to pass the linker wrapper to rustc.
     sysroot_args = field(cmd_args),
     toolchain_info = field(RustToolchainInfo),
@@ -134,12 +125,6 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
         explicit_sysroot_deps = toolchain_info.explicit_sysroot_deps,
         panic_runtime = toolchain_info.panic_runtime,
         linker_deps = toolchain_info.linker_deps,
-    )
-
-    transitive_srcs = ctx.actions.tset(
-        RustSourcesTSet,
-        value = srcs,
-        children = [d.dep[RustSources].tset for d in resolve_deps(ctx, dep_ctx) if RustLinkInfo in d.dep and RustSources in d.dep],
     )
 
     # When we pass explicit sysroot deps, we need to override the default
@@ -183,7 +168,6 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
         path_sep = path_sep,
         soname = _attr_soname(ctx),
         symlinked_srcs = srcs,
-        transitive_srcs = transitive_srcs,
         sysroot_args = sysroot_args,
         toolchain_info = toolchain_info,
         arch_toolchain_info = arch_toolchain_info,

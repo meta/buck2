@@ -16,9 +16,9 @@ prelude.rust_binary(
 
 buildscript_run(
     name = "build-script-run",
+    package_name = "opt_level",
     buildscript_rule = ":build-script-build",
     local_manifest_dir = ".",
-    package_name = "opt_level",
     version = "0.1.0",
 )
 

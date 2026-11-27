@@ -13,8 +13,11 @@ load("@prelude//decls:remote_common.bzl", "remote_common")
 load("@prelude//utils:expect.bzl", "expect")
 load("@prelude//utils:utils.bzl", "value_or")
 
-_DEFAULT_MAVEN_REPO = read_config("http", "maven_repo", "https://repo1.maven.org/maven2")
-_MAVEN_REPO_OVERRIDE = read_config("http", "maven_repo_override")
+# `read_config` reads the config of the cell that loads this file, so for the prelude's own
+# downloads (toolchain jars) it reads `prelude/.buckconfig`, not the project's. Fall back to the
+# root cell's value; a project-wide override wins over a cell's.
+_DEFAULT_MAVEN_REPO = read_config("http", "maven_repo") or read_root_config("http", "maven_repo", "https://repo1.maven.org/maven2")
+_MAVEN_REPO_OVERRIDE = read_root_config("http", "maven_repo_override") or read_config("http", "maven_repo_override")
 
 def _from_mvn_url(url: str) -> str:
     """

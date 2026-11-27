@@ -79,6 +79,14 @@ does not package it. A binary that runs Kotlin code depends on
 above; without it, the program fails with
 `NoClassDefFoundError: kotlin/jvm/internal/Intrinsics`.
 
+## Persistent worker
+
+The toolchain runs Kotlin compiles in a
+[persistent worker](../../../rule_authors/persistent_workers.md): one JVM that
+compiles every Kotlin target of a build, so the compiles share its startup and
+its JIT-compiled compiler. `[build] use_persistent_workers = false` gives each
+compile a JVM of its own instead.
+
 ## Source-only ABIs
 
 A target with `abi_generation_mode = "source_only"` gets its ABI JAR from

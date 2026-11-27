@@ -75,7 +75,7 @@ public class GenerateBuildConfigExecutableMain {
 
     try (ThrowingPrintWriter writer =
         new ThrowingPrintWriter(new FileOutputStream(outputPath.toFile()))) {
-      writer.printf(java);
+      writer.printf("%s", java);
     }
 
     System.exit(0);

@@ -1,0 +1,127 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+"""IntelliJ / Android Studio project for Java, Kotlin and Android targets.
+
+    buck2 bxl prelude//ide_integrations/intellij/intellij.bxl:generate -- --targets //app/...
+
+Each Java, Kotlin or Android library or test with sources becomes a module: its source folders
+(package prefixes read from the files), its compile classpath (other modules where they are in
+the project, jars otherwise, built by this command), and for Android, the manifest, the resources,
+`android.jar` and the generated `R` classes. Prints the project directory, which IntelliJ or
+Android Studio can open as is.
+"""
+
+load("@prelude//android:android_providers.bzl", "AndroidLibraryIntellijInfo")
+load("@prelude//android:android_toolchain.bzl", "AndroidToolchainInfo")
+load("@prelude//java:java_providers.bzl", "JavaLibraryInfo", "JavaLibraryIntellijInfo")
+load("@prelude//python_bootstrap:toolchain.bzl", "PythonBootstrapToolchainInfo")
+
+def _module_name(label: ConfiguredTargetLabel) -> str:
+    name = "{}_{}".format(label.package, label.name) if label.package else label.name
+    return "".join([c if c.isalnum() or c in "-_." else "_" for c in name.elems()])
+
+def _project_resources(ctx: bxl.Context, infos: list, project: dict) -> (list, Artifact | None):
+    """The source `res` directories and the manifest of the project's own `android_resource` targets."""
+    res = []
+    manifest = None
+    for info in infos:
+        if info.raw_target not in project:
+            continue
+        attrs = project[info.raw_target].resolved_attrs_lazy(ctx)
+        if isinstance(attrs.get("res"), Artifact):
+            res.append(attrs.get("res"))
+        manifest = manifest or attrs.get("manifest")
+    return res, manifest
+
+def _module(ctx: bxl.Context, node: bxl.ConfiguredTargetNode, providers: ProviderCollection, modules: dict, project: dict, sdk_jars: list) -> dict:
+    attrs = node.resolved_attrs_lazy(ctx)
+    srcs = attrs.get("srcs") or []
+    libraries = []
+    deps = []
+    for jar in providers[JavaLibraryIntellijInfo].compiling_classpath or []:
+        if jar in modules:
+            deps.append(modules[jar])
+        else:
+            libraries.append(jar)
+    module = {
+        "deps": deps,
+        "dir": ctx.fs.abs_path_unsafe(node.buildfile_path).rsplit("/", 1)[0],
+        "label": str(node.label.raw_target()),
+        "libraries": libraries,
+        "name": _module_name(node.label),
+        "srcs": srcs,
+        "test": node.rule_type.endswith("_test"),
+    }
+    android = providers.get(AndroidLibraryIntellijInfo)
+    if android:
+        res, resource_manifest = _project_resources(ctx, android.android_resource_deps or [], project)
+        if android.dummy_r_dot_java:
+            module["libraries"] = module["libraries"] + [android.dummy_r_dot_java]
+        module["libraries"] = module["libraries"] + sdk_jars
+        module["android"] = {
+            "manifest": attrs.get("manifest") or resource_manifest,
+            "res": res,
+        }
+    return module
+
+def _generate_impl(ctx: bxl.Context) -> None:
+    targets = [t for sublist in ctx.cli_args.targets for t in sublist]
+    # The targets in the default target platform, as `buck2 build` would configure them.
+    target_set = ctx.configured_targets(targets)
+    nodes = {node.label: node for node in target_set}
+    project = {node.label.raw_target(): node for node in target_set}
+
+    candidates = []
+    for target, result in ctx.analysis(target_set).items():
+        providers = result.providers()
+        if JavaLibraryIntellijInfo in providers and JavaLibraryInfo in providers:
+            node = nodes[target.configured_target()]
+            attrs = node.attrs_lazy()
+            if attrs.get("srcs") and attrs.get("srcs").value():
+                candidates.append((node, providers))
+
+    # A module's own jar on another module's classpath is a dependency on that module.
+    modules = {}
+    for node, providers in candidates:
+        output = providers[JavaLibraryInfo].library_output
+        if output:
+            modules[output.full_library] = _module_name(node.label)
+
+    sdk_jars = []
+    for node, providers in candidates:
+        toolchain = node.resolved_attrs_lazy(ctx).get("_android_toolchain")
+        if toolchain and AndroidToolchainInfo in toolchain:
+            sdk_jars = toolchain[AndroidToolchainInfo].android_bootclasspath
+            break
+
+    project = {
+        "modules": [_module(ctx, node, providers, modules, project, sdk_jars) for node, providers in candidates],
+        "name": ctx.root().rsplit("/", 1)[-1],
+    }
+
+    actions = ctx.bxl_actions().actions
+    modules_json = actions.declare_output("intellij_modules.json", has_content_based_path = False)
+    json_inputs = actions.write_json(modules_json, project, with_inputs = True, absolute = True, pretty = True)
+    out = actions.declare_output("intellij", dir = True, has_content_based_path = False)
+    python = ctx.analysis(ctx.configured_targets(ctx.cli_args.python_bootstrap)).providers()[PythonBootstrapToolchainInfo].interpreter
+    script = ctx.fs.source("prelude//ide_integrations/intellij/gen_intellij.py")
+    actions.run(
+        cmd_args(python, script, modules_json, out.as_output(), hidden = json_inputs),
+        category = "intellij_project",
+        local_only = True,
+    )
+    ctx.output.print(ctx.output.ensure(out).abs_path())
+
+generate = bxl_main(
+    impl = _generate_impl,
+    cli_args = {
+        "python_bootstrap": cli_args.string(default = "toolchains//:python_bootstrap", doc = "the Python bootstrap toolchain that runs the generator"),
+        "targets": cli_args.list(cli_args.target_expr(), doc = "the targets to make modules of, for example //app/..."),
+    },
+)

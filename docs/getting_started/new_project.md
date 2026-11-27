@@ -35,6 +35,19 @@ It creates:
 
 `buck2 build //...` works at this point, and builds the example target.
 
+`--template` chooses a different example, with the configuration it needs:
+
+| Command                         | Example                                                                                                  |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `buck2 init --template=kotlin`  | A Kotlin library and a `java_binary` that runs it: `buck2 run //:main`. Needs a JDK.                     |
+| `buck2 init --template=android` | An Android app in Kotlin: `buck2 build //:app`, `buck2 install //:app`. Needs a JDK and the Android SDK. |
+
+For the Android template, `buck2 init` writes `[android] sdk_path` from
+`$ANDROID_HOME` (or `$ANDROID_SDK_ROOT`) when one is set. See
+[Kotlin](../users/languages/kotlin/overview.md) and
+[Android](../users/languages/android/overview.md) for what else these projects
+can do.
+
 Buck2 writes into the directory `buck-out`, which belongs in `.gitignore`. For
 a directory that is not a git repository yet, `buck2 init --git` does that: it
 runs `git init`, writes a `.gitignore` with `/buck-out`, and adds the

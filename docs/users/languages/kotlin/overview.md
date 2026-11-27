@@ -40,6 +40,9 @@ java_binary(
 
 `buck2 run //kotlin:app` prints `Hello, Buck2!`.
 
+To start a new project from a Kotlin example instead, run
+`buck2 init --template=kotlin`, then `buck2 run //:main`.
+
 ## Requirements
 
 - **A JDK.** The toolchain uses the JDK in `[java] java_home` of the project's
@@ -52,7 +55,9 @@ java_binary(
 
   The prelude's own Java and Kotlin tools are built for Java 21. With an older
   JDK, build them for its version instead, for example
-  `buck2 build -c java.buck2_java_version=17 //...`.
+  `buck2 build -c java.buck2_java_version=17 //...`. When the JDK is missing or
+  older than that version, the build stops before its first Java step and
+  names the setting to change.
 
 - **Maven Central** on the first build: the toolchain downloads the Kotlin
   compiler and the libraries of its tools as `mvn:` remote files. To use a

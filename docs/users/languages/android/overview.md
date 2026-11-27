@@ -28,6 +28,9 @@ tests, an app bundle and a JNI library:
 | `buck2 test //app:android_tests`           | Installs the app and its test APK on a device or emulator and runs the tests there     |
 | `buck2 test //app:native_tests`            | The same, for the app with a JNI library; needs the [NDK](#native-code)                |
 
+To start a new project from a smaller app, run `buck2 init --template=android`.
+It takes `[android] sdk_path` from `$ANDROID_HOME` when that is set.
+
 ## Requirements
 
 - **The Android SDK**, with build tools 35.0.0 and the `android-35` platform. The
@@ -39,7 +42,9 @@ tests, an app bundle and a JNI library:
   ```
 
   `[android] build_tools_version` and `[android] compile_sdk_version` choose
-  other versions.
+  other versions. If the SDK lacks a file the build needs, the build stops at
+  the first step that needs it, lists the missing files, and prints the
+  `sdkmanager` command that installs them.
 
 - **A JDK**, as for [Kotlin](../kotlin/overview.md#requirements): the one in
   `[java] java_home`, or else the one whose `java` is on `PATH`. The prelude's
@@ -177,6 +182,35 @@ android_prebuilt_aar(
     deps = [...],
 )
 ```
+
+To generate these files, list the libraries the app uses, one
+`group:artifact:version` per line, and run
+[`maven_to_buck`](https://github.com/facebook/buck2/tree/main/tools/maven_to_buck),
+a Python script with no dependencies:
+
+```sh
+python3 maven_to_buck.py app/libs/external_deps.txt --out app/libs --package //app/libs
+```
+
+It adds the libraries' dependencies, picks one version of each library as Gradle
+does, and writes one BUCK file per library. To change a version, edit the list
+and run it again.
+
+## IntelliJ and Android Studio
+
+```sh
+buck2 bxl prelude//ide_integrations/intellij/intellij.bxl:generate -- --targets //app/...
+```
+
+writes an IntelliJ project for the Java, Kotlin and Android targets in
+`//app/...` and prints its directory, which IntelliJ or Android Studio opens as
+it is:
+- each library or test with sources is a module, with its source folders;
+- its dependencies are the other modules, or else the built jars;
+- Android libraries also get their manifest, resources, `android.jar` and
+  generated `R` classes.
+
+Run it again after changing the BUCK files.
 
 ## Persistent workers
 

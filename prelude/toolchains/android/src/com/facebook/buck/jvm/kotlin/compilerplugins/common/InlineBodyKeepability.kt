@@ -542,7 +542,7 @@ class InlineBodyKeepability(
           is FirFunction -> element === function
           is FirAnnotation ->
               annotationFqn(element)?.let { isKeepableAnnotation(it, pluginTriggerAnnotations) } ==
-                  true
+                  true || isOptInMarker(element)
           is FirWhenExpression -> !isWhenOverEnum(element)
           is FirResolvable ->
               (element.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol.let {
@@ -574,6 +574,16 @@ class InlineBodyKeepability(
 
     private fun isComposeAnnotation(annotation: FirAnnotation): Boolean =
         annotationFqn(annotation)?.startsWith("androidx.compose.") == true
+
+    // An opt-in marker (an annotation class annotated `@RequiresOptIn`) only gates use sites in the
+    // frontend's opt-in checker; codegen ignores it. A stub of a dependency's marker carries no
+    // `@RequiresOptIn`, so it stays rejected.
+    private fun isOptInMarker(element: FirAnnotation): Boolean {
+      val classId = element.annotationTypeRef.coneTypeOrNull?.classId ?: return false
+      if (classId.asSingleFqName().asString() in pluginTriggerAnnotations) return false
+      val symbol = session.symbolProvider.getClassLikeSymbolByClassId(classId) ?: return false
+      return REQUIRES_OPT_IN in symbol.resolvedAnnotationClassIds
+    }
 
     private fun annotationFqn(element: FirAnnotation): String? =
         element.annotationTypeRef.coneTypeOrNull?.classId?.asSingleFqName()?.asString()
@@ -650,6 +660,7 @@ class InlineBodyKeepability(
   // Public for tests: the keepability predicate without a compilation.
   companion object {
     val SYNTHETIC_PACKAGE = FqName("_synthetic")
+    private val REQUIRES_OPT_IN = ClassId.topLevel(FqName("kotlin.RequiresOptIn"))
     val ENUM_ENTRIES_FUNCTION = FqName("kotlin.enums.enumEntries")
 
     // Package-level allowlist: every annotation in these packages is lint-only — no

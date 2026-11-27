@@ -126,14 +126,14 @@ load(
 load(
     ":link_info.bzl",
     "RustArtifact",
+    "RustCrateDeps",  # @unused Used as a type
     "RustCxxLinkGroupInfo",  # @unused Used as a type
-    "RustDependency",
     "RustProcMacroArchInfo",
     "RustProcMacroInfo",
     "TransitiveDeps",
     "attr_crate",
     "attr_simple_crate_for_filenames",
-    "crate_identities",
+    "crate_deps",
     "crate_metadata",
     "executable_shared_lib_arguments_from_shared_library_info",
     "get_available_proc_macros",
@@ -142,7 +142,6 @@ load(
     "inherited_shared_libs",
     "normalize_crate",
     "resolve_deps",
-    "resolve_rust_deps",
     "strategy_info",
 )
 load(
@@ -175,7 +174,7 @@ def generate_rustdoc(
     common_args = _compute_common_args(
         ctx = ctx,
         compile_ctx = compile_ctx,
-        dep_ctx = compile_ctx.dep_ctx,
+        crate_deps = compile_ctx.crate_deps,
         # to make sure we get the rmeta's generated for the crate dependencies,
         # rather than full .rlibs
         emit = Emit("metadata-fast"),
@@ -279,7 +278,7 @@ def generate_rustdoc_coverage(
     common_args = _compute_common_args(
         ctx = ctx,
         compile_ctx = compile_ctx,
-        dep_ctx = compile_ctx.dep_ctx,
+        crate_deps = compile_ctx.crate_deps,
         # to make sure we get the rmeta's generated for the crate dependencies,
         # rather than full .rlibs
         emit = Emit("metadata-fast"),
@@ -379,8 +378,9 @@ def generate_rustdoc_test(
         linker_deps = compile_ctx.dep_ctx.linker_deps,
     )
     if ctx.attrs.doc_deps or ctx.attrs.doc_named_deps:
-        # Doctests depend on the doc deps too, which `compile_ctx.crate_identities` does not cover.
-        crate_identities(ctx, doc_dep_ctx)
+        doc_crate_deps = crate_deps(ctx, doc_dep_ctx)
+    else:
+        doc_crate_deps = compile_ctx.crate_deps
     transitive_srcs = ctx.actions.tset(
         RustSourcesTSet,
         value = compile_ctx.symlinked_srcs,
@@ -424,7 +424,7 @@ def generate_rustdoc_test(
     common_args = _compute_common_args(
         ctx = ctx,
         compile_ctx = compile_ctx,
-        dep_ctx = doc_dep_ctx,
+        crate_deps = doc_crate_deps,
         emit = Emit("link"),
         params = params,
         default_roots = default_roots,
@@ -659,7 +659,7 @@ def miri_command(
     common_args = _compute_common_args(
         ctx = ctx,
         compile_ctx = compile_ctx,
-        dep_ctx = compile_ctx.dep_ctx,
+        crate_deps = compile_ctx.crate_deps,
         emit = Emit("miri"),
         params = params,
         default_roots = default_roots,
@@ -786,7 +786,7 @@ def rust_compile(
     common_args = _compute_common_args(
         ctx = ctx,
         compile_ctx = compile_ctx,
-        dep_ctx = compile_ctx.dep_ctx,
+        crate_deps = compile_ctx.crate_deps,
         emit = emit,
         params = params,
         default_roots = default_roots,
@@ -1188,7 +1188,7 @@ def dependency_args(
     internal_tools_info: RustInternalToolsInfo,
     transitive_dependency_dirs: set[Artifact],
     toolchain_info: RustToolchainInfo,
-    deps: list[RustDependency],
+    crate_deps: RustCrateDeps,
     subdir: str,
     dep_link_strategy: LinkStrategy,
     dep_metadata_kind: MetadataKind,
@@ -1209,7 +1209,7 @@ def dependency_args(
         exec_os_type = getattr(ctx.attrs, "_exec_os_type", None)
         if exec_os_type != None:
             scalar_arch = exec_os_type[OsLookup].cpu
-    for dep in deps:
+    for dep in crate_deps.direct:
         if dep.name:
             crate = CrateName(
                 simple = normalize_crate(dep.name),
@@ -1257,27 +1257,6 @@ def dependency_args(
             singleton_tset = strategy.singleton_tset[dep_metadata_kind]
             transitive_artifacts = strategy.transitive_deps[dep_metadata_kind]
 
-            for label in strategy.transitive_proc_macro_deps:
-                proc_macro = available_proc_macros[label]
-                if arch == None:
-                    scalar_info = proc_macro.get(RustProcMacroInfo)
-                    if scalar_info != None:
-                        transitive_deps.append(scalar_info.singleton_tset)
-                    else:
-                        arch_info = proc_macro.get(RustProcMacroArchInfo)
-                        if arch_info == None or scalar_arch == None or scalar_arch not in arch_info.arch_variants:
-                            fail(
-                                "transitive proc-macro dependency `{}` resolved to dual-arch proc-macro variants {}, but this compile's execution platform has no matching arch variant (execution cpu `{}`)".format(
-                                    label,
-                                    arch_info.arch_variants.keys() if arch_info != None else [],
-                                    scalar_arch or "unknown",
-                                ),
-                            )
-                        transitive_deps.append(arch_info.arch_variants[scalar_arch].singleton_tset)
-                else:
-                    arch_info = proc_macro.get(RustProcMacroArchInfo)
-                    transitive_deps.append(arch_info.arch_variants[arch].singleton_tset)
-
         args.add(extern_arg(dep.flags, crate, artifact))
         if split_metadata:
             args.add(extern_arg(dep.flags, crate, split_metadata))
@@ -1292,6 +1271,27 @@ def dependency_args(
         # Unwanted transitive_deps have already been excluded
         if transitive_artifacts != None:
             transitive_deps.append(transitive_artifacts)
+
+    for label in crate_deps.proc_macro_deps:
+        proc_macro = available_proc_macros[label]
+        if arch == None:
+            scalar_info = proc_macro.get(RustProcMacroInfo)
+            if scalar_info != None:
+                transitive_deps.append(scalar_info.singleton_tset)
+            else:
+                arch_info = proc_macro.get(RustProcMacroArchInfo)
+                if arch_info == None or scalar_arch == None or scalar_arch not in arch_info.arch_variants:
+                    fail(
+                        "transitive proc-macro dependency `{}` resolved to dual-arch proc-macro variants {}, but this compile's execution platform has no matching arch variant (execution cpu `{}`)".format(
+                            label,
+                            arch_info.arch_variants.keys() if arch_info != None else [],
+                            scalar_arch or "unknown",
+                        ),
+                    )
+                transitive_deps.append(arch_info.arch_variants[scalar_arch].singleton_tset)
+        else:
+            arch_info = proc_macro.get(RustProcMacroArchInfo)
+            transitive_deps.append(arch_info.arch_variants[arch].singleton_tset)
 
     prefix = "{}-{}-deps{}".format(subdir, arch, dep_metadata_kind.value)
     transitive_deps = ctx.actions.tset(TransitiveDeps, children = transitive_deps)
@@ -1545,7 +1545,7 @@ def _abbreviated_subdir(
 def _compute_common_args(
     ctx: AnalysisContext,
     compile_ctx: CompileContext,
-    dep_ctx: DepCollectionContext,
+    crate_deps: RustCrateDeps,
     emit: Emit,
     params: BuildParams,
     default_roots: list[str],
@@ -1600,7 +1600,7 @@ def _compute_common_args(
                 internal_tools_info = compile_ctx.internal_tools_info,
                 transitive_dependency_dirs = compile_ctx.transitive_dependency_dirs,
                 toolchain_info = compile_ctx.toolchain_info,
-                deps = resolve_rust_deps(ctx, dep_ctx),
+                crate_deps = crate_deps,
                 subdir = subdir,
                 dep_link_strategy = params.dep_link_strategy,
                 dep_metadata_kind = dep_metadata_kind,
@@ -1613,14 +1613,13 @@ def _compute_common_args(
             dep_args = cmd_args()
             arch_args = {}
             crate_map = None
-            resolved_deps = resolve_rust_deps(ctx, dep_ctx)
             for arch in compile_ctx.arch_toolchain_info.arch_variants:
                 arch_dep_args, arch_dep_argsfiles, arch_crate_map = dependency_args(
                     ctx = ctx,
                     internal_tools_info = compile_ctx.internal_tools_info,
                     transitive_dependency_dirs = compile_ctx.transitive_dependency_dirs,
                     toolchain_info = compile_ctx.toolchain_info,
-                    deps = resolved_deps,
+                    crate_deps = crate_deps,
                     subdir = subdir,
                     dep_link_strategy = params.dep_link_strategy,
                     dep_metadata_kind = dep_metadata_kind,
@@ -1798,7 +1797,7 @@ def rust_compile_invalidation_inputs(
     common_args = _compute_common_args(
         ctx = ctx,
         compile_ctx = compile_ctx,
-        dep_ctx = compile_ctx.dep_ctx,
+        crate_deps = compile_ctx.crate_deps,
         emit = emit,
         params = params,
         default_roots = default_roots,

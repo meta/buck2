@@ -194,11 +194,8 @@ RustLinkStrategyInfo = record(
     split_metadata = field(dict[MetadataKind, Artifact] | None, None),
     # Same as `outputs`, but wrapped in a 1-element transitive set.
     singleton_tset = field(dict[MetadataKind, TransitiveDeps]),
-    # Transitive dependencies which are relevant to the consumer. Proc macros are tracked
-    # separately, below.
+    # Transitive dependencies which are relevant to the consumer, other than proc macros.
     transitive_deps = field(dict[MetadataKind, TransitiveDeps]),
-    # The proc macros among the transitive Rust deps, as keys into `get_available_proc_macros`.
-    transitive_proc_macro_deps = field(set[TargetLabel]),
     # Rustc-generated debug info which is referenced -- but not included -- by the
     # linkable rlib. Does not include external debug info from non-Rust native deps.
     #
@@ -207,17 +204,21 @@ RustLinkStrategyInfo = record(
     rust_debug_info = ArtifactTSet | None,
 )
 
-# A crate in a Rust dependency graph.
-RustCrateIdentity = record(
+# A Rust library, as a node of a `RustCrateGraph`.
+RustCrate = record(
     # The crate's `-Cmetadata`, which is what rustc and the linker know it by. See
     # `crate_metadata`.
     metadata = field(str),
     # The target it is built from.
     label = field(ConfiguredTargetLabel),
+    # The proc macros among the crate's dependencies, as keys into `get_available_proc_macros`.
+    # A dependent has to load them too, and each dependent gets them from its own plugins.
+    proc_macro_deps = field(list[TargetLabel]),
 )
 
-# Set of RustCrateIdentity
-RustCrateIdentities = transitive_set()
+# Set of RustCrate. Proc macros are not nodes: rustc loads them rather than linking them, and
+# they have no transitive dependencies that matter to a dependent.
+RustCrateGraph = transitive_set()
 
 # The native link providers that one node of a `RustLinkGraph` gives to every Rust crate that
 # reaches it.
@@ -247,9 +248,8 @@ RustLinkInfo = provider(
         "crate": CrateName,
         # strategies - information about each LinkStrategy as RustLinkStrategyInfo
         "strategies": dict[LinkStrategy, RustLinkStrategyInfo],
-        # This crate and its transitive Rust dependencies, other than proc macros. See
-        # `crate_identities`.
-        "crate_identities": RustCrateIdentities,
+        # This crate and its transitive Rust dependencies.
+        "crates": RustCrateGraph,
         # Rust interacts with the native link graph in a non-standard way.
         #
         # The first difference is in the re-export behavior of Rust compared to C++. The native link
@@ -516,7 +516,7 @@ def _rust_non_proc_macro_link_infos(ctx: AnalysisContext, dep_ctx: DepCollection
 # goes into the name of every symbol the crate defines. Whatever it leaves out is thereby
 # declared not to matter. Two compilations of a target that differ only in such things are the
 # same crate, with the same symbol names, and must not meet in one dependency graph (see
-# `crate_identities`).
+# `resolve_crate_deps`).
 #
 # The configuration is left out: a target is the same crate however it is configured. That is
 # what keeps a function's symbol name the same across build modes, platforms and changes to
@@ -530,44 +530,72 @@ def _rust_non_proc_macro_link_infos(ctx: AnalysisContext, dep_ctx: DepCollection
 def crate_metadata(label: Label) -> str:
     return str(label.raw_target())
 
-def crate_identities(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> RustCrateIdentities:
-    """
-    This crate and its transitive Rust dependencies, other than proc macros
-    (which are loaded into the compiler, not linked).
+# A crate's Rust dependencies.
+RustCrateDeps = record(
+    direct = field(list[RustDependency]),
+    # The libraries among `direct`, and their transitive Rust dependencies.
+    crates = field(RustCrateGraph),
+    # The proc macros among `direct`, and those that the crates in `crates` depend on, as keys
+    # into `get_available_proc_macros`.
+    proc_macro_deps = field(list[TargetLabel]),
+)
 
-    Fails if two of them have the same `-Cmetadata`, which is the case for one
-    target in two configurations. Those are two compilations that rustc and the
-    linker take for one crate. Both define all of its symbols, and nothing
-    makes the definitions agree: the two differ in whatever `crate_metadata`
-    leaves out. A link that is given both keeps one definition of each symbol
-    and silently drops the other.
+def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], crate: Label | None = None) -> RustCrateDeps:
+    """
+    Collects what `direct`, the Rust dependencies of `crate`, bring along.
+
+    Fails if two of the crates have the same `-Cmetadata`, `crate` included,
+    which is the case for one target in two configurations. Those are two
+    compilations that rustc and the linker take for one crate. Both define all
+    of its symbols, and nothing makes the definitions agree: the two differ in
+    whatever `crate_metadata` leaves out. A link that is given both keeps one
+    definition of each symbol and silently drops the other.
 
     Nothing checks this for C++ libraries, or for Rust crates that only a C++
     target brings together. Here it is an error at the lowest target that
     depends on both.
     """
-    identities = ctx.actions.tset(
-        RustCrateIdentities,
-        value = RustCrateIdentity(
-            metadata = crate_metadata(ctx.label),
-            label = ctx.label.configured_target(),
-        ),
-        children = [info.crate_identities for info in _rust_non_proc_macro_link_infos(ctx, dep_ctx)],
+    crates = ctx.actions.tset(
+        RustCrateGraph,
+        children = [dep.info.crates for dep in direct if isinstance(dep.info, RustLinkInfo)],
     )
 
-    seen = {}
-    for crate in identities.traverse():
-        other = seen.setdefault(crate.metadata, crate)
-        if other.label != crate.label:
-            target = crate.label.raw_target()
+    seen = {crate_metadata(crate): crate.configured_target()} if crate else {}
+    proc_macro_deps = {dep.dep.label.raw_target(): None for dep in direct if not isinstance(dep.info, RustLinkInfo)}
+    for dep in crates.traverse():
+        other = seen.setdefault(dep.metadata, dep.label)
+        if other != dep.label:
+            target = dep.label.raw_target()
             fail(
-                "`{}` depends on the Rust crate `{}` in two configurations:\n  {}\n  {}\n".format(ctx.label, target, other.label, crate.label)
+                "`{}` depends on the Rust crate `{}` in two configurations:\n  {}\n  {}\n".format(ctx.label, target, other, dep.label)
                 + "A target is the same crate in every configuration, so rustc and the linker take the two for one crate, "
                 + "but nothing makes what they produce the same. A Rust dependency graph can contain each crate only once. "
                 + "To see how the two are reached, run `buck2 cquery \"allpaths('{}', '{}')\"`.".format(ctx.label.raw_target(), target)
             )
+        for proc_macro in dep.proc_macro_deps:
+            proc_macro_deps[proc_macro] = None
 
-    return identities
+    return RustCrateDeps(
+        direct = direct,
+        crates = crates,
+        proc_macro_deps = proc_macro_deps.keys(),
+    )
+
+def crate_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> RustCrateDeps:
+    """The Rust dependencies of the crate being analyzed."""
+    return resolve_crate_deps(ctx, resolve_rust_deps(ctx, dep_ctx), crate = ctx.label)
+
+def crate_graph(ctx: AnalysisContext, deps: RustCrateDeps) -> RustCrateGraph:
+    """The value of `RustLinkInfo.crates` for the library being analyzed."""
+    return ctx.actions.tset(
+        RustCrateGraph,
+        value = RustCrate(
+            metadata = crate_metadata(ctx.label),
+            label = ctx.label.configured_target(),
+            proc_macro_deps = [dep.dep.label.raw_target() for dep in deps.direct if not isinstance(dep.info, RustLinkInfo)],
+        ),
+        children = [deps.crates],
+    )
 
 def inherited_third_party_builds(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[ThirdPartyBuildInfo]:
     infos = []

@@ -26,9 +26,9 @@ load(
 load(":dep_context.bzl", "DepCollectionContext")
 load(
     ":link_info.bzl",
-    "RustCrateIdentities",
+    "RustCrateDeps",
     "RustInheritedLinkDeps",
-    "crate_identities",
+    "crate_deps",
     "inherited_link_deps",
     "resolve_deps",
 )
@@ -81,8 +81,8 @@ CompileContext = record(
     # keyed by the environment's origin. A record field cannot be reassigned,
     # so the memo lives in a dict even while "rustc" is its only key.
     processed_env = field(dict[str, tuple]),
-    # This crate and its transitive Rust dependencies, other than proc macros and doc deps.
-    crate_identities = field(RustCrateIdentities),
+    # For `dep_ctx`, so without the doc deps.
+    crate_deps = field(RustCrateDeps),
     cxx_toolchain_info = field(CxxToolchainInfo),
     dep_ctx = field(DepCollectionContext),
     exec_is_windows = field(bool),
@@ -171,7 +171,7 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
         dependency_args = {},
         crate_map_args = {},
         processed_env = {},
-        crate_identities = crate_identities(ctx, dep_ctx),
+        crate_deps = crate_deps(ctx, dep_ctx),
         cxx_toolchain_info = cxx_toolchain_info,
         dep_ctx = dep_ctx,
         exec_is_windows = exec_is_windows,

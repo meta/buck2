@@ -123,6 +123,7 @@ load(
     "RustProcMacroInfo",
     "TransitiveDeps",
     "attr_crate",
+    "crate_graph",
     "inherited_link_group_lib_infos",
     "inherited_rust_external_debug_info",
     "inherited_shared_libs",
@@ -769,7 +770,7 @@ def _handle_rust_artifact(
     is computing the right set of dependencies.
     """
     link_output = outputs[MetadataKind("link")]
-    tdeps, rust_debug_info, tprocmacrodeps = _compute_transitive_deps(ctx, dep_ctx, link_strategy)
+    tdeps, rust_debug_info = _compute_transitive_deps(ctx, dep_ctx, link_strategy)
 
     toolchain_info = ctx.attrs._rust_toolchain[RustToolchainInfo]
     if toolchain_info.advanced_unstable_linking:
@@ -785,7 +786,6 @@ def _handle_rust_artifact(
         outputs = {m: x.product.output for m, x in outputs.items()},
         singleton_tset = {m: x.product.singleton_tset for m, x in outputs.items()},
         transitive_deps = tdeps,
-        transitive_proc_macro_deps = tprocmacrodeps,
         rust_debug_info = rust_debug_info,
     )
 
@@ -1029,7 +1029,7 @@ def _advanced_unstable_link_providers(
         RustLinkInfo(
             crate = crate,
             strategies = rust_artifacts,
-            crate_identities = compile_ctx.crate_identities,
+            crates = crate_graph(ctx, compile_ctx.crate_deps),
             link_graph = ctx.actions.tset(
                 RustLinkGraph,
                 value = RustLinkGraphNode(
@@ -1073,7 +1073,7 @@ def _stable_link_providers(
     rust_link_info = RustLinkInfo(
         crate = crate,
         strategies = rust_artifacts,
-        crate_identities = compile_ctx.crate_identities,
+        crates = crate_graph(ctx, compile_ctx.crate_deps),
         link_graph = compile_ctx.inherited_link_deps.graph,
         shared_libs = merge_shared_libraries(
             ctx.actions,
@@ -1211,17 +1211,13 @@ def _compute_transitive_deps(
 ) -> (
     dict[MetadataKind, TransitiveDeps],
     list[ArtifactTSet],
-    set[TargetLabel],
 ):
     toolchain_info = ctx.attrs._rust_toolchain[RustToolchainInfo]
     transitive_deps = {m: [] for m in MetadataKind}
     rust_debug_info = []
-    transitive_proc_macro_deps = set()
 
     for dep in resolve_rust_deps(ctx, dep_ctx):
         if isinstance(dep.info, RustProcMacroInfo) or isinstance(dep.info, RustProcMacroArchInfo):
-            transitive_proc_macro_deps.add(dep.dep.label.raw_target())
-
             # We don't want to propagate proc macros directly, and they have no transitive deps
             continue
         strategy = strategy_info(toolchain_info, dep.info, dep_link_strategy)
@@ -1235,11 +1231,9 @@ def _compute_transitive_deps(
         if strategy.rust_debug_info:
             rust_debug_info.append(strategy.rust_debug_info)
 
-        transitive_proc_macro_deps.update(strategy.transitive_proc_macro_deps)
-
     transitive_deps = {m: ctx.actions.tset(TransitiveDeps, children = children) for m, children in transitive_deps.items()}
 
-    return transitive_deps, rust_debug_info, transitive_proc_macro_deps
+    return transitive_deps, rust_debug_info
 
 def _dual_arch_eligible_for_package() -> bool:
     if get_cell_name() == "fbcode":

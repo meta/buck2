@@ -8,8 +8,6 @@ keystore(
 
 android_binary(
     name = "demoapp_debug",
-    # TODO Investigate why pre-dexing is so slow
-    disable_pre_dex = True,
     keystore = ":debug",
     # NOTE: If you use `manifest` attribute, buck2 will use the manifest file as-is.
     # With `manifest_skeleton`, buck2 will merge all manifests in the graph using Manifest Merger.
@@ -53,7 +51,6 @@ android_library(
 
 android_binary(
     name = "android_tests_apk",
-    disable_pre_dex = True,
     keystore = ":debug",
     manifest_skeleton = "src/main/AndroidManifest.xml",
     use_split_dex = True,

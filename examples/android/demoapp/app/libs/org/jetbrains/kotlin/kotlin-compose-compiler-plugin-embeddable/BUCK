@@ -6,16 +6,16 @@ oncall("build_infra")
 
 remote_file(
     name = "kotlin-compose-compiler-plugin-embeddable-remote",
-    out = "kotlin-compose-compiler-plugin-embeddable-2.1.0.jar",
-    sha1 = "2db69adb9c3ffe970b95e9ba54b92e858a071444",
-    url = "mvn:https://repo1.maven.org/maven2:org.jetbrains.kotlin:kotlin-compose-compiler-plugin-embeddable:jar:2.1.0",
+    out = "kotlin-compose-compiler-plugin-embeddable-2.4.21.jar",
+    sha1 = "dd3cf05b1c6bfaf6c82869e1a0e5cf00df6b26b1",
+    url = "mvn:https://repo1.maven.org/maven2:org.jetbrains.kotlin:kotlin-compose-compiler-plugin-embeddable:jar:2.4.21",
 )
 
 remote_file(
     name = "kotlin-compose-compiler-plugin-embeddable-sources-remote",
-    out = "kotlin-compose-compiler-plugin-embeddable-2.1.0-sources.jar",
-    sha1 = "4d6b1b566b6c20727e2ec630f307833584f3c69d",
-    url = "mvn:https://repo1.maven.org/maven2:org.jetbrains.kotlin:kotlin-compose-compiler-plugin-embeddable:src:2.1.0",
+    out = "kotlin-compose-compiler-plugin-embeddable-2.4.21-sources.jar",
+    sha1 = "4c4d253d0e6de5713c39f9c4f4583fb66f3e3df2",
+    url = "mvn:https://repo1.maven.org/maven2:org.jetbrains.kotlin:kotlin-compose-compiler-plugin-embeddable:src:2.4.21",
 )
 
 prebuilt_jar(

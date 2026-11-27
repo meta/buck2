@@ -48,6 +48,38 @@ use superconsole::Stdin;
     not(buck2_memfrag)
 ))]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+/// A C string pointer jemalloc can read as its `const char *malloc_conf`.
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    not(buck_build),
+    not(buck2_memfrag)
+))]
+#[repr(transparent)]
+struct MallocConf(*const std::ffi::c_char);
+
+// SAFETY: the pointer refers to a `'static` C string literal, which is never written.
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    not(buck_build),
+    not(buck2_memfrag)
+))]
+unsafe impl Sync for MallocConf {}
+
+/// Default jemalloc options, read when the allocator starts. `MALLOC_CONF` (`_RJEM_MALLOC_CONF`
+/// on macOS) still overrides them.
+///
+/// jemalloc defaults to four arenas per CPU, each holding on to its own freed pages. On a
+/// 174-core machine that left the daemon at 2.7 GiB RSS after a build whose live heap was 0.3 GiB;
+/// with 16 arenas it held 0.5 GiB, and the build took as long.
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    not(buck_build),
+    not(buck2_memfrag)
+))]
+#[cfg_attr(target_os = "linux", unsafe(export_name = "malloc_conf"))]
+#[cfg_attr(target_os = "macos", unsafe(export_name = "_rjem_malloc_conf"))]
+static MALLOC_CONF: MallocConf = MallocConf(c"narenas:16".as_ptr());
 #[global_allocator]
 #[cfg(all(target_os = "windows", not(buck2_memfrag)))]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;

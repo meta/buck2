@@ -333,7 +333,7 @@ def create_jar_artifact_kotlincd(
             source_only_abi_deps = source_only_abi_deps,
             class_abi_jar = class_abi_jar,
             class_abi_output_dir = class_abi_output_dir,
-            track_class_usage = True,
+            track_class_usage = kotlin_toolchain.track_class_usage_plugin != None,
             encode_abi_command = command_builder,
             define_action = define_kotlincd_action,
             uses_content_based_paths = True,

@@ -28,7 +28,6 @@ import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.RebuildReason;
-import com.facebook.buck.jvm.kotlin.plugin.PluginLoader;
 import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.StepExecutionResults;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
@@ -604,13 +603,13 @@ public class KotlincStep implements IsolatedStep {
     configureKosabiApplicability(builder, ruleCellRoot);
 
     if (trackClassUsage) {
-      depTrackerPath.ifPresentOrElse(
-          // New plugin, runtime dependency
-          path -> {
-            builder.add(X_PLUGIN_ARG + path);
-          },
-          // Fallback to a Buck internal plugin
-          () -> builder.add(X_PLUGIN_ARG + PluginLoader.DEP_TRACKER_KOTLINC_PLUGIN_JAR_PATH));
+      builder.add(
+          X_PLUGIN_ARG
+              + depTrackerPath.orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Class usage tracking was enabled, but the dep-tracker plugin path is"
+                              + " missing")));
       builder.add(PLUGIN);
       builder.add(
           "plugin:buck_deps_tracker:out="

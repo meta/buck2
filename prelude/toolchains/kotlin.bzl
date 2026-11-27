@@ -8,7 +8,7 @@
 
 load("@prelude//java:java_toolchain.bzl", "DepFiles")
 load("@prelude//kotlin:kotlin_toolchain.bzl", "KotlinToolchainInfo", "KotlincProtocol")
-load("@prelude//toolchains/android/tools:kotlin_utils.bzl", "kotlin_version")
+load("@prelude//toolchains/android/tools:kotlin_utils.bzl", "kotlin_version", "kotlin_version_at_least")
 
 def _typechecker_enabled():
     # Buckconfig gate for the typecheck sub-target. Tools attach
@@ -53,7 +53,11 @@ def kotlincd_toolchain(name, java_binary_for_kotlincd = None, visibility = None)
             "prelude//toolchains/android/third-party:kotlin-stdlib",
             "prelude//toolchains/android/third-party:trove",
             "prelude//toolchains/android/third-party:kotlinx-coroutines-core-jvm",
-        ],
+        ]
+        + (
+            # kotlin-build-tools-impl 2.4+ loads kotlin-tooling-core at run time.
+            ["prelude//toolchains/android/third-party:kotlin-tooling-core"] if kotlin_version_at_least(2, 4) else []
+        ),
         kotlinc = "prelude//toolchains/android/third-party:kotlin-compiler-binary",
         kotlincd = "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/workertool:kotlincd_tool-main",
         kotlinc_protocol = "kotlincd",

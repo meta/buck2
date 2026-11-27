@@ -73,9 +73,9 @@ java -cp "out:$STDLIB" HelloKt
 `python3 ../buck2/examples/kotlin_compiler/gen_buck.py --abi kosabi` gives 79 of the modules source-only ABIs:
 Buck2 builds their ABI jars from the sources with the Kosabi compiler plugins,
 so the modules that depend on them can compile before they finish. The classes
-are identical to those of the default class ABIs. A clean build takes about as
-long: on a 174-core Linux machine it takes 146 seconds with class ABIs and 145
-with source-only ABIs (medians of three). About half of that builds the
+are identical to those of the default class ABIs. A clean build gets a little
+shorter: on a 174-core Linux machine it takes 139 seconds with class ABIs and
+132 with source-only ABIs (medians of three). About half of that builds the
 prelude's own Kotlin tools, and six modules on the longest dependency chain keep
 class ABIs.
 

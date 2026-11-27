@@ -100,6 +100,7 @@ buck_java_library(
 
 buck_java_binary(
     name = "kotlincd_tool-main",
+    concat_deps = not is_full_meta_repo(),
     main_class = "com.facebook.buck.jvm.kotlin.cd.workertool.KotlinCDMain",
     visibility = [
         "PUBLIC",
@@ -111,6 +112,7 @@ buck_java_binary(
 
 buck_java_binary(
     name = "kotlincd_tool",
+    concat_deps = not is_full_meta_repo(),
     main_class = "com.facebook.buck.jvm.kotlin.cd.workertool.KotlinCDGrpcWorkerToolMain",
     visibility = [
         "PUBLIC",

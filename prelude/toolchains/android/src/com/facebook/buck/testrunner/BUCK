@@ -172,6 +172,7 @@ buck_kotlin_library(
         "InstrumentationTimeoutEnforcingRunListener.kt",
         "InstrumentationTpxStandardOutputTestListener.java",
         "RunShellCommand.java",
+        "TestFailureRecorder.java",
         "TpxStandardOutputTestListener.java",
         "reportlayer/LogExtractorReportLayer.java",
         "reportlayer/PerfettoReportLayer.java",

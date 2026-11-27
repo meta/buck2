@@ -186,6 +186,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
 
   protected final AndroidDevice androidDevice;
   private volatile boolean testRunFailed = false;
+  @Nullable private TestFailureRecorder testFailureRecorder = null;
 
   /**
    * Resolves a device path for the current user. For secondary users, paths like /sdcard and
@@ -309,6 +310,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
     boolean collectTombstones = false;
     boolean recordVideo = false;
     boolean collectPerfetto = false;
+    boolean failOnTestFailure = false;
     Map<String, String> extraInstrumentationArguments = new HashMap<String, String>();
     Map<String, String> extraFilesToPull = new HashMap<String, String>();
     Map<String, String> extraDirsToPull = new HashMap<String, String>();
@@ -433,6 +435,9 @@ public class InstrumentationTestRunner extends DeviceRunner {
           case "--disable-animations":
             disableAnimations = true;
             break;
+          case "--fail-on-test-failure":
+            failOnTestFailure = true;
+            break;
           case TombstonesReportLayer.ARG:
             collectTombstones = true;
             break;
@@ -536,6 +541,32 @@ public class InstrumentationTestRunner extends DeviceRunner {
     return this.testRunFailed;
   }
 
+  /**
+   * Makes {@link #throwIfTestsFailed} fail when a test or the run fails, for a caller that reads
+   * the result from the exit code, such as the open-source `buck2 test`.
+   */
+  void failOnTestFailure() {
+    this.testFailureRecorder = new TestFailureRecorder();
+  }
+
+  /** Throws if {@link #failOnTestFailure} was called and a test or the run failed. */
+  void throwIfTestsFailed() throws TestsFailedException {
+    if (testFailureRecorder == null) {
+      return;
+    }
+    List<String> failures = testFailureRecorder.getFailures();
+    if (!failures.isEmpty()) {
+      throw new TestsFailedException(failures);
+    }
+  }
+
+  /** A test or the run failed, with one entry per failure. */
+  static final class TestsFailedException extends Exception {
+    TestsFailedException(List<String> failures) {
+      super(failures.size() + " failure(s):\n" + String.join("\n", failures));
+    }
+  }
+
   public void addReportLayer(ReportLayer reportLayer) {
     reportLayers.add(reportLayer);
   }
@@ -579,6 +610,9 @@ public class InstrumentationTestRunner extends DeviceRunner {
     }
     if (!argsParser.logExtractors.isEmpty()) {
       runner.addReportLayer(new LogExtractorReportLayer(runner, argsParser.logExtractors));
+    }
+    if (argsParser.failOnTestFailure) {
+      runner.failOnTestFailure();
     }
     return runner;
   }
@@ -1083,6 +1117,9 @@ public class InstrumentationTestRunner extends DeviceRunner {
         listeners.add(extraListener);
       }
       listeners.add(trimLineListener);
+      if (testFailureRecorder != null) {
+        listeners.add(testFailureRecorder);
+      }
       ITestRunListener resultListener = addResultListeners(listeners, testResultsOutputSender);
 
       if ("true".equals(System.getenv(PER_TEST_TIMEOUT_ENABLED_ENV))) {

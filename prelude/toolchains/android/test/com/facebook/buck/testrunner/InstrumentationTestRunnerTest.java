@@ -129,6 +129,118 @@ public class InstrumentationTestRunnerTest {
     Assert.assertEquals(0, InstrumentationMain.runForExitCode(() -> {}));
   }
 
+  @Test
+  public void launcherReturnsFailureWhenTestsFailed() {
+    int exitCode =
+        InstrumentationMain.runForExitCode(
+            () -> {
+              throw new InstrumentationTestRunner.TestsFailedException(
+                  Arrays.asList("com.example.FooTest#testBar failed:\nAssertionError"));
+            });
+
+    Assert.assertEquals(1, exitCode);
+  }
+
+  @Test
+  public void parsesFailOnTestFailure() throws Throwable {
+    InstrumentationTestRunner.ArgsParser argsParser =
+        new InstrumentationTestRunner.ArgsParser(new HashMap<>());
+    argsParser.fromArgs(
+        "--test-package-name",
+        "com.example.test",
+        "--target-package-name",
+        "com.example",
+        "--test-runner",
+        "com.example.test.TestRunner",
+        "--adb-executable-path",
+        "required_but_not_used",
+        "--output",
+        tmp.newFolder("parse_fail_on_test_failure").getPath().toString(),
+        "--auto-run-on-connected-device",
+        "--fail-on-test-failure");
+
+    Assert.assertTrue(argsParser.failOnTestFailure);
+  }
+
+  @Test
+  public void failOnTestFailureThrowsWhenATestFails() throws Throwable {
+    InstrumentationTestRunner runner = runnerWithOneFailingTest();
+    runner.failOnTestFailure();
+    runner.run();
+
+    try {
+      runner.throwIfTestsFailed();
+      Assert.fail("Expected TestsFailedException");
+    } catch (InstrumentationTestRunner.TestsFailedException e) {
+      Assert.assertTrue(e.getMessage(), e.getMessage().startsWith("1 failure(s):"));
+      Assert.assertTrue(e.getMessage(), e.getMessage().contains("com.example.FooTest#testBar"));
+      Assert.assertTrue(e.getMessage(), e.getMessage().contains("AssertionError: boom"));
+    }
+  }
+
+  @Test
+  public void failingTestDoesNotThrowWithoutFailOnTestFailure() throws Throwable {
+    InstrumentationTestRunner runner = runnerWithOneFailingTest();
+    runner.run();
+
+    runner.throwIfTestsFailed();
+  }
+
+  @Test
+  public void failOnTestFailureDoesNotThrowWhenTestsPass() throws Throwable {
+    InstrumentationTestRunner runner =
+        runnerWithInstrumentationOutput(
+            "pass",
+            instrumentationStatus("com.example.FooTest", "testBar", 1, null),
+            instrumentationStatus("com.example.FooTest", "testBar", 0, null),
+            "INSTRUMENTATION_RESULT: stream=OK (1 test)",
+            "INSTRUMENTATION_CODE: -1");
+    runner.failOnTestFailure();
+    runner.run();
+
+    runner.throwIfTestsFailed();
+  }
+
+  private InstrumentationTestRunner runnerWithOneFailingTest() throws Throwable {
+    return runnerWithInstrumentationOutput(
+        "fail",
+        instrumentationStatus("com.example.FooTest", "testBar", 1, null),
+        instrumentationStatus(
+            "com.example.FooTest", "testBar", -2, "java.lang.AssertionError: boom"),
+        "INSTRUMENTATION_RESULT: stream=FAILURES!!! Tests run: 1,  Failures: 1",
+        "INSTRUMENTATION_CODE: -1");
+  }
+
+  private InstrumentationTestRunner runnerWithInstrumentationOutput(
+      String reportDirName, String... outputLines) throws Throwable {
+    Map<String, String> responses = new HashMap<>();
+    responses.put(
+        "am instrument -w -r   com.example.test/com.example.test.TestRunner",
+        String.join("\n", outputLines) + "\n");
+    return createInstrumentationTestRunnerWithDevice(
+        new HashMap<>(),
+        new HashMap<>(),
+        responses,
+        "--output",
+        tmp.newFolder(reportDirName).getPath().toString());
+  }
+
+  /** The `am instrument -r` status block of one test: code 1 starts it, 0 passes, -2 fails. */
+  private static String instrumentationStatus(
+      String className, String testName, int statusCode, String stack) {
+    StringBuilder status = new StringBuilder();
+    status.append("INSTRUMENTATION_STATUS: class=").append(className).append("\n");
+    status.append("INSTRUMENTATION_STATUS: current=1\n");
+    status.append("INSTRUMENTATION_STATUS: id=AndroidJUnitRunner\n");
+    status.append("INSTRUMENTATION_STATUS: numtests=1\n");
+    if (stack != null) {
+      status.append("INSTRUMENTATION_STATUS: stack=").append(stack).append("\n");
+    }
+    status.append("INSTRUMENTATION_STATUS: test=").append(testName).append("\n");
+    status.append("INSTRUMENTATION_STATUS_CODE: ").append(statusCode);
+    return status.toString();
+  }
+
   /** Just verifies the reflection is legit */
   @Test
   public void testSetTrimLinesHappyPath() throws Throwable {

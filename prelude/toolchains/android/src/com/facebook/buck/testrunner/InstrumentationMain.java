@@ -29,7 +29,13 @@ public class InstrumentationMain {
     // filling details_short with infrastructure noise instead of test output.
     java.util.logging.Logger.getLogger("com.facebook.buck.android.exopackage")
         .setLevel(java.util.logging.Level.WARNING);
-    int exitCode = runForExitCode(() -> InstrumentationTestRunner.fromArgs(args).run());
+    int exitCode =
+        runForExitCode(
+            () -> {
+              InstrumentationTestRunner runner = InstrumentationTestRunner.fromArgs(args);
+              runner.run();
+              runner.throwIfTestsFailed();
+            });
     // Explicitly exit to force the test runner to complete even if tests have sloppily left
     // behind non-daemon threads that would have otherwise forced the process to wait and
     // eventually timeout.
@@ -40,6 +46,9 @@ public class InstrumentationMain {
     try {
       instrumentationRun.run();
       return 0;
+    } catch (InstrumentationTestRunner.TestsFailedException e) {
+      System.err.println(e.getMessage());
+      return 1;
     } catch (Throwable e) {
       e.printStackTrace();
       return 1;

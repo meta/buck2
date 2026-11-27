@@ -322,3 +322,61 @@ system_android_toolchain_rule = rule(
     impl = system_android_toolchain_rule_impl,
     is_toolchain_rule = True,
 )
+
+_NDK_TARGETS = {
+    "config//cpu/constraints:arm32": "armv7a-linux-androideabi",
+    "config//cpu/constraints:arm64": "aarch64-linux-android",
+    "config//cpu/constraints:x86_32": "i686-linux-android",
+    "config//cpu/constraints:x86_64": "x86_64-linux-android",
+}
+
+def _ndk_host_tag() -> str:
+    if host_info().os.is_macos:
+        return "darwin-x86_64"
+    if host_info().os.is_windows:
+        return "windows-x86_64"
+    return "linux-x86_64"
+
+def android_ndk_cxx_toolchain_attrs(ndk_path: str, api_level: int = 21) -> dict[str, typing.Any]:
+    """
+    Attributes for `system_cxx_toolchain` that compile and link with the Android NDK at
+    `ndk_path` for each CPU that an `android_binary` builds native code for (its
+    `cpu_filters`), and leave the host toolchain for everything else.
+
+    `api_level` is the minimum Android API level of the native code, as `minSdkVersion`.
+    """
+    bin = "{}/toolchains/llvm/prebuilt/{}/bin/".format(ndk_path, _ndk_host_tag())
+
+    def android_only(value, host_value = None):
+        return select({
+            "DEFAULT": host_value,
+            "prelude//os:building_android_binary": value,
+        })
+
+    def target_flags(extra_flags):
+        return android_only(
+            select({cpu: ["--target={}{}".format(target, api_level)] + extra_flags for cpu, target in _NDK_TARGETS.items()}),
+            [],
+        )
+
+    return {
+        "archiver": android_only(bin + "llvm-ar"),
+        "c_flags": target_flags(["-DANDROID"]),
+        "compiler": android_only(bin + "clang"),
+        "compiler_type": android_only("clang"),
+        "cxx_compiler": android_only(bin + "clang++"),
+        "cxx_flags": target_flags(["-DANDROID"]),
+        "link_flags": target_flags([
+            "-static-libstdc++",
+            "-Wl,--build-id=sha1",
+            "-Wl,--no-undefined",
+            # 16 KB pages, which Google Play requires for apps targeting Android 15 and later.
+            "-Wl,-z,max-page-size=16384",
+        ]),
+        "linker": android_only(bin + "clang++"),
+        "nm": android_only(bin + "llvm-nm"),
+        "objcopy": android_only(bin + "llvm-objcopy"),
+        "objdump": android_only(bin + "llvm-objdump"),
+        "ranlib": android_only(bin + "llvm-ranlib"),
+        "strip": android_only(bin + "llvm-strip"),
+    }

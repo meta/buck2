@@ -9,7 +9,7 @@
 load("@prelude//android/tools:jdk_system_image.bzl", "jdk_system_image")
 load("@prelude//nodejs:nodejs_toolchain.bzl", "system_nodejs_toolchain")
 load("@prelude//tests:test_toolchain.bzl", "noop_test_toolchain")
-load("@prelude//toolchains:android.bzl", "android_sdk_tools", "system_android_aidl_toolchain", "system_android_toolchain")
+load("@prelude//toolchains:android.bzl", "android_ndk_cxx_toolchain_attrs", "android_sdk_tools", "system_android_aidl_toolchain", "system_android_toolchain")
 load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
 load("@prelude//toolchains:dex.bzl", "system_dex_toolchain", "system_noop_dex_toolchain")
 load("@prelude//toolchains:erlang.bzl", "system_erlang_toolchain")
@@ -83,10 +83,10 @@ def system_demo_toolchains():
         visibility = ["PUBLIC"],
     )
 
-    system_cxx_toolchain(
-        name = "cxx",
-        visibility = ["PUBLIC"],
-    )
+    # With `[android] ndk_path`, C and C++ code for Android apps builds with the NDK.
+    android_ndk_path = read_root_config("android", "ndk_path", None)
+    cxx_attrs = android_ndk_cxx_toolchain_attrs(android_ndk_path) if android_ndk_path else {}
+    system_cxx_toolchain(name = "cxx", visibility = ["PUBLIC"], **cxx_attrs)
 
     system_dex_toolchain(
         name = "dex",

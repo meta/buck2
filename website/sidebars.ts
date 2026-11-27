@@ -132,6 +132,14 @@ export const sidebars: SidebarsConfig = {
           items: [
             {
               type: 'category' as const,
+              label: 'Android',
+              collapsed: false,
+              items: [
+                'users/languages/android/overview',
+              ],
+            },
+            {
+              type: 'category' as const,
               label: 'Go',
               collapsed: false,
               items: [

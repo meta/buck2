@@ -1,6 +1,27 @@
-# Installing
+# Buck2 Android demo app
 
-`cargo install --path=app/buck2`
-`alias buck2=~/.cargo/bin/buck2`
-`buck2 install -r demoapp`
+A Kotlin app with Jetpack Compose, resources, Robolectric and instrumentation
+tests, an app bundle and a JNI library, built with the prelude's Android
+toolchains. See https://buck2.build/docs/users/languages/android/overview for
+the details.
 
+## Requirements
+
+- buck2: https://buck2.build/docs/getting_started/install/
+- A JDK. With JDK 17, add `-c java.buck2_java_version=17` to each command.
+- The Android SDK, with build tools 35.0.0 and the `android-35` platform, at
+  `/opt/android_sdk` or `-c android.sdk_path=<SDK>`.
+- For `//app:demoapp_native` and `//app:native_tests`, the Android NDK:
+  `-c android.ndk_path=<NDK>`.
+- For `buck2 install` and the instrumentation tests, a device or emulator that
+  `adb devices` lists.
+
+## Commands
+
+    buck2 build //app:demoapp_debug          # debug APK
+    buck2 build //app:demoapp_release        # release APK, shrunk with ProGuard
+    buck2 build //app:demoapp_bundle         # app bundle (AAB)
+    buck2 install --run //app:demoapp_debug  # install and start the app
+    buck2 test //app:tests                   # Robolectric tests, on the JVM
+    buck2 test //app:android_tests           # instrumentation tests, on the device
+    buck2 test //app:native_tests            # the app with a JNI library, on the device

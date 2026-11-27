@@ -8,8 +8,8 @@ system_python_bootstrap_toolchain(
     visibility = ["PUBLIC"],
 )
 
-# The clang toolchain of the prelude: `cpp_dep_tracking_mode` is `show_headers`, so every
-# compile runs through `dep_file_processor show_headers` and `clang -H`. The test names the
+# The clang toolchain of the prelude: `cpp_dep_tracking_mode` is `makefile`, so every
+# compile runs through `dep_file_processor makefile` and `clang -MD`. The test names the
 # compiler with `-c test.clang=<path>`; without it, `clang` is taken from `PATH`.
 system_cxx_toolchain(
     name = "cxx",
@@ -28,9 +28,11 @@ cxx_library(
     name = "lib",
     srcs = ["r.c"],
     headers = [
+        "pi.h",
         "sub/my dir/s.h",
         "v.h",
     ],
+    prefix_header = "p.h",
     include_directories = [".gen"],
     raw_headers = [".gen/g.h"],
 )

@@ -135,13 +135,13 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
     if hasattr(ctx.attrs, "supports_two_phase_compilation"):
         supports_two_phase_compilation = ctx.attrs.supports_two_phase_compilation
 
-    if cxx_tools_info.compiler_type == "clang" or cxx_tools_info.compiler_type == "clang_windows":
+    if cxx_tools_info.compiler_type in ("clang", "gcc"):
+        cpp_dep_tracking_mode = DepTrackingMode("makefile")
+    elif cxx_tools_info.compiler_type == "clang_windows":
         cpp_dep_tracking_mode = DepTrackingMode("show_headers")
     elif cxx_tools_info.compiler_type == "windows" or cxx_tools_info.compiler_type == "clang_cl":
         # clang-cl ignores `-H`, but supports `/showIncludes`.
         cpp_dep_tracking_mode = DepTrackingMode("show_includes")
-    elif cxx_tools_info.compiler_type == "gcc":
-        cpp_dep_tracking_mode = DepTrackingMode("makefile")
     else:
         cpp_dep_tracking_mode = DepTrackingMode("none")
 

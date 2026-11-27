@@ -24,7 +24,15 @@ use serde_json::Value;
 const DEP_FILES_LIB: &str = "root//:lib";
 /// The test writes this header: a checked-in file name may not contain a space.
 const SPACED_HEADER: &str = "sub/my dir/s.h";
-const DEP_FILES_HEADERS: [&str; 3] = [".gen/g.h", SPACED_HEADER, "v.h"];
+const PREFIX_HEADER: &str = "p.h";
+const PREFIX_HEADER_INCLUDE: &str = "pi.h";
+const DEP_FILES_HEADERS: [&str; 5] = [
+    ".gen/g.h",
+    PREFIX_HEADER,
+    PREFIX_HEADER_INCLUDE,
+    SPACED_HEADER,
+    "v.h",
+];
 
 async fn output(buck: &Buck, target: &str) -> anyhow::Result<PathBuf> {
     let res = buck
@@ -137,24 +145,39 @@ async fn compile_executors(buck: &Buck) -> anyhow::Result<Vec<String>> {
         .collect()
 }
 
-// prelude/cxx/tools/show_headers_to_dep_file.py
+// prelude/cxx/tools/makefile_to_dep_file.py
 #[buck_test(inplace = false, skip_for_os = ["darwin", "windows"])]
-async fn test_show_headers_dep_file_keeps_the_headers_found_next_to_the_source(
+async fn test_dep_file_keeps_the_headers_found_next_to_the_source(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     write_spaced_header(buck)?;
     build_object(buck).await?;
-    // The rules compile `./r.c`, so clang prints every header it found relative to the source as
-    // `. ./<path>`; the dep file keeps each path as printed.
     assert_eq!(tagged_headers(buck).await?, DEP_FILES_HEADERS);
 
-    // So an edit to the three headers rebuilds the object.
     for header in DEP_FILES_HEADERS {
-        let path = buck.cwd().join(header);
-        let content = std::fs::read_to_string(&path)?;
-        std::fs::write(&path, content.replace(" 1\n", " 2\n"))?;
+        edit_header(buck, header)?;
     }
     build_object(buck).await?;
     assert_eq!(compile_executors(buck).await?, ["Local"]);
+    Ok(())
+}
+
+// prelude/cxx/tools/makefile_to_dep_file.py
+#[buck_test(inplace = false, skip_for_os = ["darwin", "windows"])]
+async fn test_edit_to_a_header_of_the_prefix_header_rebuilds_the_object(
+    buck: &Buck,
+) -> anyhow::Result<()> {
+    write_spaced_header(buck)?;
+    build_object(buck).await?;
+    edit_header(buck, PREFIX_HEADER_INCLUDE)?;
+    build_object(buck).await?;
+    assert_eq!(compile_executors(buck).await?, ["Local"]);
+    Ok(())
+}
+
+fn edit_header(buck: &Buck, header: &str) -> anyhow::Result<()> {
+    let path = buck.cwd().join(header);
+    let content = std::fs::read_to_string(&path)?;
+    std::fs::write(&path, content.replace(" 1\n", " 2\n"))?;
     Ok(())
 }

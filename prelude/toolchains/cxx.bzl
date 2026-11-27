@@ -181,11 +181,11 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
             ),
             bolt_enabled = False,
             binary_utilities_info = BinaryUtilitiesInfo(
-                nm = RunInfo(args = ["nm"]),
-                objcopy = RunInfo(args = ["objcopy"]),
-                objdump = RunInfo(args = ["objdump"]),
-                ranlib = RunInfo(args = ["ranlib"]),
-                strip = RunInfo(args = ["strip"]),
+                nm = _binary_utility(ctx, "nm"),
+                objcopy = _binary_utility(ctx, "objcopy"),
+                objdump = _binary_utility(ctx, "objdump"),
+                ranlib = _binary_utility(ctx, "ranlib"),
+                strip = _binary_utility(ctx, "strip"),
                 dwp = None,
             ),
             cxx_compiler_info = CxxCompilerInfo(
@@ -234,6 +234,9 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
         CxxPlatformInfo(name = target_name),
     ]
 
+def _binary_utility(ctx: AnalysisContext, name: str) -> RunInfo:
+    return RunInfo(args = [getattr(ctx.attrs, name, None) or name])
+
 def _run_info(args):
     return None if args == None else RunInfo(args = [args])
 
@@ -254,9 +257,14 @@ system_cxx_toolchain = rule(
         "link_ordering": attrs.option(attrs.enum(LinkOrdering.values()), default = None),
         "link_style": attrs.string(default = "shared"),
         "linker": attrs.option(attrs.string(), default = None),
+        "nm": attrs.option(attrs.string(), default = None),
+        "objcopy": attrs.option(attrs.string(), default = None),
+        "objdump": attrs.option(attrs.string(), default = None),
         "post_link_flags": attrs.list(attrs.arg(), default = []),
+        "ranlib": attrs.option(attrs.string(), default = None),
         "rc_compiler": attrs.option(attrs.string(), default = None),
         "rc_flags": attrs.list(attrs.arg(), default = []),
+        "strip": attrs.option(attrs.string(), default = None),
         "supports_content_based_paths": attrs.bool(default = False),
         "_cxx_tools_info": attrs.exec_dep(
             providers = [CxxToolsInfo],

@@ -152,9 +152,12 @@ jobs:
         shell: bash
         run: |
           mkdir artifacts
-          zstd -z ${{ steps.set_variables.outputs.buck2_out }} -o ${{ steps.set_variables.outputs.buck2_zst }}
-          zstd -z ${{ steps.set_variables.outputs.buck2_rust_project_out }} -o ${{ steps.set_variables.outputs.buck2_rust_project_zst }}
-          zstd -z ${{ steps.set_variables.outputs.starlark_fmt_out }} -o ${{ steps.set_variables.outputs.starlark_fmt_zst }}
+          # Level 19 with a 128 MiB window: a third smaller than the default
+          # level, and still within what `zstd -d` and Python's
+          # `compression.zstd` decode without extra flags.
+          zstd -z -19 --long=27 -T0 ${{ steps.set_variables.outputs.buck2_out }} -o ${{ steps.set_variables.outputs.buck2_zst }}
+          zstd -z -19 --long=27 -T0 ${{ steps.set_variables.outputs.buck2_rust_project_out }} -o ${{ steps.set_variables.outputs.buck2_rust_project_zst }}
+          zstd -z -19 --long=27 -T0 ${{ steps.set_variables.outputs.starlark_fmt_out }} -o ${{ steps.set_variables.outputs.starlark_fmt_zst }}
       - name: Upload
         uses: actions/upload-artifact@v6
         with:

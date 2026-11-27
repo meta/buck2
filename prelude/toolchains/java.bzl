@@ -19,6 +19,10 @@ load(
 )
 load("@prelude//tests:test_listing.bzl", "TestListingInfo")
 
+def _default_output(dep):
+    """The output of a tool dependency that is a file, such as a jar."""
+    return dep[DefaultInfo].default_outputs[0] if dep else None
+
 _CP_SNAPSHOT_GENERATOR = "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/buildtools/snapshot:cp_snapshot_generator"
 _JAVACD_WORKER = "prelude//toolchains/android/src/com/facebook/buck/jvm/java/stepsbuilder/javacd/worker:javacd_grpc_worker_tool"
 _CLASS_ABI_GENERATOR = "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi:api-stubber"
@@ -114,7 +118,7 @@ _prebuilt_jar_toolchain_rule = rule(
         "cp_snapshot_generator": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "is_bootstrap_toolchain": attrs.bool(default = True),
         # this just goes into the RunInfo of the result, so it's target, not exec
-        "java": attrs.dep(providers = [RunInfo]),
+        "java": attrs.exec_dep(providers = [RunInfo]),
     },
     impl = _prebuilt_jar_toolchain_rule_impl,
     is_toolchain_rule = True,
@@ -171,10 +175,10 @@ def _java_toolchain_impl(ctx):
             abi_generation_mode = AbiGenerationMode(ctx.attrs.abi_generation_mode),
             compile_and_package = ctx.attrs.compile_and_package,
             class_abi_generator = ctx.attrs.class_abi_generator,
-            class_loader_bootstrapper = ctx.attrs.class_loader_bootstrapper,
+            class_loader_bootstrapper = _default_output(ctx.attrs.class_loader_bootstrapper),
             cp_snapshot_generator = ctx.attrs.cp_snapshot_generator,
             dep_files = DepFiles(ctx.attrs.dep_files),
-            fat_jar_main_class_lib = ctx.attrs.fat_jar_main_class_lib,
+            fat_jar_main_class_lib = _default_output(ctx.attrs.fat_jar_main_class_lib),
             compiler_class_to_source_map = ctx.attrs.compiler_class_to_source_map,
             gen_class_to_source_map = ctx.attrs.gen_class_to_source_map,
             gen_class_to_source_map_include_sourceless_compiled_packages = ctx.attrs.gen_class_to_source_map_include_sourceless_compiled_packages,
@@ -185,20 +189,20 @@ def _java_toolchain_impl(ctx):
             java = ctx.attrs.java,
             java_for_tests = ctx.attrs.java_for_tests[RunInfo] if ctx.attrs.java_for_tests else ctx.attrs.java[RunInfo],
             javac = ctx.attrs.javac,
-            javacd = ctx.attrs.javacd,
+            javacd = _default_output(ctx.attrs.javacd),
             javac_protocol = ctx.attrs.javac_protocol,
             javacd_jvm_args = [],
             javacd_jvm_args_target = [],
             javacd_main_class = ctx.attrs.javacd_main_class,
             javacd_worker = ctx.attrs.javacd_worker,
-            jar_builder = RunInfo(cmd_args([ctx.attrs.java[RunInfo], "-jar", ctx.attrs.jar_builder])),
+            jar_builder = RunInfo(cmd_args([ctx.attrs.java[RunInfo], "-jar", _default_output(ctx.attrs.jar_builder)])),
             jlink = ctx.attrs.jlink,
             jmod = ctx.attrs.jmod,
             jrt_fs_jar = ctx.attrs.jrt_fs_jar,
             src_root_elements = [],
             src_root_prefixes = [],
             track_class_usage = ctx.attrs.track_class_usage,
-            zip_scrubber = RunInfo(cmd_args([ctx.attrs.java[RunInfo], "-jar", ctx.attrs.zip_scrubber])),
+            zip_scrubber = RunInfo(cmd_args([ctx.attrs.java[RunInfo], "-jar", _default_output(ctx.attrs.zip_scrubber)])),
             nullsafe = None,
             proguard_max_heap_size = ctx.attrs.proguard_max_heap_size,
             nullsafe_extra_args = [],
@@ -218,7 +222,7 @@ _java_toolchain = rule(
     attrs = {
         "abi_generation_mode": attrs.enum(["class", "none", "source", "source_only"], default = "none"),
         "class_abi_generator": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
-        "class_loader_bootstrapper": attrs.option(attrs.source(), default = None),
+        "class_loader_bootstrapper": attrs.option(attrs.exec_dep(), default = None),
         "compile_and_package": attrs.exec_dep(
             default = "prelude//java/tools:compile_and_package",
             providers = [RunInfo],
@@ -233,7 +237,7 @@ _java_toolchain = rule(
             default = "prelude//java/tools:fat_jar",
             providers = [RunInfo],
         ),
-        "fat_jar_main_class_lib": attrs.option(attrs.source(), default = None),
+        "fat_jar_main_class_lib": attrs.option(attrs.exec_dep(), default = None),
         "gen_class_to_source_map": attrs.exec_dep(
             default = "prelude//java/tools:gen_class_to_source_map",
             providers = [RunInfo],
@@ -246,14 +250,14 @@ _java_toolchain = rule(
         ),
         "is_bootstrap_toolchain": attrs.bool(default = False),
         "jar": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
-        "jar_builder": attrs.source(default = "prelude//toolchains/android/src/com/facebook/buck/util/zip:jar_builder"),
+        "jar_builder": attrs.exec_dep(default = "prelude//toolchains/android/src/com/facebook/buck/util/zip:jar_builder"),
         "java": attrs.exec_dep(providers = [RunInfo]),
         "java_for_tests": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "javac": attrs.option(attrs.one_of(attrs.exec_dep(), attrs.source(), attrs.string()), default = None),
         "javac_protocol": attrs.enum(JavacProtocol.values()),
-        "javacd": attrs.option(attrs.source(), default = None),
+        "javacd": attrs.option(attrs.exec_dep(), default = None),
         "javacd_main_class": attrs.option(attrs.string(), default = None),
-        "javacd_worker": attrs.option(attrs.dep(), default = None),
+        "javacd_worker": attrs.option(attrs.exec_dep(), default = None),
         "jlink": attrs.exec_dep(providers = [RunInfo]),
         "jmod": attrs.exec_dep(providers = [RunInfo]),
         "jrt_fs_jar": attrs.source(),
@@ -266,7 +270,7 @@ _java_toolchain = rule(
         "source_level": attrs.string(default = "8"),
         "target_level": attrs.string(default = "8"),
         "track_class_usage": attrs.bool(default = False),
-        "zip_scrubber": attrs.source(default = "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip_scrubber"),
+        "zip_scrubber": attrs.exec_dep(default = "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip_scrubber"),
     },
 )
 

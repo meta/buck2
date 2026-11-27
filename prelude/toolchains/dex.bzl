@@ -36,7 +36,7 @@ _dex_toolchain_rule = rule(
     attrs = {
         "android_jar": attrs.option(attrs.source(), default = None),
         "class_ref_counts": attrs.bool(default = False),
-        "d8_command_binary": attrs.option(attrs.dep(providers = [RunInfo]), default = None),
+        "d8_command_binary": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
     },
     impl = _dex_toolchain_rule_impl,
     is_toolchain_rule = True,

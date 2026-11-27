@@ -137,8 +137,8 @@ load(
     "crate_metadata",
     "executable_shared_lib_arguments_from_shared_library_info",
     "get_available_proc_macros",
-    "inherited_external_debug_info",
-    "inherited_merged_link_infos",
+    "inherited_link_deps",
+    "inherited_rust_external_debug_info",
     "inherited_shared_libs",
     "normalize_crate",
     "resolve_deps",
@@ -434,6 +434,7 @@ def generate_rustdoc_test(
         profile_mode = None,
     )
 
+    doc_merged_link_infos = inherited_link_deps(ctx, doc_dep_ctx).merged_link_infos
     link_args_output = make_link_args(
         ctx,
         ctx.actions,
@@ -452,11 +453,11 @@ def generate_rustdoc_test(
                         ctx,
                         compile_ctx.cxx_toolchain_info.pic_behavior,
                         link_infos,
-                        deps = inherited_merged_link_infos(ctx, doc_dep_ctx),
+                        deps = doc_merged_link_infos,
                         preferred_linkage = Linkage("static"),
                     )
                 ]
-                + inherited_merged_link_infos(ctx, doc_dep_ctx),
+                + doc_merged_link_infos,
                 params.dep_link_strategy,
                 prefer_stripped = False,
                 transformation_spec_context = None,
@@ -978,7 +979,7 @@ def rust_compile(
         if has_split_debug:
             inherited_debug_info = inherited_external_debug_info(
                 ctx = ctx,
-                dep_ctx = compile_ctx.dep_ctx,
+                compile_ctx = compile_ctx,
                 dep_link_strategy = params.dep_link_strategy,
             )
             external_debug_infos = project_artifacts(ctx.actions, inherited_debug_info)
@@ -2497,10 +2498,7 @@ def get_inherited_link_args(
     else:
         inherited_link_args = apple_build_link_args_with_deduped_flags(
             ctx,
-            deps_merged_link_infos = inherited_merged_link_infos(
-                ctx,
-                compile_ctx.dep_ctx,
-            ),
+            deps_merged_link_infos = compile_ctx.inherited_link_deps.merged_link_infos,
             frameworks_linkable = None,
             link_strategy = dep_link_style,
             swiftmodule_linkable = None,
@@ -2509,6 +2507,20 @@ def get_inherited_link_args(
         )
 
     return inherited_link_args
+
+def inherited_external_debug_info(ctx: AnalysisContext, compile_ctx: CompileContext, dep_link_strategy: LinkStrategy) -> ArtifactTSet:
+    inherited_debug_infos = []
+    for d in compile_ctx.inherited_link_deps.merged_link_infos:
+        native_debug_info = d._external_debug_info.get(dep_link_strategy)
+        if native_debug_info:
+            inherited_debug_infos.append(native_debug_info)
+
+    inherited_debug_infos.extend(inherited_rust_external_debug_info(ctx, compile_ctx.dep_ctx, dep_link_strategy))
+
+    return make_artifact_tset(
+        actions = ctx.actions,
+        children = inherited_debug_infos,
+    )
 
 def _windows_export_def(ctx: AnalysisContext, compile_ctx: CompileContext, static_lib: LinkInfo) -> Artifact:
     deffile = ctx.actions.declare_output("{}.def".format(compile_ctx.soname), has_content_based_path = True)
@@ -2672,7 +2684,7 @@ def rust_link_binary(
     if split_debug_mode != SplitDebugMode("none"):
         inherited_debug_info = inherited_external_debug_info(
             ctx = ctx,
-            dep_ctx = compile_ctx.dep_ctx,
+            compile_ctx = compile_ctx,
             dep_link_strategy = dep_link_strategy,
         )
     else:

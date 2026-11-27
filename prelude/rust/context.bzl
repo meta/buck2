@@ -27,7 +27,9 @@ load(":dep_context.bzl", "DepCollectionContext")
 load(
     ":link_info.bzl",
     "RustCrateIdentities",
+    "RustInheritedLinkDeps",
     "crate_identities",
+    "inherited_link_deps",
     "resolve_deps",
 )
 load(
@@ -86,6 +88,8 @@ CompileContext = record(
     exec_is_windows = field(bool),
     # Exec-platform OS lookup, for tools that branch on script flavor.
     exec_os_type = field(OsLookup),
+    # For `dep_ctx`, so without the doc deps.
+    inherited_link_deps = field(RustInheritedLinkDeps),
     internal_tools_info = field(RustInternalToolsInfo),
     # The linker that we pass to `-Clinker`. This needs to be a wrapper script for two reasons:
     #  1. The `linker` in the cxx toolchain is a `cmd_args` which might have multiple args, we need
@@ -172,6 +176,7 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
         dep_ctx = dep_ctx,
         exec_is_windows = exec_is_windows,
         exec_os_type = exec_os_type,
+        inherited_link_deps = inherited_link_deps(ctx, dep_ctx),
         internal_tools_info = internal_tools_info,
         linker_with_pre_args = linker_with_pre_args,
         path_sep = path_sep,

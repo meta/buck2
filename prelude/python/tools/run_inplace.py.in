@@ -219,8 +219,8 @@ args.extend(["-c", STARTUP])
 # The -E causes python to ignore all PYTHON* environment vars so we have to
 # pass this down using the command line.
 warnings = os.environ.get("PYTHONWARNINGS", "d").split(",")
-for item in reversed(warnings):
-    args.insert(1, f"-W{item.strip()}")
+for item in reversed([w.strip() for w in warnings if w.strip()]):
+    args.insert(1, f"-W{item}")
 
 # Allow users to disable byte code generation by setting the standard environment var.
 # Same as above, because of -E we have to pass this down using the command line.

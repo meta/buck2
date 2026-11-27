@@ -217,27 +217,39 @@ class TrampolineRuntimeTest(unittest.TestCase):
             self.assertIn("ran with PYTHONPATH", proc.stdout)
 
 
+def _launch(tmpdir: str, env: dict[str, str]) -> "subprocess.CompletedProcess[str]":
+    root = Path(tmpdir)
+    tree = root / "out/bin#link-tree"
+    tree.mkdir(parents=True)
+    (tree / "stub_runner.py").write_text(STUB_RUNNER, encoding="utf8")
+    (tree / "app.py").write_text(APP, encoding="utf8")
+    pex = _make_bootstrapper(root, sys.executable)
+    return subprocess.run(
+        [str(pex)],
+        capture_output=True,
+        encoding="utf8",
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env},
+    )
+
+
 @unittest.skipIf(sys.version_info < (3, 11), "PYTHONSAFEPATH is 3.11+")
 class SafePathTest(unittest.TestCase):
     """The startup code drops the cwd entry that `-c` adds to `sys.path`."""
 
-    @staticmethod
-    def _launch(tmpdir: str, env: dict[str, str]) -> "subprocess.CompletedProcess[str]":
-        root = Path(tmpdir)
-        tree = root / "out/bin#link-tree"
-        tree.mkdir(parents=True)
-        (tree / "stub_runner.py").write_text(STUB_RUNNER, encoding="utf8")
-        (tree / "app.py").write_text(APP, encoding="utf8")
-        pex = _make_bootstrapper(root, sys.executable)
-        return subprocess.run(
-            [str(pex)],
-            capture_output=True,
-            encoding="utf8",
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env},
-        )
-
     def test_safe_path_is_respected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            proc = self._launch(tmpdir, {"PYTHONSAFEPATH": "1"})
+            proc = _launch(tmpdir, {"PYTHONSAFEPATH": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("ran with PYTHONPATH", proc.stdout)
+
+
+class WarningsTest(unittest.TestCase):
+    """`PYTHONWARNINGS` reaches the interpreter as `-W` options, empty entries left out as Python does."""
+
+    def test_empty_entries_are_skipped(self) -> None:
+        for value in ["", "ignore::DeprecationWarning,", " , default"]:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmpdir:
+                proc = _launch(tmpdir, {"PYTHONWARNINGS": value})
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertNotIn("Invalid -W option", proc.stderr)
+                self.assertIn("ran with PYTHONPATH", proc.stdout)

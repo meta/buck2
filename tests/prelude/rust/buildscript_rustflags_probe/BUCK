@@ -1,0 +1,36 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+load("@prelude//rust:cargo_buildscript.bzl", "buildscript_run")
+
+# Regression test for `CARGO_ENCODED_RUSTFLAGS`: a build script compiles an
+# empty crate with them, as autocfg-style feature probes do. Every flag in it
+# must be one the toolchain's rustc accepts.
+
+oncall("build_infra")
+
+prelude = native
+
+prelude.rust_binary(
+    name = "build-script-build",
+    srcs = ["build.rs"],
+    crate_root = "build.rs",
+)
+
+buildscript_run(
+    name = "build-script-run",
+    package_name = "rustflags_probe",
+    buildscript_rule = ":build-script-build",
+    local_manifest_dir = ".",
+    version = "0.1.0",
+)
+
+py_assertion(
+    name = "check",
+    script = """
+import sys
+from pathlib import Path
+
+flags = Path(sys.argv[1]).read_text().splitlines()
+assert "--cfg=probe_compiles" in flags, flags
+""",
+    script_args = ["$(location :build-script-run[rustc_flags])"],
+)

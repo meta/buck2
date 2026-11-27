@@ -305,7 +305,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     # reference above.
     rule_env["CARGO_ENCODED_RUSTFLAGS"] = cmd_args(
         rust_toolchain_info.rustc_flags,
-        "-Cunsafe-allow-abi-mismatch=sanitizer",
+        ["-Cunsafe-allow-abi-mismatch=sanitizer"] if rust_toolchain_info.sanitizer != None else [],
         delimiter = "\037",
     )
 

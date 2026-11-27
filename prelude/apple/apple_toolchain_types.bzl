@@ -61,7 +61,7 @@ AppleToolsInfo = provider(
         "signing_info": provider_field(RunInfo),
         "split_arch_combine_dsym_bundles_tool": provider_field(RunInfo),
         "dry_codesign_tool": provider_field(RunInfo),
-        "adhoc_codesign_tool": provider_field(RunInfo),
+        "adhoc_codesign_tool": provider_field(RunInfo | None, default = None),
         "codesign_manifest_tree_postprocessor": provider_field(RunInfo),
         "dedupe_swift_module_map": provider_field(RunInfo),
         "signing_context_tree_postprocessor": provider_field(RunInfo),

@@ -151,18 +151,20 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
     exec_is_windows = exec_os_type.os == Os("windows")
     path_sep = "\\" if exec_is_windows else "/"
 
+    deps = crate_deps(ctx, dep_ctx)
+
     return CompileContext(
         clippy_wrapper = clippy_wrapper,
         common_args = {},
         dependency_args = {},
         crate_map_args = {},
         processed_env = {},
-        crate_deps = crate_deps(ctx, dep_ctx),
+        crate_deps = deps,
         cxx_toolchain_info = cxx_toolchain_info,
         dep_ctx = dep_ctx,
         exec_is_windows = exec_is_windows,
         exec_os_type = exec_os_type,
-        inherited_link_deps = inherited_link_deps(ctx, dep_ctx),
+        inherited_link_deps = inherited_link_deps(deps),
         internal_tools_info = internal_tools_info,
         linker_with_pre_args = linker_with_pre_args,
         path_sep = path_sep,

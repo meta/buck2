@@ -177,7 +177,7 @@ RustLinkStrategyInfo = record(
     rust_debug_info = ArtifactTSet | None,
 )
 
-# A Rust library, as a node of a `RustCrateGraph`.
+# A Rust library, as it is on its node of a `RustGraph`.
 RustCrate = record(
     # The crate's `-Cmetadata`, which is what rustc and the linker know it by. See
     # `crate_metadata`.
@@ -201,7 +201,26 @@ RustCrate = record(
     proc_macro_deps = field(list[TargetLabel]),
 )
 
-# The projections of `RustCrateGraph` for one choice of each crate's artifact.
+# One node of a `RustGraph`.
+RustGraphNode = record(
+    # None on a node that only has link providers. The native dependencies of a crate are on such
+    # a node.
+    crate = field(RustCrate | None, None),
+    # The native link providers that the node gives to every Rust crate that reaches it. On the
+    # node of a crate these are the crate's own, if the crate takes part in the links of its Rust
+    # dependents as itself (see `RustLinkInfo.graph`).
+    merged_link_infos = field(list[(ConfiguredTargetLabel, MergedLinkInfo)], []),
+    linkable_graphs = field(list[LinkableGraph], []),
+    # Rust currently treats all native dependencies as being exported, in the sense of C++
+    # `exported_deps`. However, they are not only exported from the Rust library that directly
+    # depends on them, they are also exported through any further chains of Rust libraries. This
+    # list tracks those dependencies.
+    #
+    # FIXME(JakobDegen): We should not default to treating all native deps as exported.
+    exported_deps = field(list[Dependency], []),
+)
+
+# The projections of `RustGraph` for one choice of each crate's artifact.
 CrateArtifactsProjection = record(
     # Projects a crate to the artifact and to `RustCrate.srcs`, which is everything of the crate
     # that a compile against the artifact has to have as an input. Sources are in the same
@@ -217,30 +236,42 @@ def _crate_artifacts_projection(link_strategy: LinkStrategy, metadata_kind: Meta
     name = "{}-{}".format(link_strategy.value, metadata_kind.value)
     return CrateArtifactsProjection(args = name, json = name + "-json")
 
-def _project_artifact_args(link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> typing.Callable[[RustCrate], list[Artifact]]:
-    def project(crate: RustCrate) -> list[Artifact]:
+def _project_artifact_args(link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> typing.Callable[[RustGraphNode], list[Artifact]]:
+    def project(node: RustGraphNode) -> list[Artifact]:
+        crate = node.crate
+        if crate == None:
+            return []
         artifact = crate.outputs[link_strategy].get(metadata_kind)
         return [crate.srcs, artifact] if artifact else [crate.srcs]
 
     return project
 
-def _project_artifact_json(link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> typing.Callable[[RustCrate], (Artifact, Artifact | None) | None]:
-    def project(crate: RustCrate) -> (Artifact, Artifact | None) | None:
-        artifact = crate.outputs[link_strategy].get(metadata_kind)
+def _project_artifact_json(link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> typing.Callable[[RustGraphNode], (Artifact, Artifact | None) | None]:
+    def project(node: RustGraphNode) -> (Artifact, Artifact | None) | None:
+        crate = node.crate
+        artifact = crate.outputs[link_strategy].get(metadata_kind) if crate else None
         return (artifact, crate.crate.dynamic) if artifact else None
 
     return project
 
-def _project_dynamic_name_args(crate: RustCrate) -> Artifact | cmd_args:
-    return crate.crate.dynamic or cmd_args()
+def _project_dynamic_name_args(node: RustGraphNode) -> Artifact | cmd_args:
+    return (node.crate.crate.dynamic if node.crate else None) or cmd_args()
 
-# Set of RustCrate. Proc macros are not nodes: rustc loads them rather than linking them, and
-# they have no transitive dependencies that matter to a dependent.
+# Set of RustGraphNode: Rust libraries, each with what its dependents compile against and what
+# they link.
+#
+# Proc macros are not nodes: rustc loads them rather than linking them, and they have no
+# transitive dependencies that matter to a dependent.
+#
+# The postorder is the link order: a crate's native dependencies, which are a node of their own
+# ahead of its Rust dependencies, then those, then the crate itself. There are links that only
+# work in this order: a C++ library can refer back into the Rust crate that depends on it without
+# declaring that (cxx bridges do), which only resolves if the crate comes later.
 #
 # A projection cannot be given the link strategy and metadata kind that a dependent wants its
 # dependencies' artifacts in, so there is a pair of projections for each combination. Get their
 # names from `crate_artifacts_projection`.
-RustCrateGraph = transitive_set(
+RustGraph = transitive_set(
     args_projections = {
         _crate_artifacts_projection(link_strategy, metadata_kind).args: _project_artifact_args(link_strategy, metadata_kind)
         for link_strategy in LinkStrategy
@@ -254,25 +285,9 @@ RustCrateGraph = transitive_set(
     },
 )
 
-# The native link providers that one node of a `RustLinkGraph` gives to every Rust crate that
-# reaches it.
-RustLinkGraphNode = record(
-    merged_link_infos = field(list[(ConfiguredTargetLabel, MergedLinkInfo)], []),
-    linkable_graphs = field(list[LinkableGraph], []),
-    # Rust currently treats all native dependencies as being exported, in the sense of C++
-    # `exported_deps`. However, they are not only exported from the Rust library that directly
-    # depends on them, they are also exported through any further chains of Rust libraries. This
-    # list tracks those dependencies.
-    #
-    # FIXME(JakobDegen): We should not default to treating all native deps as exported.
-    exported_deps = field(list[Dependency], []),
-)
-
-# Set of RustLinkGraphNode. Its postorder is the link order: a crate's native dependencies, which
-# are the first child of its node, then its Rust dependencies, then the crate itself. There are
-# links that only work in this order: a C++ library can refer back into the Rust crate that depends
-# on it without declaring that (cxx bridges do), which only resolves if the crate comes later.
-RustLinkGraph = transitive_set()
+def graph_crates(graph: RustGraph) -> list[RustCrate]:
+    """The crates in `graph`."""
+    return [node.crate for node in graph.traverse() if node.crate]
 
 # Output of a Rust compilation
 RustLinkInfo = provider(
@@ -282,9 +297,13 @@ RustLinkInfo = provider(
         "crate": CrateName,
         # strategies - information about each LinkStrategy as RustLinkStrategyInfo
         "strategies": dict[LinkStrategy, RustLinkStrategyInfo],
-        # This crate and its transitive Rust dependencies. The crate is the root node, so the
-        # children of this set are the dependencies without the crate.
-        "crates": RustCrateGraph,
+        # This crate and its transitive Rust dependencies: what Rust dependents compile against,
+        # which `graph_crates` reads, and the native link providers that they inherit.
+        #
+        # In what `rust_library` provides, the root is the crate's node, so the children of this
+        # set are the crate's dependencies without the crate. A rule that puts a graph together
+        # itself may not keep to that.
+        #
         # Rust interacts with the native link graph in a non-standard way.
         #
         # The first difference is in the re-export behavior of Rust compared to C++. The native link
@@ -298,8 +317,8 @@ RustLinkInfo = provider(
         # codegen, the generated object files for a Rust library can generate symbol references to
         # any of the library's transitive Rust dependencies, as well as to the immediate C++
         # dependencies of those libraries. So to account for that, each Rust library reports direct
-        # dependencies on all of those libraries in the link graph. `link_graph` holds the
-        # providers from all of those libraries.
+        # dependencies on all of those libraries in the link graph. `graph` holds the providers
+        # from all of those libraries.
         #
         # The second difference is unique to the case where `advanced_unstable_linking` is not set
         # on the toolchain. Imagine we have a Rust library `:B` with its only one dependency `:A`,
@@ -310,10 +329,10 @@ RustLinkInfo = provider(
         #
         # This distinction is implemented by effectively having each Rust library provide two sets
         # of link providers. The first is the link providers used across Rust -> Rust dependency
-        # edges - this is what the fields below are. The second set is the one that is used by C++
-        # and other non-Rust dependents, and is returned from the rule like normal. The second set
-        # is a superset of the first, that is it includes anything that the first link providers
-        # added.
+        # edges - this is what `graph` and the fields below are. The second set is the one that is
+        # used by C++ and other non-Rust dependents, and is returned from the rule like normal. The
+        # second set is a superset of the first, that is it includes anything that the first link
+        # providers added.
         #
         # The concrete difference is that the Rust `MergedLinkInfo` provided by `:A` is only the
         # result of merging the `MergedLinkInfo`s from `:A`'s deps, and does not contain anything
@@ -324,7 +343,7 @@ RustLinkInfo = provider(
         # With `advanced_unstable_linking`, Rust libraries essentially behave just like C++
         # libraries in the link graph, with the handling of transitive dependencies being the only
         # difference.
-        "link_graph": RustLinkGraph,
+        "graph": RustGraph,
         "shared_libs": SharedLibraryInfo,
         "third_party_build_info": ThirdPartyBuildInfo,
         # LinkGroupLibInfo intentionally omitted because the Rust -> Rust version
@@ -344,7 +363,7 @@ def strategy_info(toolchain_info: RustToolchainInfo, info: RustLinkInfo, dep_lin
 
 def crate_artifacts_projection(toolchain_info: RustToolchainInfo, dep_link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> CrateArtifactsProjection:
     """
-    The projections of `RustCrateGraph` for the artifact that is
+    The projections of `RustGraph` for the artifact that is
     `strategy_info(...).outputs[metadata_kind]` of each crate.
     """
     return _crate_artifacts_projection(strategy_info_link_strategy(toolchain_info, dep_link_strategy), metadata_kind)
@@ -571,19 +590,21 @@ def _rust_non_proc_macro_link_infos(ctx: AnalysisContext, dep_ctx: DepCollection
 def crate_metadata(label: Label) -> str:
     return str(label.raw_target())
 
-# A crate's Rust dependencies.
+# A crate's dependencies.
 RustCrateDeps = record(
+    # The Rust ones.
     direct = field(list[RustDependency]),
-    # The libraries among `direct`, and their transitive Rust dependencies.
-    crates = field(RustCrateGraph),
-    # The proc macros among `direct`, and those that the crates in `crates` depend on, as keys
+    # The crate's native dependencies, the libraries among `direct`, and everything below those.
+    graph = field(RustGraph),
+    # The proc macros among `direct`, and those that the crates in `graph` depend on, as keys
     # into `get_available_proc_macros`.
     proc_macro_deps = field(list[TargetLabel]),
 )
 
-def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], crate: Label | None = None) -> RustCrateDeps:
+def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], native: list[Dependency] = [], crate: Label | None = None) -> RustCrateDeps:
     """
-    Collects what `direct`, the Rust dependencies of `crate`, bring along.
+    Collects what the dependencies of `crate` bring along: `direct` are the Rust
+    ones and `native` the ones whose link providers its Rust dependents inherit.
 
     Fails if two of the crates have the same `-Cmetadata`, `crate` included,
     which is the case for one target in two configurations. Those are two
@@ -596,14 +617,27 @@ def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], crate
     target brings together. Here it is an error at the lowest target that
     depends on both.
     """
-    crates = ctx.actions.tset(
-        RustCrateGraph,
-        children = [dep.info.crates for dep in direct if isinstance(dep.info, RustLinkInfo)],
-    )
+    children = []
+    if native:
+        children.append(
+            ctx.actions.tset(
+                RustGraph,
+                value = RustGraphNode(
+                    merged_link_infos = [(dep.label.configured_target(), dep[MergedLinkInfo]) for dep in native],
+                    linkable_graphs = [dep[LinkableGraph] for dep in native if LinkableGraph in dep],
+                    exported_deps = native,
+                ),
+            )
+        )
+    children.extend([dep.info.graph for dep in direct if isinstance(dep.info, RustLinkInfo)])
+    graph = ctx.actions.tset(RustGraph, children = children)
 
     seen = {crate_metadata(crate): crate.configured_target()} if crate else {}
     proc_macro_deps = {dep.dep.label.raw_target(): None for dep in direct if not isinstance(dep.info, RustLinkInfo)}
-    for dep in crates.traverse():
+    for node in graph.traverse():
+        dep = node.crate
+        if dep == None:
+            continue
         other = seen.setdefault(dep.metadata, dep.label)
         if other != dep.label:
             target = dep.label.raw_target()
@@ -618,27 +652,42 @@ def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], crate
 
     return RustCrateDeps(
         direct = direct,
-        crates = crates,
+        graph = graph,
         proc_macro_deps = proc_macro_deps.keys(),
     )
 
 def crate_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> RustCrateDeps:
-    """The Rust dependencies of the crate being analyzed."""
-    return resolve_crate_deps(ctx, resolve_rust_deps(ctx, dep_ctx), crate = ctx.label)
+    """The dependencies of the crate being analyzed."""
+    return resolve_crate_deps(ctx, resolve_rust_deps(ctx, dep_ctx), _native_link_dependencies(ctx, dep_ctx), crate = ctx.label)
 
-def crate_graph(ctx: AnalysisContext, deps: RustCrateDeps, strategies: dict[LinkStrategy, RustLinkStrategyInfo], srcs: Artifact) -> RustCrateGraph:
-    """The value of `RustLinkInfo.crates` for the library being analyzed."""
+def crate_graph(
+    ctx: AnalysisContext,
+    deps: RustCrateDeps,
+    strategies: dict[LinkStrategy, RustLinkStrategyInfo],
+    srcs: Artifact,
+    merged_link_info: MergedLinkInfo | None = None,
+    linkable_graph: LinkableGraph | None = None,
+) -> RustGraph:
+    """
+    The value of `RustLinkInfo.graph` for the library being analyzed. The link
+    providers are the library's own, for a library whose Rust dependents link
+    it as itself.
+    """
     return ctx.actions.tset(
-        RustCrateGraph,
-        value = RustCrate(
-            metadata = crate_metadata(ctx.label),
-            label = ctx.label.configured_target(),
-            crate = attr_crate(ctx),
-            outputs = {link_strategy: info.outputs for link_strategy, info in strategies.items()},
-            srcs = srcs,
-            proc_macro_deps = [dep.dep.label.raw_target() for dep in deps.direct if not isinstance(dep.info, RustLinkInfo)],
+        RustGraph,
+        value = RustGraphNode(
+            crate = RustCrate(
+                metadata = crate_metadata(ctx.label),
+                label = ctx.label.configured_target(),
+                crate = attr_crate(ctx),
+                outputs = {link_strategy: info.outputs for link_strategy, info in strategies.items()},
+                srcs = srcs,
+                proc_macro_deps = [dep.dep.label.raw_target() for dep in deps.direct if not isinstance(dep.info, RustLinkInfo)],
+            ),
+            merged_link_infos = [(ctx.label.configured_target(), merged_link_info)] if merged_link_info else [],
+            linkable_graphs = [linkable_graph] if linkable_graph else [],
         ),
-        children = [deps.crates],
+        children = [deps.graph],
     )
 
 def inherited_third_party_builds(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[ThirdPartyBuildInfo]:
@@ -760,11 +809,8 @@ def inherited_rust_cxx_link_group_info(
     )
 
 # The native link providers that reach a crate through its dependencies: those of its own native
-# dependencies, and everything in the `link_graph`s of its Rust dependencies.
+# dependencies, and everything in the `graph`s of its Rust dependencies.
 RustInheritedLinkDeps = record(
-    # What the lists below were read from. A library puts it underneath its own
-    # `RustLinkInfo.link_graph`.
-    graph = field(RustLinkGraph),
     # In link order, with one entry per label.
     merged_link_infos = field(list[MergedLinkInfo]),
     linkable_graphs = field(list[LinkableGraph]),
@@ -774,27 +820,11 @@ RustInheritedLinkDeps = record(
 def _inconsistent_link_deps(label: typing.Any, a: typing.Any, b: typing.Any):
     fail("cannot depend on {} in multiple inconsistent ways:\n{}\n{}".format(label, a, b))
 
-def inherited_link_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> RustInheritedLinkDeps:
-    children = []
-    native_deps = _native_link_dependencies(ctx, dep_ctx)
-    if native_deps:
-        children.append(
-            ctx.actions.tset(
-                RustLinkGraph,
-                value = RustLinkGraphNode(
-                    merged_link_infos = [(dep.label.configured_target(), dep[MergedLinkInfo]) for dep in native_deps],
-                    linkable_graphs = [dep[LinkableGraph] for dep in native_deps if LinkableGraph in dep],
-                    exported_deps = native_deps,
-                ),
-            )
-        )
-    children.extend([info.link_graph for info in _rust_non_proc_macro_link_infos(ctx, dep_ctx)])
-    graph = ctx.actions.tset(RustLinkGraph, children = children)
-
+def inherited_link_deps(deps: RustCrateDeps) -> RustInheritedLinkDeps:
     merged_link_infos = {}
     linkable_graphs = {}
     exported_deps = {}
-    for node in graph.traverse(ordering = "postorder"):
+    for node in deps.graph.traverse(ordering = "postorder"):
         for label, merged_link_info in node.merged_link_infos:
             other = merged_link_infos.get(label)
             if other == None:
@@ -815,7 +845,6 @@ def inherited_link_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> 
                 _inconsistent_link_deps(dep.label, other, dep)
 
     return RustInheritedLinkDeps(
-        graph = graph,
         merged_link_infos = merged_link_infos.values(),
         linkable_graphs = linkable_graphs.values(),
         exported_deps = exported_deps.values(),

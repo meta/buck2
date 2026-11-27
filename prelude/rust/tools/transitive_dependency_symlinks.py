@@ -34,8 +34,9 @@
 #
 # The input file artifacts.json has two arrays of pairs, "crates" and "proc_macros".
 # The first element is the path of an artifact, the second element is an optional path to a file
-# containing the build-time crate name for that artifact. An entry of "crates" is null if the
-# crate was not built in the form that was asked for.
+# containing the build-time crate name for that artifact. An entry of "crates" is null if there
+# is no artifact: the crate was not built in the form that was asked for, or the entry is for
+# something in the dependency graph that is not a crate.
 #
 #     {
 #         "crates": [

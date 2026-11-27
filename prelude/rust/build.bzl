@@ -128,8 +128,8 @@ load(
     "CrateArtifactsProjection",  # @unused Used as a type
     "RustArtifact",
     "RustCrateDeps",  # @unused Used as a type
-    "RustCrateGraph",  # @unused Used as a type
     "RustCxxLinkGroupInfo",  # @unused Used as a type
+    "RustGraph",  # @unused Used as a type
     "RustProcMacroArchInfo",
     "RustProcMacroInfo",
     "attr_crate",
@@ -139,6 +139,7 @@ load(
     "crate_metadata",
     "executable_shared_lib_arguments_from_shared_library_info",
     "get_available_proc_macros",
+    "graph_crates",
     "inherited_link_deps",
     "inherited_rust_external_debug_info",
     "inherited_shared_libs",
@@ -376,8 +377,10 @@ def generate_rustdoc_test(
     )
     if ctx.attrs.doc_deps or ctx.attrs.doc_named_deps:
         doc_crate_deps = crate_deps(ctx, doc_dep_ctx)
+        doc_merged_link_infos = inherited_link_deps(doc_crate_deps).merged_link_infos
     else:
         doc_crate_deps = compile_ctx.crate_deps
+        doc_merged_link_infos = compile_ctx.inherited_link_deps.merged_link_infos
 
     resources = create_resource_db(
         ctx = ctx,
@@ -426,7 +429,6 @@ def generate_rustdoc_test(
         profile_mode = None,
     )
 
-    doc_merged_link_infos = inherited_link_deps(ctx, doc_dep_ctx).merged_link_infos
     link_args_output = make_link_args(
         ctx,
         ctx.actions,
@@ -1182,10 +1184,10 @@ def dependency_args(
 ) -> (cmd_args, cmd_args, list[(CrateName, Label)]):
     projection = crate_artifacts_projection(toolchain_info, dep_link_strategy, dep_metadata_kind)
     if sources:
-        args = cmd_args(hidden = crate_deps.crates.project_as_args(projection.args))
+        args = cmd_args(hidden = crate_deps.graph.project_as_args(projection.args))
     else:
         rust_dep_link_strategy = strategy_info_link_strategy(toolchain_info, dep_link_strategy)
-        args = cmd_args(hidden = [crate.outputs[rust_dep_link_strategy].get(dep_metadata_kind) or [] for crate in crate_deps.crates.traverse()])
+        args = cmd_args(hidden = [crate.outputs[rust_dep_link_strategy].get(dep_metadata_kind) or [] for crate in graph_crates(crate_deps.graph)])
     crate_targets = []
     available_proc_macros = get_available_proc_macros(ctx)
 
@@ -1276,7 +1278,7 @@ def dependency_args(
         internal_tools_info,
         transitive_dependency_dirs,
         prefix,
-        crate_deps.crates,
+        crate_deps.graph,
         projection,
         proc_macros,
         arch,
@@ -1291,7 +1293,7 @@ def symlinked_dirs(
     transitive_dependency_dirs: set,
     prefix: str,
     # The caller has to make the artifacts of these crates inputs of whatever uses the result.
-    crates: RustCrateGraph,
+    crates: RustGraph,
     # Which of the crates' artifacts.
     projection: CrateArtifactsProjection,
     proc_macros: list[RustArtifact],

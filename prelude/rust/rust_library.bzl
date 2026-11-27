@@ -114,8 +114,6 @@ load(
     ":link_info.bzl",
     "DEFAULT_STATIC_LIB_OUTPUT_STYLE",
     "DEFAULT_STATIC_LINK_STRATEGY",
-    "RustLinkGraph",
-    "RustLinkGraphNode",
     "RustLinkInfo",
     "RustLinkStrategyInfo",
     "RustProcMacroInfo",
@@ -1006,15 +1004,7 @@ def _advanced_unstable_link_providers(
         RustLinkInfo(
             crate = crate,
             strategies = rust_artifacts,
-            crates = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts, compile_ctx.symlinked_srcs),
-            link_graph = ctx.actions.tset(
-                RustLinkGraph,
-                value = RustLinkGraphNode(
-                    merged_link_infos = [(ctx.label.configured_target(), merged_link_info)],
-                    linkable_graphs = [linkable_graph],
-                ),
-                children = [inherited.graph],
-            ),
+            graph = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts, compile_ctx.symlinked_srcs, merged_link_info, linkable_graph),
             shared_libs = shared_library_info,
             third_party_build_info = third_party_build_info,
         )
@@ -1050,8 +1040,7 @@ def _stable_link_providers(
     rust_link_info = RustLinkInfo(
         crate = crate,
         strategies = rust_artifacts,
-        crates = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts, compile_ctx.symlinked_srcs),
-        link_graph = compile_ctx.inherited_link_deps.graph,
+        graph = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts, compile_ctx.symlinked_srcs),
         shared_libs = merge_shared_libraries(
             ctx.actions,
             deps = inherited_shared_libs(ctx, dep_ctx),

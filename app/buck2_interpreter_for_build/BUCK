@@ -15,6 +15,7 @@ rust_library(
         "fbsource//third-party/rust:fancy-regex",
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:glob",
+        "fbsource//third-party/rust:globset",
         "fbsource//third-party/rust:hashbrown",
         "fbsource//third-party/rust:hex",
         "fbsource//third-party/rust:indoc",

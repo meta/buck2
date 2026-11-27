@@ -1,0 +1,7 @@
+# The loading build file lives in package `root//pkg`. It `?as=`-loads a file
+# in package `other//pkg` — the SAME intra-cell path (`pkg`), but a different
+# cell. This is rejected as cross-package, which only holds if the comparison
+# is on the full cell path (cell + path), not the raw intra-cell package path.
+load("@other//pkg/lib.lock?as=toml", "value")
+
+value_alias = value

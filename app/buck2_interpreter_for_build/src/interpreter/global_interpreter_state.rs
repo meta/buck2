@@ -13,6 +13,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::dice::cells::HasCellResolver;
+use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_core::bzl::BzlEvalCell;
 use buck2_core::cells::CellResolver;
 use buck2_interpreter::dice::bzl_eval_cell::HasBzlEvalCell;
@@ -33,6 +34,7 @@ use starlark::environment::Globals;
 use crate::interpreter::configuror::BuildInterpreterConfiguror;
 use crate::interpreter::context::HasInterpreterContext;
 use crate::interpreter::globals::base_globals;
+use crate::interpreter::load_data::LoadAsAllowlist;
 
 pagable::static_str!(GLOBAL_ENV_HEAP_NAME = concat!(module_path!(), "::global_env"));
 
@@ -56,6 +58,9 @@ pub struct GlobalInterpreterState {
     pub unstable_typecheck: bool,
 
     pub bzl_eval_cell: BzlEvalCell,
+
+    /// Files allowed to use an `?as=` import format override.
+    pub load_as_allowlist: LoadAsAllowlist,
 }
 
 impl GlobalInterpreterState {
@@ -65,6 +70,7 @@ impl GlobalInterpreterState {
         disable_starlark_types: bool,
         unstable_typecheck: bool,
         bzl_eval_cell: BzlEvalCell,
+        load_as_allowlist: LoadAsAllowlist,
     ) -> buck2_error::Result<Self> {
         let global_env = base_globals()
             .with(|g| {
@@ -83,6 +89,7 @@ impl GlobalInterpreterState {
             disable_starlark_types,
             unstable_typecheck,
             bzl_eval_cell,
+            load_as_allowlist,
         })
     }
 
@@ -136,12 +143,16 @@ impl<'d> HasGlobalInterpreterState<'d> for DiceComputations<'d> {
                 let unstable_typecheck = ctx.get_unstable_typecheck().await?;
                 let bzl_eval_cell = ctx.get_bzl_eval_cell().await?;
 
+                let root_config = ctx.get_legacy_root_config_on_dice().await?;
+                let load_as_allowlist = LoadAsAllowlist::from_buckconfig(root_config.view(ctx))?;
+
                 Ok(Arc::new(GlobalInterpreterState::new(
                     cell_resolver,
                     interpreter_configuror,
                     disable_starlark_types,
                     unstable_typecheck,
                     bzl_eval_cell,
+                    load_as_allowlist,
                 )?))
             }
 

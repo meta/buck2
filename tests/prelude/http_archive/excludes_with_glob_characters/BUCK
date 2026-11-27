@@ -1,0 +1,36 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+
+# Regression test for `excludes` matching a file whose name contains glob
+# characters: the excluded file must be left out, and its glob reading
+# (`pages/d.js`) must not be.
+
+oncall("build_infra")
+
+prelude = native
+
+prelude.genrule(
+    name = "archive",
+    srcs = glob(["pages/**"]),
+    out = "archive.tar.gz",
+    bash = 'tar -czhf "$OUT" pages',
+    cmd_exe = 'tar -czhf "$OUT" pages',
+)
+
+prelude.extract_archive(
+    name = "extracted",
+    src = ":archive",
+    excludes = ["^pages/\\[id\\]\\.js$"],
+)
+
+py_assertion(
+    name = "check",
+    script = """
+import sys
+from pathlib import Path
+
+extracted = Path(sys.argv[1])
+found = {p.relative_to(extracted).as_posix() for p in extracted.rglob("*") if p.is_file()}
+assert found == {"pages/d.js", "pages/index.js"}, found
+""",
+    script_args = ["$(location :extracted)"],
+)

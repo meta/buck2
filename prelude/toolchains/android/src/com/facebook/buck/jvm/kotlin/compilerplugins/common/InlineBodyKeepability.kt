@@ -642,10 +642,11 @@ class InlineBodyKeepability(
         return false
       }
       return when (callable) {
+        // An own inline property, like an own inline function, is inlined from its kept accessor.
         is FirPropertySymbol ->
             (!callable.fir.isConst || isHealthyConst(callable.fir)) &&
-                callable.fir.getter?.isInline != true &&
-                callable.fir.setter?.isInline != true
+                callable.fir.getter.let { it == null || !it.isInline || isKeepable(it) } &&
+                callable.fir.setter.let { it == null || !it.isInline || isKeepable(it) }
         is FirNamedFunctionSymbol -> !callable.fir.isInline || isKeepable(callable.fir)
         else -> true
       }

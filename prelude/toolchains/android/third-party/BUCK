@@ -862,7 +862,7 @@ third_party_jar(
 third_party_jar(
     name = "classic_kotlin-stdlib",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/jetbrains/kotlin/kotlin-stdlib:kotlin-stdlib__toolchain",
-    sha1 = "a2ee2c4e220fee522f0451b723bab2a43f3481a7",
+    sha1 = "c343e135bd1e7dd94b7ed76b4159068d888d09db",
     url = "mvn:org.jetbrains.kotlin:kotlin-stdlib:jar:" + DEFAULT_KOTLIN_VERSION,
     visibility = ["PUBLIC"],
 )
@@ -887,7 +887,7 @@ third_party_jar(
 third_party_jar(
     name = "classic_kotlin-compiler-embeddable",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/jetbrains/kotlin/kotlin-compiler-embeddable:kotlin-compiler-embeddable__toolchain",
-    sha1 = "c4b47f8e33cdbeedd8c1415ab9f9ade870388162",
+    sha1 = "3cd9c37c505fb9879e03ebeaf91d9c9500ab6eca",
     url = "mvn:org.jetbrains.kotlin:kotlin-compiler-embeddable:jar:" + DEFAULT_KOTLIN_VERSION,
     visibility = ["PUBLIC"],
 )
@@ -917,7 +917,7 @@ third_party_jar(
 third_party_jar(
     name = "classic_kotlin-reflect",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/jetbrains/kotlin/kotlin-reflect:kotlin-reflect__toolchain",
-    sha1 = "6acc55c52691ce3fd41b20a0472f3513106521a5",
+    sha1 = "0123e9b5b31f85b43025149fb1a34bb569288157",
     url = "mvn:org.jetbrains.kotlin:kotlin-reflect:jar:" + DEFAULT_KOTLIN_VERSION,
     visibility = ["PUBLIC"],
 )
@@ -933,7 +933,7 @@ third_party_jar(
 third_party_jar(
     name = "classic_kotlin-script-runtime",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/jetbrains/kotlin/kotlin-script-runtime:kotlin-script-runtime",
-    sha1 = "8dafd7f0eb5efef35a446683a2774fef61c68aeb",
+    sha1 = "abc7ff9f7e229cb6bdfadad81e93c871e6cdde41",
     url = "mvn:org.jetbrains.kotlin:kotlin-script-runtime:jar:" + DEFAULT_KOTLIN_VERSION,
     visibility = ["PUBLIC"],
 )
@@ -949,7 +949,7 @@ third_party_jar(
 third_party_jar(
     name = "classic_kotlin-annotation-processing-embeddable",
     # @oss-disable[end= ]: internal_alias = "fbsource//third-party/java/org/jetbrains/kotlin/kotlin-annotation-processing-embeddable:kotlin-annotation-processing-embeddable",
-    sha1 = "4d68676c8b1a36043d3188f0de16f6842709bc1f",
+    sha1 = "41f6adbb24a91a5aa4690f2453668040e5413f85",
     url = "mvn:org.jetbrains.kotlin:kotlin-annotation-processing-embeddable:jar:" + DEFAULT_KOTLIN_VERSION,
     visibility = ["PUBLIC"],
 )

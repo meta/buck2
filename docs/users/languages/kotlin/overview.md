@@ -60,12 +60,12 @@ java_binary(
 
 ## Kotlin version
 
-The toolchain uses Kotlin 2.3.21. To use Kotlin 2.4.21 instead, set it in the
+The toolchain uses Kotlin 2.4.21. To use Kotlin 2.3.21 instead, set it in the
 project's `.buckconfig`:
 
 ```ini
 [kotlin]
-  kotlin_version = 2.4.21
+  kotlin_version = 2.3.21
 ```
 
 These are the versions the prelude has the jars of; any other version fails

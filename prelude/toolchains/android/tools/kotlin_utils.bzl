@@ -12,7 +12,7 @@ load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 
 # The Kotlin version of the compiler jars in `prelude//toolchains/android/third-party` when
 # `kotlin.kotlin_version` is unset. It needs a row in `_KOTLIN_JAR_SHA1`.
-DEFAULT_KOTLIN_VERSION = "2.3.21"
+DEFAULT_KOTLIN_VERSION = "2.4.21"
 
 # The sha1 of each Kotlin jar in `prelude//toolchains/android/third-party` that follows
 # `kotlin_version()`, for every Kotlin version those jars can have.

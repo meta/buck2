@@ -21,6 +21,7 @@ def _execution_platform_impl(ctx: AnalysisContext) -> list[Provider]:
         executor_config = CommandExecutorConfig(
             local_enabled = True,
             remote_enabled = False,
+            use_persistent_workers = ctx.attrs.use_persistent_workers,
             use_windows_path_separators = ctx.attrs.use_windows_path_separators,
         ),
     )
@@ -35,11 +36,16 @@ def _execution_platform_impl(ctx: AnalysisContext) -> list[Provider]:
         ),
     ]
 
+def _use_persistent_workers() -> bool:
+    value = read_root_config("build", "use_persistent_workers", None)
+    return value == None or value.lower() in ("true", "1", "yes", "on")
+
 execution_platform = rule(
     impl = _execution_platform_impl,
     attrs = {
         "cpu_configuration": attrs.dep(providers = [ConfigurationInfo]),
         "os_configuration": attrs.dep(providers = [ConfigurationInfo]),
+        "use_persistent_workers": attrs.bool(default = _use_persistent_workers()),
         "use_windows_path_separators": attrs.bool(),
     },
 )

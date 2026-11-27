@@ -196,12 +196,15 @@ the `build.use_persistent_workers` buckconfig (defaults to `True`).
 Workers are enabled at the execution platform level via the
 `use_persistent_workers` attribute on `CommandExecutorConfig`, which defaults to
 `False`. The execution platform that `buck2 init` configures,
-`prelude//platforms:default`, does not set it, so there every action runs the
-fallback `exe` of its `WorkerRunInfo`. To use workers, define an execution
-platform that sets `use_persistent_workers = True`, as `platforms/BUCK` does in
-[examples/persistent_worker](https://github.com/meta/buck2/tree/main/examples/persistent_worker).
-A project that configures no execution platforms at all, such as one made with
-`buck2 init --no-prelude`, runs its actions with workers enabled.
+`prelude//platforms:default`, sets it from the `build.use_persistent_workers`
+buckconfig, which defaults to `True`, so an action whose `WorkerRunInfo` has a
+`worker` runs in that worker. An execution platform that you define must set
+`use_persistent_workers = True` itself, as `platforms/BUCK` does in
+[examples/persistent_worker](https://github.com/meta/buck2/tree/main/examples/persistent_worker);
+on one that leaves it unset, every action runs the fallback `exe` of its
+`WorkerRunInfo`. A project that configures no execution platforms at all, such
+as one made with `buck2 init --no-prelude`, runs its actions with workers
+enabled.
 
 </OssOnly>
 

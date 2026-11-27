@@ -21,8 +21,22 @@ If you have any issues, please check [here](../../users/faq/meta_installation).
 
 ## Installing Buck2
 
-The latest set of `buck2` executables can be found under the
-[`latest` release page](https://github.com/facebook/buck2/releases/tag/latest).
+On Linux and macOS, install the latest prebuilt `buck2` with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/facebook/buck2/main/install.sh | sh
+```
+
+The script installs `buck2` into `~/.local/bin`, or into `BUCK2_INSTALL_DIR` if
+set, and tells you if that directory is not on your `PATH`. Set
+`BUCK2_VERSION` to a release tag to install that release instead of `latest`.
+It needs `curl` or `wget`, and `zstd` or Python 3.14+ to unpack the binary.
+
+On Windows, download `buck2-x86_64-pc-windows-msvc.exe.zst` (or the `aarch64`
+one) from the
+[`latest` release page](https://github.com/facebook/buck2/releases/tag/latest),
+unpack it with `zstd -d`, rename it to `buck2.exe` and put it on your `PATH`.
+That page has the executables for every supported platform.
 
 Additionally, for each bi-monthly release there is a
 [dotslash](https://dotslash-cli.com) file that is appropriate for committing to

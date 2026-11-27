@@ -12,12 +12,35 @@ import io
 import tempfile
 import unittest
 import zipfile
+from email.parser import Parser
 from pathlib import Path
 
 import wheel
 
 
+def _build_metadata(metadata: list[tuple[str, str]] | None = None) -> str:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output = Path(tmpdir) / "demo-1.0-py3-none-any.whl"
+        with wheel.WheelBuilder(
+            name="demo", version="1.0", output=str(output), metadata=metadata
+        ):
+            pass
+        with zipfile.ZipFile(output) as archive:
+            return archive.read("demo-1.0.dist-info/METADATA").decode("utf-8")
+
+
 class WheelBuilderTest(unittest.TestCase):
+    def test_metadata_starts_with_metadata_version(self) -> None:
+        metadata = _build_metadata()
+        self.assertTrue(
+            metadata.startswith("Metadata-Version: 2.1\nName: demo\n"), metadata
+        )
+
+    def test_metadata_version_given_by_the_caller_is_kept(self) -> None:
+        metadata = _build_metadata([("Metadata-Version", "2.4")])
+        headers = Parser().parsestr(metadata)
+        self.assertEqual(headers.get_all("Metadata-Version"), ["2.4"], metadata)
+
     def test_readme_sets_metadata_body_and_content_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

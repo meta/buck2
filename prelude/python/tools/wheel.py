@@ -22,6 +22,8 @@ import zipfile
 from types import TracebackType
 from typing import cast
 
+METADATA_VERSION = "2.1"
+
 
 def normalize_name(name: str) -> str:
     """
@@ -78,6 +80,8 @@ class WheelBuilder(contextlib.AbstractContextManager):
         self._entry_points: dict[str, str] | None = entry_points
         self._metadata: list[tuple[str, str]] = []
         self._readme = readme
+        if not any(key == "Metadata-Version" for key, _ in metadata or []):
+            self._metadata.append(("Metadata-Version", METADATA_VERSION))
         self._metadata.append(("Name", name))
         self._metadata.append(("Version", version))
         if readme is not None:

@@ -117,6 +117,19 @@ class SamePackageClassStubsGenerator : StubsGenerator {
                         // expanded type.
                         context.kotlinClasspathDeclarations.isProvided(pkgSegments, name)
                       }
+                      .filterNot { name ->
+                        // A star import of a classpath or JDK package (`import java.util.*`)
+                        // provides the name. A same-package stub would win over the star import,
+                        // so the ABI would name the stub where kotlinc writes the imported type.
+                        file.importDirectives.any { directive ->
+                          directive.isAllUnder &&
+                              directive.importedFqName?.let { fqName ->
+                                val starPkg = fqName.pathSegments().map { it.asString() }
+                                context.kotlinClasspathDeclarations.isProvided(starPkg, name) ||
+                                    isJdkClass(starPkg, name)
+                              } == true
+                        }
+                      }
                       .toSet()
             }
             .groupBy({ (pkg, _) -> pkg }, { (_, names) -> names })
@@ -155,3 +168,12 @@ class SamePackageClassStubsGenerator : StubsGenerator {
     }
   }
 }
+
+// The JDK is not on the stubsgen classpath of a JVM compilation (kotlinc reads it from the JDK
+// home),
+// so its classes are looked up in the compiler's own JDK. The platform class loader sees the JDK
+// modules only, not the compiler's classpath.
+private fun isJdkClass(pkgSegments: List<String>, name: String): Boolean =
+    pkgSegments.isNotEmpty() &&
+        ClassLoader.getPlatformClassLoader()
+            .getResource(pkgSegments.joinToString("/") + "/" + name + ".class") != null

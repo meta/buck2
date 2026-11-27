@@ -15,9 +15,9 @@ This page provides an overview of the programming languages supported by Buck2.
 | Erlang               | ✅                | Easy Setup    | ❌         | GitHub: michalmuskala         |
 | Go                   | ✅                | Easy Setup    | ❌         | GitHub: podtserkovskiy        |
 | Haskell              | ✅                | Easy Setup    | ❌         |                               |
-| Java                 | ✅                | Complex Setup | ❌         |                               |
+| Java                 | ✅                | Easy Setup    | ❌         |                               |
 | Java (Mobile)        | ✅                | Complex Setup | ❌         | GitHub: NavidQar & IanChilds  |
-| Kotlin               | ✅                | Complex Setup | ❌         |                               |
+| Kotlin               | ✅                | Easy Setup    | ✅         |                               |
 | Kotlin (Mobile)      | ✅                | Complex Setup | ❌         | GitHub: NavidQar & siaojiecai |
 | Objective-C          | ✅                | Unavailable   | ❌         |                               |
 | OCaml                | ✅                | Easy Setup    | ❌         |                               |

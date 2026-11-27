@@ -8,11 +8,19 @@
 
 load("@prelude//utils:source_listing.bzl", "SourceListingInfo")
 
+# Keep in sync with `src/excluded.rs`, which `build.rs` uses for cargo builds.
+_EXCLUDED_PREFIXES = [
+    "toolchains/android/test/",
+    "ide_integrations/visual_studio/assets/",
+]
+
 def _impl(ctx: AnalysisContext) -> list[Provider]:
     files = {}
 
     parts = ["pub(crate) const DATA: &[crate::BundledFile] = &["]
     for path, art in ctx.attrs.source_listing[SourceListingInfo].sources.items():
+        if any([path.startswith(prefix) for prefix in _EXCLUDED_PREFIXES]):
+            continue
         exec_bit_rel_path = "includes/" + path + "/__exec_bit.txt"
         data_rel_path = "includes/" + path + "/__data"
 

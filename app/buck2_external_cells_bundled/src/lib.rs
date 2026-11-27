@@ -23,6 +23,9 @@ pub struct BundledCell {
     pub is_testing: bool,
 }
 
+#[cfg(test)]
+mod excluded;
+
 #[cfg(buck_build)]
 mod prelude {
     include!("prelude/contents.rs");
@@ -105,6 +108,24 @@ mod tests {
                 .filter(|file| file.contents.len() > 100)
                 .count()
                 > 50
+        );
+    }
+
+    #[test]
+    fn test_bundled_prelude_leaves_out_excluded_paths() {
+        let c = super::PRELUDE;
+        for prefix in super::excluded::EXCLUDED_PREFIXES {
+            assert!(
+                c.files.iter().all(|file| !file.path.starts_with(prefix)),
+                "the bundled prelude should not contain files under `{prefix}`"
+            );
+        }
+        // The sources next to the excluded tests stay.
+        assert!(
+            c.files
+                .iter()
+                .any(|file| file.path.starts_with("toolchains/android/src/")),
+            "the bundled prelude should keep the Android toolchain sources"
         );
     }
 }

@@ -13,6 +13,8 @@
 use std::io;
 use std::path::Path;
 
+include!("src/excluded.rs");
+
 fn main() {
     imp().unwrap();
 }
@@ -32,6 +34,7 @@ fn imp() -> io::Result<()> {
     assert!(prelude_path.join("prelude.bzl").exists());
 
     println!("cargo:rerun-if-changed={}", prelude_path.display());
+    println!("cargo:rerun-if-changed=src/excluded.rs");
 
     write_include_file(&prelude_path, std::fs::File::create(&include_file)?)?;
 
@@ -56,13 +59,16 @@ fn write_include_file(prelude: &Path, mut include_file: impl io::Write) -> io::R
         if !entry.file_type().is_file() {
             continue;
         }
+        let path = as_unix_like(entry.path().strip_prefix(prelude).unwrap());
+        if EXCLUDED_PREFIXES
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+        {
+            continue;
+        }
 
         writeln!(include_file, "crate::BundledFile {{")?;
-        writeln!(
-            include_file,
-            "  path: r\"{}\",",
-            as_unix_like(entry.path().strip_prefix(prelude).unwrap())
-        )?;
+        writeln!(include_file, "  path: r\"{path}\",")?;
         writeln!(
             include_file,
             "  contents: include_bytes!(r\"{}\"),",

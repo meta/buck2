@@ -77,6 +77,8 @@ transition_alias = rule(
 )
 _DUAL_ARCH = "fbsource//third-party/rust-toolchain/constraints:dual-arch-qualification[enabled]"
 
+_RUSTC_OPT_LEVELS = ["0", "1", "2", "3", "s", "z"]
+
 def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact, arch: str | None = None) -> cmd_args:
     # Build scripts expect to receive a `rustc` which "just works." However,
     # our rustc sometimes has no sysroot available, so we need to make a shim
@@ -319,13 +321,15 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
         upper_feature = feature.upper().replace("-", "_")
         rule_env["CARGO_FEATURE_{}".format(upper_feature)] = "1"
 
+    opt_level = "0"
     for flag in rust_toolchain_info.rustc_flags:
         if isinstance(flag, ResolvedStringWithMacros):
             flag = str(flag)[1:-1]
         if flag.startswith("-Copt-level="):
-            opt_level = flag.removeprefix("-Copt-level=")
-            if opt_level.isdigit():
-                rule_env["OPT_LEVEL"] = opt_level
+            value = flag.removeprefix("-Copt-level=")
+            if value in _RUSTC_OPT_LEVELS:
+                opt_level = value
+    rule_env["OPT_LEVEL"] = opt_level
 
     # C and C++ compilers for bindgen.
     target_triple = get_target_triple(ctx)

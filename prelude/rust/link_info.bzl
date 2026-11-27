@@ -19,6 +19,7 @@ load(
 )
 load(
     "@prelude//cxx:cxx_library_utility.bzl",
+    "cxx_attr_deps",
     "cxx_is_gnu",
 )
 load(
@@ -433,7 +434,7 @@ def gather_explicit_sysroot_deps(dep_ctx: DepCollectionContext) -> list[RustOrNa
 # whose providers are not the proc macro's. Read dependencies' providers through `resolve_deps`.
 def resolve_listed_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[RustOrNativeDependency]:
     dependencies = _do_resolve_deps(
-        deps = ctx.attrs.deps + dep_ctx.linker_deps,
+        deps = cxx_attr_deps(ctx) + dep_ctx.linker_deps,
         named_deps = ctx.attrs.named_deps,
         flagged_deps = ctx.attrs.flagged_deps,
     )

@@ -226,7 +226,7 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
     # A shared placeholder keeps this node eligible for all native link strategies.
     link_infos[LibOutputStyle("shared_lib")] = LinkInfos(default = LinkInfo())
     link_deps = linkables(cxx_deps)
-    python_dep_libraries, shared_deps = gather_dep_libraries(ctx.attrs.deps, resolve_versioned_deps = False)
+    python_dep_libraries, shared_deps = gather_dep_libraries(cxx_deps, resolve_versioned_deps = False)
     linkable_providers = LinkableProviders(
         link_group_lib_info = merge_link_group_lib_info(deps = cxx_deps),
         linkable_graph = create_linkable_graph(
@@ -268,9 +268,9 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
         ctx,
         node = create_linkable_graph_node(
             ctx,
-            roots = get_roots([dep for dep in ctx.attrs.deps if PythonLibraryInfo in dep]),
+            roots = get_roots([dep for dep in cxx_deps if PythonLibraryInfo in dep]),
         ),
-        deps = ctx.attrs.deps,
+        deps = cxx_deps,
     )
 
     providers.extend(cxx_library_info.providers)
@@ -283,7 +283,7 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
             omnibus_graph = omnibus_graph,
             extension_shared_libraries = shared_deps,
             extension_deps = cxx_deps,
-            raw_deps = ctx.attrs.deps,
+            raw_deps = cxx_deps,
             python_dep_libraries = python_dep_libraries,
             soname = name,
             base_module = base_module,

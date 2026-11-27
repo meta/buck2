@@ -44,7 +44,9 @@ def cxx_attr_deps(ctx: AnalysisContext) -> list[Dependency]:
     if getattr(ctx.attrs, "default_deps", "") == "deps":
         toolchain_info = get_cxx_toolchain_info(ctx)
         if toolchain_info.default_deps:
-            deps.extend(toolchain_info.default_deps)
+            # Not `deps.extend`: `deps` is the attribute's own list, which everything else that
+            # reads `ctx.attrs.deps` gets too.
+            deps = deps + toolchain_info.default_deps
 
     deps_query_attr = getattr(ctx.attrs, "deps_query", None)
     if deps_query_attr:

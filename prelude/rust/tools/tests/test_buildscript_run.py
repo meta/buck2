@@ -16,7 +16,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from buildscript_run import main
+from buildscript_run import cfg_env, main
 
 
 class BuildscriptRunTest(unittest.TestCase):
@@ -116,3 +116,34 @@ class BuildscriptRunTest(unittest.TestCase):
             b"cargo:warning=foo.c:1:10: fatal error: missing.h: No such file\n"
             b"caf\xe9\n",
         )
+
+
+class CfgEnvTest(unittest.TestCase):
+    """`CARGO_CFG_*` for build scripts, from the output of `rustc --print cfg`."""
+
+    def cfg_env_for(self, rustc_cfg: str) -> dict:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = pathlib.Path(tmpdir) / "rustc_cfg"
+            path.write_text(rustc_cfg)
+            return cfg_env(path)
+
+    def test_every_cfg_is_set_as_cargo_sets_it(self) -> None:
+        env = self.cfg_env_for(
+            'debug_assertions\npanic="unwind"\nrustix_use_libc\ntarget_os="linux"\nunix\n'
+        )
+        self.assertEqual(
+            env,
+            {
+                "CARGO_CFG_DEBUG_ASSERTIONS": "",
+                "CARGO_CFG_PANIC": "unwind",
+                "CARGO_CFG_RUSTIX_USE_LIBC": "",
+                "CARGO_CFG_TARGET_OS": "linux",
+                "CARGO_CFG_UNIX": "",
+            },
+        )
+
+    def test_the_values_of_a_cfg_are_joined(self) -> None:
+        env = self.cfg_env_for(
+            'target_has_atomic\ntarget_has_atomic="64"\ntarget_has_atomic="ptr"\n'
+        )
+        self.assertEqual(env, {"CARGO_CFG_TARGET_HAS_ATOMIC": "64,ptr"})

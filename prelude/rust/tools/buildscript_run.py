@@ -32,27 +32,22 @@ def eprint(*args: Any, **kwargs: Any) -> None:
 
 
 def cfg_env(rustc_cfg: Path) -> dict[str, str]:
-    with rustc_cfg.open(encoding="utf-8") as f:
-        lines = f.readlines()
+    """`CARGO_CFG_*` as Cargo sets it: one variable per cfg that `rustc --print cfg` reports,
+    including those set by flags such as `--cfg`, with the values of the cfg joined by commas
+    and empty for a cfg without a value."""
+    values: dict[str, list[str]] = {}
+    for line in rustc_cfg.read_text(encoding="utf-8").splitlines():
+        name, has_value, value = line.strip().partition("=")
+        if not name:
+            continue
+        cfg_values = values.setdefault(name, [])
+        if has_value:
+            cfg_values.append(value.strip('"'))
 
-    cfgs: dict[str, str] = {}
-    for line in lines:
-        if (
-            line.startswith("unix")
-            or line.startswith("windows")
-            or line.startswith("target_")
-        ):
-            keyval = line.strip().split("=")
-            key = keyval[0]
-            val = keyval[1].replace('"', "") if len(keyval) > 1 else "1"
-
-            key = "CARGO_CFG_" + key.upper()
-            if key in cfgs:
-                cfgs[key] = cfgs[key] + "," + val
-            else:
-                cfgs[key] = val
-
-    return cfgs
+    return {
+        "CARGO_CFG_" + name.upper().replace("-", "_"): ",".join(cfg_values)
+        for name, cfg_values in values.items()
+    }
 
 
 def create_cwd(path: Path, manifest_dir: Path) -> Path:

@@ -1,3 +1,4 @@
+load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 load(":defs.bzl", "android_installer_args", "installer_with_args")
 
@@ -14,6 +15,8 @@ installer_with_args(
     args = android_installer_args(
         adb = read_root_config("android", "adb"),
         adb_restart_on_failure = read_root_config("adb", "adb_restart_on_failure"),
+        # In Meta's repository, `buck2 install` keeps the `adb` on `PATH`.
+        sdk_path = None if is_full_meta_repo() else read_root_config("android", "sdk_path"),
         staged_install_mode = read_root_config("adb", "staged_install_mode"),
     ),
     installer = "prelude//toolchains/android/src/com/facebook/buck/installer/android:android_installer",

@@ -6,9 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-def android_installer_args(adb: str | None, adb_restart_on_failure: str | None, staged_install_mode: str | None) -> list[str]:
+def android_installer_args(adb: str | None, adb_restart_on_failure: str | None, staged_install_mode: str | None, sdk_path: str | None = None) -> list[str]:
     """Returns the Android installer flags for the values of the buckconfig keys `android.adb`,
-    `adb.adb_restart_on_failure` and `adb.staged_install_mode`; `None` means the key is unset.
+    `adb.adb_restart_on_failure`, `adb.staged_install_mode` and `android.sdk_path`; `None` means
+    the key is unset. Without `android.adb`, the installer uses the `adb` of the SDK at
+    `android.sdk_path`, as the Android toolchain uses its other tools, if that path is absolute.
 
     Read the keys in the BUCK file that calls this. Starlark runs a constant-argument
     `read_root_config` in a function body when the module compiles, so the key would become a
@@ -17,11 +19,18 @@ def android_installer_args(adb: str | None, adb_restart_on_failure: str | None, 
     args = []
     if adb:
         args += ["--adb-executable-path", adb]
+    elif sdk_path and _is_absolute(sdk_path):
+        args += ["--adb-executable-path", sdk_path + "/platform-tools/adb"]
     if adb_restart_on_failure != None:
         args += ["--adb-restart-on-failure", _bool(adb_restart_on_failure)]
     if staged_install_mode != None:
         args += ["--staged-install-mode", _bool(staged_install_mode)]
     return args
+
+def _is_absolute(path: str) -> bool:
+    # `buck2 install` starts the installer in the buck2 daemon's working directory, so a relative
+    # path would not be resolved against the project root.
+    return path.startswith("/") or path[1:3] in (":/", ":\\")
 
 def _bool(value: str) -> str:
     # The installer's flags also take `yes`, `on` and `1` as true and reject other values. These

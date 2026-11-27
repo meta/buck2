@@ -88,6 +88,7 @@ def system_prebuilt_jar_toolchain(name, java, visibility = None):
         name = name,
         java = java,
         class_abi_generator = _CLASS_ABI_GENERATOR,
+        consumer_proguard_rules_extractor = "prelude//java/tools:extract_proguard_rules",
         cp_snapshot_generator = _CP_SNAPSHOT_GENERATOR,
         is_bootstrap_toolchain = False,
         visibility = visibility,
@@ -98,6 +99,7 @@ def _prebuilt_jar_toolchain_rule_impl(ctx):
         DefaultInfo(),
         PrebuiltJarToolchainInfo(
             class_abi_generator = ctx.attrs.class_abi_generator,
+            consumer_proguard_rules_extractor = ctx.attrs.consumer_proguard_rules_extractor,
             cp_snapshot_generator = ctx.attrs.cp_snapshot_generator,
             global_code_config = {},
             is_bootstrap_toolchain = ctx.attrs.is_bootstrap_toolchain,
@@ -108,6 +110,7 @@ def _prebuilt_jar_toolchain_rule_impl(ctx):
 _prebuilt_jar_toolchain_rule = rule(
     attrs = {
         "class_abi_generator": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+        "consumer_proguard_rules_extractor": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "cp_snapshot_generator": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "is_bootstrap_toolchain": attrs.bool(default = True),
         # this just goes into the RunInfo of the result, so it's target, not exec

@@ -64,6 +64,20 @@ def prebuilt_jar_impl(ctx: AnalysisContext) -> list[Provider]:
         "",
     )
 
+    consumer_proguard_rules = None
+    if prebuilt_jar_toolchain.consumer_proguard_rules_extractor:
+        consumer_proguard_rules = ctx.actions.declare_output("consumer_proguard_rules.pro", has_content_based_path = True)
+        ctx.actions.run(
+            cmd_args(
+                prebuilt_jar_toolchain.consumer_proguard_rules_extractor[RunInfo],
+                "--jar",
+                output,
+                "--output",
+                consumer_proguard_rules.as_output(),
+            ),
+            category = "extract_consumer_proguard_rules",
+        )
+
     library_output_classpath_entry = JavaClasspathEntry(
         full_library = output,
         abi = abi or output,
@@ -83,6 +97,7 @@ def prebuilt_jar_impl(ctx: AnalysisContext) -> list[Provider]:
             is_prebuilt_jar = True,
             gwt_module = gwt_output,
             sources_jar = ctx.attrs.source_jar,
+            proguard_config = consumer_proguard_rules,
         )
     )
 

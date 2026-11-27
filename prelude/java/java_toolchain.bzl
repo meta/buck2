@@ -128,6 +128,9 @@ PrebuiltJarToolchainInfo = provider(
     doc = "prebuilt_jar toolchain info",
     fields = {
         "class_abi_generator": provider_field(typing.Any, default = None),
+        # Tool that extracts the ProGuard consumer rules a jar ships (META-INF/proguard,
+        # META-INF/com.android.tools/proguard) so that release builds apply them. Unset: none.
+        "consumer_proguard_rules_extractor": provider_field(typing.Any, default = None),
         "cp_snapshot_generator": provider_field(typing.Any, default = None),
         "global_code_config": provider_field(typing.Any, default = None),
         "is_bootstrap_toolchain": provider_field(typing.Any, default = None),

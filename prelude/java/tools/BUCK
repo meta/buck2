@@ -33,6 +33,12 @@ prelude.python_bootstrap_binary(
 )
 
 prelude.python_bootstrap_binary(
+    name = "extract_proguard_rules",
+    main = "extract_proguard_rules.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
     name = "merge_class_to_source_maps",
     main = "merge_class_to_source_maps.py",
     visibility = ["PUBLIC"],
@@ -108,6 +114,15 @@ prelude.python_library(
         "utils.py",
     ],
     typing = True,
+)
+
+prelude.python_test(
+    name = "test_extract_proguard_rules",
+    srcs = [
+        "extract_proguard_rules.py",
+        "tests/test_extract_proguard_rules.py",
+    ],
+    base_module = "",
 )
 
 prelude.python_test(

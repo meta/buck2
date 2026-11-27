@@ -1,0 +1,9 @@
+oncall("build_infra")
+
+android_library(
+    name = "nativegreeting",
+    srcs = ["NativeGreeting.kt"],
+    language = "KOTLIN",
+    visibility = ["PUBLIC"],
+    deps = ["//app/src/main/cpp:greeting"],
+)

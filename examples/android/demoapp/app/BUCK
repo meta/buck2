@@ -102,3 +102,46 @@ android_instrumentation_test(
     name = "android_tests",
     apk = ":android_tests_apk",
 )
+
+# The app with native code: needs the Android NDK, set with `-c android.ndk_path=<NDK>`
+# or in `.buckconfig`. `cpu_filters` are the ABIs, as `abiFilters` in Gradle.
+android_binary(
+    name = "demoapp_native",
+    cpu_filters = [
+        "arm64",
+        "x86_64",
+    ],
+    keystore = ":debug",
+    manifest_skeleton = "src/main/AndroidManifest.xml",
+    use_split_dex = True,
+    deps = [
+        ":res",
+        "//app/src/main/java/com/facebook/demoapp/nativegreeting:nativegreeting",
+        "//app/src/main/java/com/facebook/demoapp/ui:ui",
+    ],
+)
+
+android_library(
+    name = "native_tests_lib",
+    srcs = glob(["src/androidTestNative/**/*.kt"]),
+    language = "KOTLIN",
+    deps = [
+        "//app/libs/junit/junit:junit",
+        "//app/src/main/java/com/facebook/demoapp/nativegreeting:nativegreeting",
+    ],
+)
+
+android_instrumentation_apk(
+    name = "native_tests_apk",
+    apk = ":demoapp_native",
+    manifest = "src/androidTest/AndroidManifest.xml",
+    deps = [
+        ":native_tests_lib",
+        "//app/libs/androidx/test/runner:runner",
+    ],
+)
+
+android_instrumentation_test(
+    name = "native_tests",
+    apk = ":native_tests_apk",
+)

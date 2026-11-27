@@ -1,0 +1,10 @@
+oncall("build_infra")
+
+# Native code for Android, as `externalNativeBuild` in Gradle. It builds with the
+# NDK at `[android] ndk_path`, once for each CPU in the app's `cpu_filters`.
+cxx_library(
+    name = "greeting",
+    srcs = ["greeting.cpp"],
+    soname = "libgreeting.so",
+    visibility = ["PUBLIC"],
+)

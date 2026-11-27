@@ -78,21 +78,25 @@ android_library(
     srcs = glob(["src/androidTest/**/*.kt"]),
     language = "KOTLIN",
     deps = [
-        "//app/src/main/java/com/facebook/demoapp/ui:ui",
+        "//app/libs/androidx/test/monitor:monitor",
+        "//app/libs/junit/junit:junit",
     ],
 )
 
-android_binary(
+# The test APK, as `src/androidTest` in Gradle: it holds the tests and the test
+# runner, and runs against `:demoapp_debug`, whose classes it leaves out.
+android_instrumentation_apk(
     name = "android_tests_apk",
-    keystore = ":debug",
-    manifest_skeleton = "src/main/AndroidManifest.xml",
-    use_split_dex = True,
+    apk = ":demoapp_debug",
+    manifest = "src/androidTest/AndroidManifest.xml",
     deps = [
         ":android_tests_lib",
+        "//app/libs/androidx/test/runner:runner",
     ],
 )
 
-# TODO Fix instrumentation test
+# `buck2 run //app:android_tests` installs both APKs on the device or emulator
+# that `adb` reaches and runs the tests there.
 android_instrumentation_test(
     name = "android_tests",
     apk = ":android_tests_apk",

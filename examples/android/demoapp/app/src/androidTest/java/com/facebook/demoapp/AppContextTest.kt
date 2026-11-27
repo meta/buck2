@@ -8,4 +8,16 @@
  * above-listed licenses.
  */
 
-class DummyInstrumentedTest {}
+package com.facebook.demoapp
+
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class AppContextTest {
+  @Test
+  fun targetContextIsTheApp() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    assertEquals("com.facebook.demoapp", context.packageName)
+  }
+}

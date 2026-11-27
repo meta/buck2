@@ -22,6 +22,13 @@ modules. Two parts are specific to this project:
 `model.json` holds the modules, their dependencies and their compiler options.
 `pins.json` holds the hashes of the jars.
 
+`.buckconfig` sets `[buck2] persistent_workers_across_commands = true`, so the
+JVM that compiles the Kotlin modules stays up between builds and a rebuild skips
+its startup and warm-up. On a 174-core Linux machine, a rebuild of all 102
+modules takes 46 seconds instead of 65, and a rebuild after an edit to one
+module 3 seconds instead of 18. The worker then holds 8 to 9.5 GiB until it has
+been idle for 15 minutes. Buck2 releases before the setting ignore it.
+
 ## Requirements
 
 - JDK 21 or later, with `java` and `javac` on `PATH`

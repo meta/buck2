@@ -87,6 +87,12 @@ compiles every Kotlin target of a build, so the compiles share its startup and
 its JIT-compiled compiler. `[build] use_persistent_workers = false` gives each
 compile a JVM of its own instead.
 
+The worker stops when the build command ends, so the next command starts a new
+JVM. With `[buck2] persistent_workers_across_commands = true` it serves later
+commands too, until it has gone `[buck2] persistent_worker_idle_timeout_s`
+seconds (900 by default) without a compile. An idle worker keeps its memory:
+8 to 9.5 GiB after building the Kotlin compiler.
+
 ## Class ABIs
 
 A target with class ABIs, the default, gets its ABI JAR from JetBrains'

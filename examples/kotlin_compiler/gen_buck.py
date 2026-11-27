@@ -497,6 +497,9 @@ BUCKCONFIG = """[cells]
 [project]
   ignore = .git, {prefix}.git
 
+[buck2]
+  persistent_workers_across_commands = true
+
 [kotlin]
   kotlin_version = {kotlin_version}
 """

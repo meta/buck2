@@ -882,6 +882,29 @@ public class MiniAaptTest {
   }
 
   @Test
+  public void ignoresBarePublicTag() throws IOException, ResourceParseException {
+    // AGP's idiom for "every resource of this library is private": a <public /> with no attributes.
+    ImmutableList<String> lines =
+        ImmutableList.<String>builder()
+            .add(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+                "<resources>",
+                "<public />",
+                "</resources>")
+            .build();
+
+    ProjectFilesystemUtils.writeLinesToPath(tmpFolder.getRoot(), lines, Paths.get("public.xml"));
+
+    MiniAapt aapt = new MiniAapt(ImmutableSet.of());
+
+    assertEquals(
+        ImmutableSet.of(),
+        aapt.processValuesFile(
+            ProjectFilesystemUtils.getPathForRelativePath(
+                tmpFolder.getRoot(), Paths.get("public.xml"))));
+  }
+
+  @Test
   public void invalidPublicResourceWithNoName() throws IOException, ResourceParseException {
     thrown.expect(ResourceParseException.class);
     thrown.expectMessage(

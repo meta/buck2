@@ -332,6 +332,10 @@ public class MiniAapt {
           resourceType = Objects.requireNonNull(typeNode.getNodeValue());
         } else if (resourceType.equals(PUBLIC_TAG)) {
           Node nameAttribute = Objects.requireNonNull(node.getAttributes()).getNamedItem("name");
+          if (nameAttribute == null && node.getAttributes().getLength() == 0) {
+            // A bare `<public />` marks every resource of the library private and declares none.
+            continue;
+          }
           if (nameAttribute == null
               || Objects.requireNonNull(nameAttribute.getNodeValue()).isEmpty()) {
             throw new ResourceParseException(

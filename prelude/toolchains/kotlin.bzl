@@ -8,6 +8,7 @@
 
 load("@prelude//java:java_toolchain.bzl", "DepFiles")
 load("@prelude//kotlin:kotlin_toolchain.bzl", "KotlinToolchainInfo", "KotlincProtocol")
+load("@prelude//toolchains/android/tools:kotlin_utils.bzl", "kotlin_version")
 
 def _typechecker_enabled():
     # Buckconfig gate for the typecheck sub-target. Tools attach
@@ -33,7 +34,7 @@ def kotlincd_toolchain(name, java_binary_for_kotlincd = None, visibility = None)
         dep_files = "none",
         kapt_base64_encoder = "prelude//kotlin/tools/kapt_base64_encoder:kapt_base64_encoder",
         kotlin_stdlib = "prelude//toolchains/android/third-party:kotlin-stdlib",
-        kotlin_version = "2.2.0",
+        kotlin_version = kotlin_version(),
         kotlin_home_libraries = [
             "prelude//toolchains/android/third-party:kotlin-annotations",
             "prelude//toolchains/android/third-party:kotlin-build-tools-impl",
@@ -60,7 +61,7 @@ def system_kotlin_bootstrap_toolchain(name, visibility = None):
         dep_files = "none",
         kapt_base64_encoder = "prelude//kotlin/tools/kapt_base64_encoder:kapt_base64_encoder",
         kotlin_stdlib = "prelude//toolchains/android/third-party:kotlin-stdlib",
-        kotlin_version = read_config("kotlin", "kotlin_version", "2.0.0"),
+        kotlin_version = kotlin_version(),
         kotlinc = "prelude//toolchains/android/third-party:kotlin-compiler-binary",
         kotlinc_protocol = "classic",
         visibility = visibility,

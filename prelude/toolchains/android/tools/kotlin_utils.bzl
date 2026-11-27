@@ -6,7 +6,15 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-"""Version-gated Kotlin compiler options for Android toolchain targets."""
+"""The Kotlin compiler version, and compiler options gated on it, for Android toolchain targets."""
+
+# The version of the Kotlin compiler jars in `prelude//toolchains/android/third-party`. Changing it
+# needs the sha1 of every jar there that uses it.
+DEFAULT_KOTLIN_VERSION = "2.3.21"
+
+def kotlin_version() -> str:
+    """The Kotlin compiler version: `kotlin.kotlin_version`, else `DEFAULT_KOTLIN_VERSION`."""
+    return read_root_config("kotlin", "kotlin_version", DEFAULT_KOTLIN_VERSION)
 
 def _leading_int(part: str) -> int:
     digits = ""
@@ -19,7 +27,7 @@ def _leading_int(part: str) -> int:
 def kotlin_version_at_least(major: int, minor: int, version: str | None = None) -> bool:
     """Compare the actual compiler's major/minor, ignoring prerelease suffixes."""
     if version == None:
-        version = read_root_config("kotlin", "kotlin_version", "2.3.21")
+        version = kotlin_version()
     parts = version.split(".")
     if len(parts) < 2:
         return False

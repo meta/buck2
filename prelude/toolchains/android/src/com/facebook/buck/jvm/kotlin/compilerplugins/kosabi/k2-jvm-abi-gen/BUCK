@@ -1,5 +1,6 @@
 # @oss-disable[end= ]: load("@fbsource//tools/build_defs:kotlin_version.bzl", "toolchain_kotlin_version")
 load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_binary", "buck_kotlin_library")
+load("@prelude//toolchains/android/tools:kotlin_utils.bzl", "kotlin_version") # @oss-enable
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("android_devxx")
@@ -10,7 +11,7 @@ source_listing()
 # toolchain selects the compiler jar from. 2.3 uses the minor-version bucket
 # (compilercompat/2.3.0); newer compilers use full-version buckets.
 # @oss-disable[end= ]: _KOTLIN_FULL_VERSION = toolchain_kotlin_version()
-_KOTLIN_FULL_VERSION = read_root_config("kotlin", "kotlin_version", "2.3.21") # @oss-enable
+_KOTLIN_FULL_VERSION = kotlin_version() # @oss-enable
 
 _KOTLIN_VERSION_PARTS = _KOTLIN_FULL_VERSION.split(".")
 

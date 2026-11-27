@@ -98,10 +98,10 @@ def get_aapt2_link(
             aapt2_command.add(["--target-sdk-version", str(manifest_entries_target_sdk)])
         manifest_entries_version_code = manifest_entries.get("version_code", None)
         if manifest_entries_version_code != None:
-            aapt2_command.add(["--version-code", manifest_entries_version_code])
+            aapt2_command.add(["--version-code", str(manifest_entries_version_code)])
         manifest_entries_version_name = manifest_entries.get("version_name", None)
         if manifest_entries_version_name != None:
-            aapt2_command.add(["--version-name", manifest_entries_version_name])
+            aapt2_command.add(["--version-name", str(manifest_entries_version_name)])
         manifest_entries_debug_mode = str(manifest_entries.get("debug_mode", "False")).lower() == "true"
         if manifest_entries_debug_mode:
             aapt2_command.add(["--debug-mode"])

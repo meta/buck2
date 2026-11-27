@@ -1,0 +1,90 @@
+load("@prelude//toolchains/android/tools/build_rules:fb_native.bzl", "fb_native")
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("android_devxx")
+
+source_listing()
+
+# ProGuard and the Android default ProGuard configs for the open-source demo toolchain
+# (`prelude//toolchains:android.bzl`), used by `android_binary` release builds that set
+# `proguard_config` or `android_sdk_proguard_config`.
+#
+# Android SDKs no longer ship `tools/proguard` (the files there are unmaintained since the Android
+# Gradle Plugin 2.2), so ProGuard comes from Maven, built into one runnable jar, and the configs are
+# composed from the Android Gradle Plugin jar the way the plugin composes them.
+
+_MAVEN_JARS = {
+    "gson": ("mvn:com.google.code.gson:gson:jar:2.10.1", "b3add478d4382b78ea20b1671390a858002feb6c"),
+    "json": ("mvn:org.json:json:jar:20231013", "e22e0c040fe16f04ffdb85d851d77b07fc05ea52"),
+    "kotlin-metadata-jvm": ("mvn:org.jetbrains.kotlin:kotlin-metadata-jvm:jar:2.2.0", "5f061327c06ab653e26e022c28e6d431d29205b9"),
+    "log4j-api": ("mvn:org.apache.logging.log4j:log4j-api:jar:2.24.2", "daf49ee71f2664c3ff57412e4b43061e61a28596"),
+    "log4j-core": ("mvn:org.apache.logging.log4j:log4j-core:jar:2.24.2", "9ba3a51ed9d80254b382dea521467de51797ac04"),
+    "proguard-base": ("mvn:com.guardsquare:proguard-base:jar:7.8.1", "48da67f14284ef7e83f83ca8b6b21b269982be1b"),
+    "proguard-core": ("mvn:com.guardsquare:proguard-core:jar:9.2.0", "64a5cfbe971a6514aff79d1a410a5fc4f4802a7a"),
+}
+
+[
+    fb_native.remote_file(
+        name = name + "_jar",
+        out = name + ".jar",
+        sha1 = sha1,
+        url = url,
+    )
+    for name, (url, sha1) in _MAVEN_JARS.items()
+]
+
+[
+    fb_native.prebuilt_jar(
+        name = name,
+        binary_jar = ":" + name + "_jar",
+    )
+    for name in _MAVEN_JARS
+]
+
+# `run_proguard` runs `java -jar <proguard_jar>`, so the toolchain needs one jar with every dependency.
+fb_native.java_binary(
+    name = "proguard",
+    main_class = "proguard.ProGuard",
+    visibility = ["PUBLIC"],
+    deps = [":" + name for name in _MAVEN_JARS] + ["prelude//toolchains/android/third-party:kotlin-stdlib"],
+)
+
+fb_native.remote_file(
+    name = "android-gradle-plugin_jar",
+    out = "gradle.jar",
+    sha1 = "626f29f001c7f2e2d072ee092f7df610d416c2cd",
+    url = "mvn:https://maven.google.com:com.android.tools.build:gradle:jar:9.0.0",
+)
+
+fb_native.export_file(
+    name = "buck_rules.pro",
+)
+
+fb_native.export_file(
+    name = "proguard_optimizations.pro",
+)
+
+# The Android Gradle Plugin writes `proguard-android.txt` as header + `-dontoptimize` + common rules,
+# and `proguard-android-optimize.txt` as header + optimization flags + common rules.
+# Both end with `buck_rules.pro`, for what differs when ProGuard runs in Buck; the optimized config
+# also gets `proguard_optimizations.pro`.
+fb_native.genrule(
+    name = "proguard_config",
+    out = "proguard-android.txt",
+    cmd = "unzip -p $(location :android-gradle-plugin_jar) com/android/build/gradle/proguard-header.txt > $OUT && "
+    + "printf '%s\\n' -dontoptimize >> $OUT && "
+    + "unzip -p $(location :android-gradle-plugin_jar) com/android/build/gradle/proguard-common.txt >> $OUT && "
+    + "cat $(location :buck_rules.pro) >> $OUT",
+    visibility = ["PUBLIC"],
+)
+
+fb_native.genrule(
+    name = "optimized_proguard_config",
+    out = "proguard-android-optimize.txt",
+    cmd = "unzip -p $(location :android-gradle-plugin_jar) com/android/build/gradle/proguard-header.txt > $OUT && "
+    + "unzip -p $(location :android-gradle-plugin_jar) com/android/build/gradle/proguard-optimizations.txt >> $OUT && "
+    + "cat $(location :proguard_optimizations.pro) >> $OUT && "
+    + "unzip -p $(location :android-gradle-plugin_jar) com/android/build/gradle/proguard-common.txt >> $OUT && "
+    + "cat $(location :buck_rules.pro) >> $OUT",
+    visibility = ["PUBLIC"],
+)

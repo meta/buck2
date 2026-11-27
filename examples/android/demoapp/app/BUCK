@@ -20,6 +20,21 @@ android_binary(
     ],
 )
 
+# Release build: ProGuard with the Android default optimized config (shrinking, optimization,
+# obfuscation), as `minifyEnabled true` with `proguard-android-optimize.txt` in Gradle.
+android_binary(
+    name = "demoapp_release",
+    android_sdk_proguard_config = "optimized",
+    keystore = ":debug",
+    manifest_skeleton = "src/main/AndroidManifest.xml",
+    package_type = "release",
+    use_split_dex = True,
+    deps = [
+        ":res",
+        "//app/src/main/java/com/facebook/demoapp/ui:ui",
+    ],
+)
+
 android_resource(
     name = "res",
     package = "com.facebook.demoapp",

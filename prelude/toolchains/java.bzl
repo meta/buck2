@@ -200,6 +200,7 @@ def _java_toolchain_impl(ctx):
             track_class_usage = ctx.attrs.track_class_usage,
             zip_scrubber = RunInfo(cmd_args([ctx.attrs.java[RunInfo], "-jar", ctx.attrs.zip_scrubber])),
             nullsafe = None,
+            proguard_max_heap_size = ctx.attrs.proguard_max_heap_size,
             nullsafe_extra_args = [],
             nullsafe_signatures = None,
             semanticdb_javac = None,
@@ -260,6 +261,8 @@ _java_toolchain = rule(
             default = "prelude//java/tools:merge_class_to_source_maps",
             providers = [RunInfo],
         ),
+        # `run_proguard` passes `-Xmx<value>`; same key and default as Meta's toolchain.
+        "proguard_max_heap_size": attrs.string(default = read_root_config("tools", "proguard-max-heap-size", "1024M")),
         "source_level": attrs.string(default = "8"),
         "target_level": attrs.string(default = "8"),
         "track_class_usage": attrs.bool(default = False),

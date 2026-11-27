@@ -159,11 +159,12 @@ def system_android_toolchain(name, android_sdk_tools_target, jdk_system_image, *
     kwargs["mini_aapt"] = "prelude//toolchains/android/src/com/facebook/buck/android/aapt:mini_aapt_binary"
     kwargs["multi_dex_command"] = "prelude//toolchains/android/src/com/facebook/buck/android/dex:multi_dex_binary"
     kwargs["native_libs_as_assets_metadata"] = "prelude//android/tools:native_libs_as_assets_metadata"
-    kwargs["optimized_proguard_config"] = "{}[optimized_proguard_config]".format(android_sdk_tools_target)
+    # Android SDKs no longer ship tools/proguard: ProGuard and its default configs come from Maven.
+    kwargs["optimized_proguard_config"] = "prelude//toolchains/android/third-party/proguard:optimized_proguard_config"
     kwargs["package_meta_inf_version_files"] = False
     kwargs["package_strings_as_assets"] = "prelude//toolchains/android/src/com/facebook/buck/android/resources/strings:package_strings_as_assets_binary"
-    kwargs["proguard_config"] = "{}[proguard_config]".format(android_sdk_tools_target)
-    kwargs["proguard_jar"] = "{}[proguard.jar]".format(android_sdk_tools_target)
+    kwargs["proguard_config"] = "prelude//toolchains/android/third-party/proguard:proguard_config"
+    kwargs["proguard_jar"] = "prelude//toolchains/android/third-party/proguard:proguard"
     kwargs["r_dot_java_weight_factor"] = int(read_root_config("android", "r_dot_java_weight_factor", "8"))
     # @oss-disable[end= ]: kwargs["redex_native_class_names"] = "prelude//android/tools/meta_only:redex_native_class_names"
     kwargs["replace_application_id_placeholders"] = (

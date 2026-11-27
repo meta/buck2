@@ -23,6 +23,10 @@ def _default_output(dep):
     """The output of a tool dependency that is a file, such as a jar."""
     return dep[DefaultInfo].default_outputs[0] if dep else None
 
+# The same as `SHORT_LIVED_JVM_ARGS` in `toolchains/android/tools/build_rules.bzl`, for the tools
+# this toolchain runs once per target.
+_SHORT_LIVED_JVM_ARGS = ["-XX:+UseSerialGC", "-XX:TieredStopAtLevel=1"]
+
 _CP_SNAPSHOT_GENERATOR = "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/buildtools/snapshot:cp_snapshot_generator"
 _JAVACD_WORKER = "prelude//toolchains/android/src/com/facebook/buck/jvm/java/stepsbuilder/javacd/worker:javacd_grpc_worker_tool"
 _CLASS_ABI_GENERATOR = "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi:api-stubber"
@@ -195,14 +199,14 @@ def _java_toolchain_impl(ctx):
             javacd_jvm_args_target = [],
             javacd_main_class = ctx.attrs.javacd_main_class,
             javacd_worker = ctx.attrs.javacd_worker,
-            jar_builder = RunInfo(cmd_args([ctx.attrs.java[RunInfo], "-jar", _default_output(ctx.attrs.jar_builder)])),
+            jar_builder = RunInfo(cmd_args([ctx.attrs.java[RunInfo]] + _SHORT_LIVED_JVM_ARGS + ["-jar", _default_output(ctx.attrs.jar_builder)])),
             jlink = ctx.attrs.jlink,
             jmod = ctx.attrs.jmod,
             jrt_fs_jar = ctx.attrs.jrt_fs_jar,
             src_root_elements = [],
             src_root_prefixes = [],
             track_class_usage = ctx.attrs.track_class_usage,
-            zip_scrubber = RunInfo(cmd_args([ctx.attrs.java[RunInfo], "-jar", _default_output(ctx.attrs.zip_scrubber)])),
+            zip_scrubber = RunInfo(cmd_args([ctx.attrs.java[RunInfo]] + _SHORT_LIVED_JVM_ARGS + ["-jar", _default_output(ctx.attrs.zip_scrubber)])),
             nullsafe = None,
             proguard_max_heap_size = ctx.attrs.proguard_max_heap_size,
             nullsafe_extra_args = [],

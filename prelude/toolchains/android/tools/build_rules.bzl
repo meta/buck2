@@ -115,6 +115,8 @@ def buck_java_library(name, **kwargs):
     kwargs = _set_versioned_java_srcs(**kwargs)
     return fb_native.java_library(name = name, **kwargs)
 
+SHORT_LIVED_JVM_ARGS = ["-XX:+UseSerialGC", "-XX:TieredStopAtLevel=1"]
+
 def buck_java_binary(name, **kwargs):
     kwargs = _add_labels(**kwargs)
     kwargs = _set_buck2_java_toolchain(**kwargs)
@@ -123,6 +125,11 @@ def buck_java_binary(name, **kwargs):
     # Directs the VM to refrain from setting the file descriptor limit to the default maximum.
     # https://stackoverflow.com/a/16535804/5208808
     java_args += ["-XX:-MaxFDLimit", "-Xss2m"]
+
+    # Each run of these tools is a short-lived JVM, many at a time (d8 runs once per library):
+    # the serial collector and the C1 compiler spare them the GC and C2 threads that a JVM
+    # otherwise starts per core. The persistent workers do not use these arguments.
+    java_args += SHORT_LIVED_JVM_ARGS
     kwargs["java_args_for_run_info"] = java_args
     return fb_native.java_binary(name = name, **kwargs)
 

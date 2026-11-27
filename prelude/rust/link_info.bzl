@@ -599,7 +599,14 @@ RustCrateDeps = record(
     # The proc macros among `direct`, and those that the crates in `graph` depend on, as keys
     # into `get_available_proc_macros`.
     proc_macro_deps = field(list[TargetLabel]),
+    # The native link providers in `graph`, in link order, with one entry per label.
+    merged_link_infos = field(list[MergedLinkInfo]),
+    linkable_graphs = field(list[LinkableGraph]),
+    exported_deps = field(list[Dependency]),
 )
+
+def _inconsistent_link_deps(label: typing.Any, a: typing.Any, b: typing.Any):
+    fail("cannot depend on {} in multiple inconsistent ways:\n{}\n{}".format(label, a, b))
 
 def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], native: list[Dependency] = [], crate: Label | None = None) -> RustCrateDeps:
     """
@@ -634,7 +641,29 @@ def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], nativ
 
     seen = {crate_metadata(crate): crate.configured_target()} if crate else {}
     proc_macro_deps = {dep.dep.label.raw_target(): None for dep in direct if not isinstance(dep.info, RustLinkInfo)}
-    for node in graph.traverse():
+    merged_link_infos = {}
+    linkable_graphs = {}
+    exported_deps = {}
+    for node in graph.traverse(ordering = "postorder"):
+        for label, merged_link_info in node.merged_link_infos:
+            other = merged_link_infos.get(label)
+            if other == None:
+                merged_link_infos[label] = merged_link_info
+            elif other != merged_link_info:
+                _inconsistent_link_deps(label, other, merged_link_info)
+        for linkable_graph in node.linkable_graphs:
+            other = linkable_graphs.get(linkable_graph.label)
+            if other == None:
+                linkable_graphs[linkable_graph.label] = linkable_graph
+            elif other != linkable_graph:
+                _inconsistent_link_deps(linkable_graph.label, other, linkable_graph)
+        for exported_dep in node.exported_deps:
+            other = exported_deps.get(exported_dep.label)
+            if other == None:
+                exported_deps[exported_dep.label] = exported_dep
+            elif other != exported_dep:
+                _inconsistent_link_deps(exported_dep.label, other, exported_dep)
+
         dep = node.crate
         if dep == None:
             continue
@@ -654,6 +683,9 @@ def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], nativ
         direct = direct,
         graph = graph,
         proc_macro_deps = proc_macro_deps.keys(),
+        merged_link_infos = merged_link_infos.values(),
+        linkable_graphs = linkable_graphs.values(),
+        exported_deps = exported_deps.values(),
     )
 
 def crate_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> RustCrateDeps:
@@ -806,48 +838,6 @@ def inherited_rust_cxx_link_group_info(
         labels_to_links_map = labels_to_links.map,
         targets_consumed_by_link_groups = linked_link_groups.targets_consumed_by_link_groups,
         link_group_preferred_linkage = link_group_preferred_linkage,
-    )
-
-# The native link providers that reach a crate through its dependencies: those of its own native
-# dependencies, and everything in the `graph`s of its Rust dependencies.
-RustInheritedLinkDeps = record(
-    # In link order, with one entry per label.
-    merged_link_infos = field(list[MergedLinkInfo]),
-    linkable_graphs = field(list[LinkableGraph]),
-    exported_deps = field(list[Dependency]),
-)
-
-def _inconsistent_link_deps(label: typing.Any, a: typing.Any, b: typing.Any):
-    fail("cannot depend on {} in multiple inconsistent ways:\n{}\n{}".format(label, a, b))
-
-def inherited_link_deps(deps: RustCrateDeps) -> RustInheritedLinkDeps:
-    merged_link_infos = {}
-    linkable_graphs = {}
-    exported_deps = {}
-    for node in deps.graph.traverse(ordering = "postorder"):
-        for label, merged_link_info in node.merged_link_infos:
-            other = merged_link_infos.get(label)
-            if other == None:
-                merged_link_infos[label] = merged_link_info
-            elif other != merged_link_info:
-                _inconsistent_link_deps(label, other, merged_link_info)
-        for linkable_graph in node.linkable_graphs:
-            other = linkable_graphs.get(linkable_graph.label)
-            if other == None:
-                linkable_graphs[linkable_graph.label] = linkable_graph
-            elif other != linkable_graph:
-                _inconsistent_link_deps(linkable_graph.label, other, linkable_graph)
-        for dep in node.exported_deps:
-            other = exported_deps.get(dep.label)
-            if other == None:
-                exported_deps[dep.label] = dep
-            elif other != dep:
-                _inconsistent_link_deps(dep.label, other, dep)
-
-    return RustInheritedLinkDeps(
-        merged_link_infos = merged_link_infos.values(),
-        linkable_graphs = linkable_graphs.values(),
-        exported_deps = exported_deps.values(),
     )
 
 def inherited_shared_libs(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[SharedLibraryInfo]:

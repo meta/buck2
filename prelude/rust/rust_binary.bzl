@@ -391,7 +391,7 @@ def _rust_binary_common(
 
     rust_cxx_link_group_info = inherited_rust_cxx_link_group_info(
         ctx,
-        compile_ctx.inherited_link_deps.linkable_graphs,
+        compile_ctx.crate_deps.linkable_graphs,
         link_strategy = link_strategy,
         transformation_spec_context = transformation_spec_context,
     )
@@ -444,7 +444,7 @@ def _rust_binary_common(
         # Include all transitive runtime shared library deps in a symlink tree.
         # Only collect libs that would actually be built as shared libraries
         # given the current link strategy, matching cxx_binary behavior.
-        linkable_graph = create_linkable_graph(ctx, deps = compile_ctx.inherited_link_deps.linkable_graphs)
+        linkable_graph = create_linkable_graph(ctx, deps = compile_ctx.crate_deps.linkable_graphs)
         shlib_deps = get_runtime_shared_libraries(ctx.actions, linkable_graph, link_strategy)
 
     shlib_info = merge_shared_libraries(ctx.actions, deps = shlib_deps)

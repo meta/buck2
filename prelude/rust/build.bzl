@@ -140,7 +140,6 @@ load(
     "executable_shared_lib_arguments_from_shared_library_info",
     "get_available_proc_macros",
     "graph_crates",
-    "inherited_link_deps",
     "inherited_rust_external_debug_info",
     "inherited_shared_libs",
     "normalize_crate",
@@ -377,10 +376,8 @@ def generate_rustdoc_test(
     )
     if ctx.attrs.doc_deps or ctx.attrs.doc_named_deps:
         doc_crate_deps = crate_deps(ctx, doc_dep_ctx)
-        doc_merged_link_infos = inherited_link_deps(doc_crate_deps).merged_link_infos
     else:
         doc_crate_deps = compile_ctx.crate_deps
-        doc_merged_link_infos = compile_ctx.inherited_link_deps.merged_link_infos
 
     resources = create_resource_db(
         ctx = ctx,
@@ -447,11 +444,11 @@ def generate_rustdoc_test(
                         ctx,
                         compile_ctx.cxx_toolchain_info.pic_behavior,
                         link_infos,
-                        deps = doc_merged_link_infos,
+                        deps = doc_crate_deps.merged_link_infos,
                         preferred_linkage = Linkage("static"),
                     )
                 ]
-                + doc_merged_link_infos,
+                + doc_crate_deps.merged_link_infos,
                 params.dep_link_strategy,
                 prefer_stripped = False,
                 transformation_spec_context = None,
@@ -2490,7 +2487,7 @@ def get_inherited_link_args(
     else:
         inherited_link_args = apple_build_link_args_with_deduped_flags(
             ctx,
-            deps_merged_link_infos = compile_ctx.inherited_link_deps.merged_link_infos,
+            deps_merged_link_infos = compile_ctx.crate_deps.merged_link_infos,
             frameworks_linkable = None,
             link_strategy = dep_link_style,
             swiftmodule_linkable = None,
@@ -2502,7 +2499,7 @@ def get_inherited_link_args(
 
 def inherited_external_debug_info(ctx: AnalysisContext, compile_ctx: CompileContext, dep_link_strategy: LinkStrategy) -> ArtifactTSet:
     inherited_debug_infos = []
-    for d in compile_ctx.inherited_link_deps.merged_link_infos:
+    for d in compile_ctx.crate_deps.merged_link_infos:
         native_debug_info = d._external_debug_info.get(dep_link_strategy)
         if native_debug_info:
             inherited_debug_infos.append(native_debug_info)

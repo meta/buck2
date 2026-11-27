@@ -179,7 +179,7 @@ def rust_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
     rust_archive = rust_link.product.output
     deps = [dep.dep for dep in resolve_deps(ctx, compile_ctx.dep_ctx)]
     python_deps = [dep for dep in deps if PythonLibraryInfo in dep]
-    inherited_graphs = compile_ctx.inherited_link_deps.linkable_graphs
+    inherited_graphs = compile_ctx.crate_deps.linkable_graphs
 
     # A bundled staticlib contains the Rust dependency closure. Extract only
     # referenced members so multiple extensions can share that closure.
@@ -335,7 +335,7 @@ def rust_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
             pic_behavior = cxx_toolchain.pic_behavior,
             link_infos = link_infos,
             preferred_linkage = Linkage("static"),
-            deps = compile_ctx.inherited_link_deps.merged_link_infos,
+            deps = compile_ctx.crate_deps.merged_link_infos,
         ),
         shared_library_info = merge_shared_libraries(
             actions = ctx.actions,

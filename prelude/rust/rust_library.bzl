@@ -909,7 +909,7 @@ def _advanced_unstable_link_providers(
 
     dep_ctx = compile_ctx.dep_ctx
 
-    inherited = compile_ctx.inherited_link_deps
+    inherited = compile_ctx.crate_deps
     inherited_graphs = inherited.linkable_graphs
     inherited_exported_deps = inherited.exported_deps
     inherited_shlibs = inherited_shared_libs(ctx, dep_ctx)
@@ -1071,9 +1071,9 @@ def _native_link_providers(
     inherited_shlibs = [rust_link_info.shared_libs]
     inherited_third_party = rust_link_info.third_party_build_info
 
-    inherited_link_infos = compile_ctx.inherited_link_deps.merged_link_infos
-    inherited_link_graphs = compile_ctx.inherited_link_deps.linkable_graphs
-    inherited_exported_deps = compile_ctx.inherited_link_deps.exported_deps
+    inherited_link_infos = compile_ctx.crate_deps.merged_link_infos
+    inherited_link_graphs = compile_ctx.crate_deps.linkable_graphs
+    inherited_exported_deps = compile_ctx.crate_deps.exported_deps
 
     providers = []
 

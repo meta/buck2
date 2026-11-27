@@ -28,6 +28,7 @@ load(
     ":link_info.bzl",
     "RustCrateDeps",
     "RustInheritedLinkDeps",
+    "RustLinkInfo",
     "crate_deps",
     "inherited_link_deps",
     "resolve_deps",
@@ -138,7 +139,7 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
     transitive_srcs = ctx.actions.tset(
         RustSourcesTSet,
         value = srcs,
-        children = [d.dep[RustSources].tset for d in resolve_deps(ctx, dep_ctx) if RustSources in d.dep],
+        children = [d.dep[RustSources].tset for d in resolve_deps(ctx, dep_ctx) if RustLinkInfo in d.dep and RustSources in d.dep],
     )
 
     # When we pass explicit sysroot deps, we need to override the default

@@ -15,9 +15,15 @@ RustSourcesTSet = transitive_set(
     },
 )
 
-# Sources of all transitive Rust dependencies. This is required for compilation in order to
-# guarantee consistent crate hashes between local and remote actions.
-# See https://github.com/rust-lang/rust/issues/153898
+# The sources of a crate and of its transitive library dependencies.
+#
+# They are inputs of every compile that depends on the crate, for crate hashes that are the same
+# wherever the compile runs (https://github.com/rust-lang/rust/issues/153898): rustc desugars a
+# format string differently depending on whether it can read the string back from the file it is
+# in, and a `macro_rules!` macro of a dependency expands to strings in that dependency's files.
+# A proc macro has no way to expand to a string that reads back from its own files, or from
+# those of what it is built from, so those are not in here. `test_rust_build_reproducibility`
+# covers both kinds of macro.
 RustSources = provider(
     fields = {
         "tset": RustSourcesTSet,

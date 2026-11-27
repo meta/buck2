@@ -130,6 +130,7 @@ load(
     "RustCrateDeps",  # @unused Used as a type
     "RustCrateGraph",  # @unused Used as a type
     "RustCxxLinkGroupInfo",  # @unused Used as a type
+    "RustLinkInfo",
     "RustProcMacroArchInfo",
     "RustProcMacroInfo",
     "attr_crate",
@@ -386,7 +387,7 @@ def generate_rustdoc_test(
     transitive_srcs = ctx.actions.tset(
         RustSourcesTSet,
         value = compile_ctx.symlinked_srcs,
-        children = [d.dep[RustSources].tset for d in resolve_deps(ctx, doc_dep_ctx) if RustSources in d.dep],
+        children = [d.dep[RustSources].tset for d in resolve_deps(ctx, doc_dep_ctx) if RustLinkInfo in d.dep and RustSources in d.dep],
     )
 
     resources = create_resource_db(

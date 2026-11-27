@@ -1,0 +1,36 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+load("@prelude//rust:cargo_buildscript.bzl", "buildscript_run")
+
+# Regression test for `OPT_LEVEL` in the environment of a build script: Cargo
+# always sets it, and cc-rs fails without it.
+
+oncall("build_infra")
+
+prelude = native
+
+prelude.rust_binary(
+    name = "build-script-build",
+    srcs = ["build.rs"],
+    crate_root = "build.rs",
+)
+
+buildscript_run(
+    name = "build-script-run",
+    package_name = "opt_level",
+    buildscript_rule = ":build-script-build",
+    local_manifest_dir = ".",
+    version = "0.1.0",
+)
+
+py_assertion(
+    name = "check",
+    script = """
+import re
+import sys
+from pathlib import Path
+
+flags = Path(sys.argv[1]).read_text().splitlines()
+assert any(re.fullmatch('--cfg=opt_level="[0-3sz]"', flag) for flag in flags), flags
+""",
+    script_args = ["$(location :build-script-run[rustc_flags])"],
+)

@@ -139,26 +139,6 @@ RustArtifact = record(
     crate = field(CrateName),
 )
 
-def _project_artifacts(dep: RustArtifact) -> (Artifact, Artifact | None):
-    return (dep.artifact, dep.crate.dynamic)
-
-def _project_as_dynamic_name_args(dep: RustArtifact) -> Artifact | cmd_args:
-    return dep.crate.dynamic or cmd_args()
-
-def _project_artifacts_args(dep: RustArtifact) -> Artifact:
-    return dep.artifact
-
-# Set of RustArtifact.
-TransitiveDeps = transitive_set(
-    args_projections = {
-        "artifacts_args": _project_artifacts_args,
-        "dynamic_name_args": _project_as_dynamic_name_args,
-    },
-    json_projections = {
-        "artifacts": _project_artifacts,
-    },
-)
-
 # A proc macro, in the places where a library would provide `RustLinkInfo`. rustc loads proc
 # macros rather than linking them into their dependents, so this carries none of a library's link
 # providers, and there is no per-link-strategy information because proc macros are always built
@@ -167,14 +147,11 @@ RustProcMacroInfo = provider(
     fields = {
         "crate": CrateName,
         "dylib": Artifact,
-        # `dylib`, wrapped in a 1-element transitive set.
-        "singleton_tset": TransitiveDeps,
     },
 )
 
 RustProcMacroArchVariant = record(
     dylib = field(Artifact),
-    singleton_tset = field(TransitiveDeps),
 )
 
 RustProcMacroArchInfo = provider(
@@ -192,10 +169,6 @@ RustLinkStrategyInfo = record(
     # (rustc's `-Zembed-metadata=no`). rustc needs it passed as a second
     # `--extern` for the same crate.
     split_metadata = field(dict[MetadataKind, Artifact] | None, None),
-    # Same as `outputs`, but wrapped in a 1-element transitive set.
-    singleton_tset = field(dict[MetadataKind, TransitiveDeps]),
-    # Transitive dependencies which are relevant to the consumer, other than proc macros.
-    transitive_deps = field(dict[MetadataKind, TransitiveDeps]),
     # Rustc-generated debug info which is referenced -- but not included -- by the
     # linkable rlib. Does not include external debug info from non-Rust native deps.
     #
@@ -211,14 +184,63 @@ RustCrate = record(
     metadata = field(str),
     # The target it is built from.
     label = field(ConfiguredTargetLabel),
+    crate = field(CrateName),
+    # `RustLinkStrategyInfo.outputs` of each link strategy.
+    outputs = field(dict[LinkStrategy, dict[MetadataKind, Artifact]]),
     # The proc macros among the crate's dependencies, as keys into `get_available_proc_macros`.
     # A dependent has to load them too, and each dependent gets them from its own plugins.
     proc_macro_deps = field(list[TargetLabel]),
 )
 
+# The projections of `RustCrateGraph` for one choice of each crate's artifact.
+CrateArtifactsProjection = record(
+    # Projects a crate to the artifact.
+    args = field(str),
+    # Projects a crate to what `transitive_dependency_symlinks.py` needs to know about the
+    # artifact, or to `null` if the crate has no such artifact.
+    json = field(str),
+)
+
+def _crate_artifacts_projection(link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> CrateArtifactsProjection:
+    name = "{}-{}".format(link_strategy.value, metadata_kind.value)
+    return CrateArtifactsProjection(args = name, json = name + "-json")
+
+def _project_artifact_args(link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> typing.Callable[[RustCrate], list[Artifact]]:
+    def project(crate: RustCrate) -> list[Artifact]:
+        artifact = crate.outputs[link_strategy].get(metadata_kind)
+        return [artifact] if artifact else []
+
+    return project
+
+def _project_artifact_json(link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> typing.Callable[[RustCrate], (Artifact, Artifact | None) | None]:
+    def project(crate: RustCrate) -> (Artifact, Artifact | None) | None:
+        artifact = crate.outputs[link_strategy].get(metadata_kind)
+        return (artifact, crate.crate.dynamic) if artifact else None
+
+    return project
+
+def _project_dynamic_name_args(crate: RustCrate) -> Artifact | cmd_args:
+    return crate.crate.dynamic or cmd_args()
+
 # Set of RustCrate. Proc macros are not nodes: rustc loads them rather than linking them, and
 # they have no transitive dependencies that matter to a dependent.
-RustCrateGraph = transitive_set()
+#
+# A projection cannot be given the link strategy and metadata kind that a dependent wants its
+# dependencies' artifacts in, so there is a pair of projections for each combination. Get their
+# names from `crate_artifacts_projection`.
+RustCrateGraph = transitive_set(
+    args_projections = {
+        _crate_artifacts_projection(link_strategy, metadata_kind).args: _project_artifact_args(link_strategy, metadata_kind)
+        for link_strategy in LinkStrategy
+        for metadata_kind in MetadataKind
+    }
+    | {"dynamic_names": _project_dynamic_name_args},
+    json_projections = {
+        _crate_artifacts_projection(link_strategy, metadata_kind).json: _project_artifact_json(link_strategy, metadata_kind)
+        for link_strategy in LinkStrategy
+        for metadata_kind in MetadataKind
+    },
+)
 
 # The native link providers that one node of a `RustLinkGraph` gives to every Rust crate that
 # reaches it.
@@ -248,7 +270,8 @@ RustLinkInfo = provider(
         "crate": CrateName,
         # strategies - information about each LinkStrategy as RustLinkStrategyInfo
         "strategies": dict[LinkStrategy, RustLinkStrategyInfo],
-        # This crate and its transitive Rust dependencies.
+        # This crate and its transitive Rust dependencies. The crate is the root node, so the
+        # children of this set are the dependencies without the crate.
         "crates": RustCrateGraph,
         # Rust interacts with the native link graph in a non-standard way.
         #
@@ -307,6 +330,13 @@ def strategy_info(toolchain_info: RustToolchainInfo, info: RustLinkInfo, dep_lin
     rust_dep_link_strategy = _adjust_link_strategy_for_rust_dependencies(toolchain_info, dep_link_strategy)
 
     return info.strategies[rust_dep_link_strategy]
+
+def crate_artifacts_projection(toolchain_info: RustToolchainInfo, dep_link_strategy: LinkStrategy, metadata_kind: MetadataKind) -> CrateArtifactsProjection:
+    """
+    The projections of `RustCrateGraph` for the artifact that is
+    `strategy_info(...).outputs[metadata_kind]` of each crate.
+    """
+    return _crate_artifacts_projection(_adjust_link_strategy_for_rust_dependencies(toolchain_info, dep_link_strategy), metadata_kind)
 
 # Any dependency of a Rust crate
 RustOrNativeDependency = record(
@@ -585,13 +615,15 @@ def crate_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> RustCrate
     """The Rust dependencies of the crate being analyzed."""
     return resolve_crate_deps(ctx, resolve_rust_deps(ctx, dep_ctx), crate = ctx.label)
 
-def crate_graph(ctx: AnalysisContext, deps: RustCrateDeps) -> RustCrateGraph:
+def crate_graph(ctx: AnalysisContext, deps: RustCrateDeps, strategies: dict[LinkStrategy, RustLinkStrategyInfo]) -> RustCrateGraph:
     """The value of `RustLinkInfo.crates` for the library being analyzed."""
     return ctx.actions.tset(
         RustCrateGraph,
         value = RustCrate(
             metadata = crate_metadata(ctx.label),
             label = ctx.label.configured_target(),
+            crate = attr_crate(ctx),
+            outputs = {link_strategy: info.outputs for link_strategy, info in strategies.items()},
             proc_macro_deps = [dep.dep.label.raw_target() for dep in deps.direct if not isinstance(dep.info, RustLinkInfo)],
         ),
         children = [deps.crates],

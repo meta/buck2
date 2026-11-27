@@ -32,15 +32,23 @@
 #         --out-dir path/to/out \
 #         --artifacts path/to/artifacts.json
 #
-# The input file artifacts.json is an array of pairs.
-# The first element is the rlib paths, the second element is an optional path to a file containing
-# the build-time crate name for the corresponding rlib.
+# The input file artifacts.json has two arrays of pairs, "crates" and "proc_macros".
+# The first element is the path of an artifact, the second element is an optional path to a file
+# containing the build-time crate name for that artifact. An entry of "crates" is null if the
+# crate was not built in the form that was asked for.
 #
-#     [
-#         [ "../../libprovisional.rlib", "path/to/cratename" ],
-#         [ "../../libfoo.rlib", null ],
-#         ...
-#     ]
+#     {
+#         "crates": [
+#             [ "../../libprovisional.rlib", "path/to/cratename" ],
+#             [ "../../libfoo.rlib", null ],
+#             null,
+#             ...
+#         ],
+#         "proc_macros": [
+#             [ "../../libbar.so", null ],
+#             ...
+#         ]
+#     }
 #
 # The tool reads the crate name from the file at "path/to/cratename". Suppose it's
 # "thriftgenerated". It symlinks the given artifact as "0/libthriftgenerated.rlib"
@@ -106,7 +114,11 @@ def main():
     # Add as many -Ldependency dirs as we need to avoid name conflicts
     deps_dirs = [{}]
 
-    for artifact, crate_name in json.load(args.artifacts):
+    artifacts = json.load(args.artifacts)
+    for entry in artifacts["crates"] + artifacts["proc_macros"]:
+        if entry is None:
+            continue
+        artifact, crate_name = entry
         is_dynamic = crate_name is not None
         if is_dynamic:
             crate_name = Path(crate_name).read_text().strip()

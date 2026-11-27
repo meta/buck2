@@ -125,14 +125,16 @@ load(
 )
 load(
     ":link_info.bzl",
+    "CrateArtifactsProjection",  # @unused Used as a type
     "RustArtifact",
     "RustCrateDeps",  # @unused Used as a type
+    "RustCrateGraph",  # @unused Used as a type
     "RustCxxLinkGroupInfo",  # @unused Used as a type
     "RustProcMacroArchInfo",
     "RustProcMacroInfo",
-    "TransitiveDeps",
     "attr_crate",
     "attr_simple_crate_for_filenames",
+    "crate_artifacts_projection",
     "crate_deps",
     "crate_metadata",
     "executable_shared_lib_arguments_from_shared_library_info",
@@ -1095,14 +1097,6 @@ def rust_compile(
         else:
             filtered_output = emit_op.output
 
-        singleton_tset = ctx.actions.tset(
-            TransitiveDeps,
-            value = RustArtifact(
-                artifact = filtered_output,
-                crate = attr_crate(ctx),
-            ),
-        )
-
         # FIXME(JakobDegen): What's going on with stripped objects in binaries? What is this what cxx does?
         if emit in [Emit("rlib"), Emit("link")]:
             stripped_output = strip_debug_info(
@@ -1142,7 +1136,6 @@ def rust_compile(
                 dwp_output = None
             product = RustcLinkedOutput(
                 output = filtered_output,
-                singleton_tset = singleton_tset,
                 stripped_output = stripped_output,
                 import_library = import_library,
                 pdb = pdb_artifact,
@@ -1151,7 +1144,6 @@ def rust_compile(
         else:
             product = RustcUnlinkedOutput(
                 output = filtered_output,
-                singleton_tset = singleton_tset,
                 stripped_output = stripped_output,
             )
 
@@ -1196,7 +1188,6 @@ def dependency_args(
     cwd: Artifact | None = None,
 ) -> (cmd_args, cmd_args, list[(CrateName, Label)]):
     args = cmd_args()
-    transitive_deps = []
     crate_targets = []
     available_proc_macros = get_available_proc_macros(ctx)
 
@@ -1227,17 +1218,12 @@ def dependency_args(
                         scalar_arch or "unknown",
                     ),
                 )
-            variant = dep.info.arch_variants[scalar_arch]
-            artifact = variant.dylib
+            artifact = dep.info.arch_variants[scalar_arch].dylib
             split_metadata = None
-            singleton_tset = variant.singleton_tset
-            transitive_artifacts = None
         elif isinstance(dep.info, RustProcMacroInfo):
             asserts.false(arch)
             artifact = dep.info.dylib
             split_metadata = None
-            singleton_tset = dep.info.singleton_tset
-            transitive_artifacts = None
         else:
             strategy = strategy_info(toolchain_info, dep.info, dep_link_strategy)
 
@@ -1254,30 +1240,23 @@ def dependency_args(
                     )
                 )
             split_metadata = (strategy.split_metadata or {}).get(dep_metadata_kind)
-            singleton_tset = strategy.singleton_tset[dep_metadata_kind]
-            transitive_artifacts = strategy.transitive_deps[dep_metadata_kind]
 
         args.add(extern_arg(dep.flags, crate, artifact))
         if split_metadata:
             args.add(extern_arg(dep.flags, crate, split_metadata))
         crate_targets.append((crate, dep.dep.label))
 
-        # `--extern` is all that the crate itself needs to find this dependency. Its doctests
-        # reach the dependency through the crate though, that is as a transitive dependency of
-        # their own compile, which is found on the `-L` path (under its original crate name).
-        # The path is the same for every compile.
-        transitive_deps.append(singleton_tset)
-
-        # Unwanted transitive_deps have already been excluded
-        if transitive_artifacts != None:
-            transitive_deps.append(transitive_artifacts)
-
+    # The `-L` path has everything in `crate_deps`, the direct dependencies too. `--extern` is all
+    # that the crate itself needs to find those. Its doctests reach them through the crate though,
+    # that is as transitive dependencies of their own compile, which are found on the `-L` path
+    # (under their original crate names).
+    proc_macros = []
     for label in crate_deps.proc_macro_deps:
         proc_macro = available_proc_macros[label]
         if arch == None:
             scalar_info = proc_macro.get(RustProcMacroInfo)
             if scalar_info != None:
-                transitive_deps.append(scalar_info.singleton_tset)
+                proc_macros.append(RustArtifact(artifact = scalar_info.dylib, crate = scalar_info.crate))
             else:
                 arch_info = proc_macro.get(RustProcMacroArchInfo)
                 if arch_info == None or scalar_arch == None or scalar_arch not in arch_info.arch_variants:
@@ -1288,14 +1267,23 @@ def dependency_args(
                             scalar_arch or "unknown",
                         ),
                     )
-                transitive_deps.append(arch_info.arch_variants[scalar_arch].singleton_tset)
+                proc_macros.append(RustArtifact(artifact = arch_info.arch_variants[scalar_arch].dylib, crate = arch_info.crate))
         else:
             arch_info = proc_macro.get(RustProcMacroArchInfo)
-            transitive_deps.append(arch_info.arch_variants[arch].singleton_tset)
+            proc_macros.append(RustArtifact(artifact = arch_info.arch_variants[arch].dylib, crate = arch_info.crate))
 
     prefix = "{}-{}-deps{}".format(subdir, arch, dep_metadata_kind.value)
-    transitive_deps = ctx.actions.tset(TransitiveDeps, children = transitive_deps)
-    argsfile = symlinked_dirs(ctx, internal_tools_info, transitive_dependency_dirs, prefix, transitive_deps, arch, cwd)
+    argsfile = symlinked_dirs(
+        ctx,
+        internal_tools_info,
+        transitive_dependency_dirs,
+        prefix,
+        crate_deps.crates,
+        crate_artifacts_projection(toolchain_info, dep_link_strategy, dep_metadata_kind),
+        proc_macros,
+        arch,
+        cwd,
+    )
 
     return (args, argsfile, crate_targets)
 
@@ -1304,7 +1292,10 @@ def symlinked_dirs(
     internal_tools_info: RustInternalToolsInfo,
     transitive_dependency_dirs: set,
     prefix: str,
-    transitive_deps: TransitiveDeps,
+    crates: RustCrateGraph,
+    # Which of the crates' artifacts.
+    projection: CrateArtifactsProjection,
+    proc_macros: list[RustArtifact],
     arch: str | None,
     cwd: Artifact | None,
 ) -> cmd_args:
@@ -1312,14 +1303,15 @@ def symlinked_dirs(
 
     transitive_dependency_dir = ctx.actions.declare_output(name, dir = True, has_content_based_path = False)
 
-    artifacts = transitive_deps.project_as_json("artifacts")
-
     # Pass the list of rlibs to transitive_dependency_symlinks.py through a file
     # because there can be a lot of them. This avoids running out of command
     # line length, particularly on Windows.
     artifacts_json = ctx.actions.write_json(
         "{}-symlinked_dirs.json".format(prefix),
-        artifacts,
+        {
+            "crates": crates.project_as_json(projection.json),
+            "proc_macros": [(proc_macro.artifact, proc_macro.crate.dynamic) for proc_macro in proc_macros],
+        },
         pretty = True,
         has_content_based_path = getattr(ctx.attrs, "use_content_based_paths", False),
     )
@@ -1334,7 +1326,10 @@ def symlinked_dirs(
             # Don't take a dependency on all the artifacts in here, just the dynamic names; the
             # rmetas/rlibs we only want to create symlinks to, so there's no need for them to
             # actually be available
-            hidden = transitive_deps.project_as_args("dynamic_name_args"),
+            hidden = [
+                crates.project_as_args("dynamic_names"),
+                [proc_macro.crate.dynamic for proc_macro in proc_macros if proc_macro.crate.dynamic],
+            ],
         ),
     ]
 
@@ -1359,7 +1354,10 @@ def symlinked_dirs(
         # Reference the directory Artifact (not the dirs file), so all of its children are included.
         transitive_dependency_dir,
         format = "@{}/dirs",
-        hidden = transitive_deps.project_as_args("artifacts_args"),
+        hidden = [
+            crates.project_as_args(projection.args),
+            [proc_macro.artifact for proc_macro in proc_macros],
+        ],
     )
 
 def _lintify(flag: str, clippy: bool, lints: list[str | ResolvedStringWithMacros]) -> cmd_args:

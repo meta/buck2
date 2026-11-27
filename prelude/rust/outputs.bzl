@@ -6,8 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load(":link_info.bzl", "TransitiveDeps")
-
 # Outputs that are generally associated with object code compilation, as opposed to linking
 RustcCompileOutput = record(
     diag_txt = field(Artifact),
@@ -27,8 +25,6 @@ RustcCompileOutput = record(
 # What rustc wrote when it did not link: an rmeta, rlib, object, staticlib, ...
 RustcUnlinkedOutput = record(
     output = field(Artifact),
-    # `output`, wrapped in a 1-element transitive set.
-    singleton_tset = field(TransitiveDeps),
     # `output` with its debug info stripped. Only the archive-shaped artifacts
     # get one: `Emit("rlib")`, and `Emit("link")` of an rlib or staticlib crate.
     stripped_output = field(Artifact | None),
@@ -38,8 +34,6 @@ RustcUnlinkedOutput = record(
 # proc macro.
 RustcLinkedOutput = record(
     output = field(Artifact),
-    # `output`, wrapped in a 1-element transitive set.
-    singleton_tset = field(TransitiveDeps),
     # `output` with its debug info stripped.
     stripped_output = field(Artifact),
     # Windows .lib artifact for linking against .dll

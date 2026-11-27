@@ -67,10 +67,7 @@ def _arch_aggregate_impl(ctx: AnalysisContext) -> list[Provider]:
             fail("{} proc-macro arch variants have different crate identities".format(ctx.label))
         crate = info.crate
         outputs.append(info.dylib)
-        arch_info[arch] = RustProcMacroArchVariant(
-            dylib = info.dylib,
-            singleton_tset = info.singleton_tset,
-        )
+        arch_info[arch] = RustProcMacroArchVariant(dylib = info.dylib)
     return [
         DefaultInfo(default_outputs = outputs),
         RustProcMacroArchInfo(crate = crate, arch_variants = arch_info),

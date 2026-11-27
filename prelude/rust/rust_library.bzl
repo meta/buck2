@@ -8,7 +8,6 @@
 
 load(
     "@prelude//:artifact_tset.bzl",
-    "ArtifactTSet",  # @unused Used as a type
     "make_artifact_tset",
 )
 load("@prelude//:prelude_rule.bzl", "prelude_rule")
@@ -119,9 +118,7 @@ load(
     "RustLinkGraphNode",
     "RustLinkInfo",
     "RustLinkStrategyInfo",
-    "RustProcMacroArchInfo",
     "RustProcMacroInfo",
-    "TransitiveDeps",
     "attr_crate",
     "crate_graph",
     "inherited_link_group_lib_infos",
@@ -129,8 +126,6 @@ load(
     "inherited_shared_libs",
     "inherited_third_party_builds",
     "resolve_deps",
-    "resolve_rust_deps",
-    "strategy_info",
 )
 load(":named_deps.bzl", "write_named_deps_names")
 load(
@@ -765,12 +760,7 @@ def _rust_artifacts(
 def _handle_rust_artifact(
     ctx: AnalysisContext, dep_ctx: DepCollectionContext, link_strategy: LinkStrategy, outputs: dict[MetadataKind, RustcOutput]
 ) -> RustLinkStrategyInfo:
-    """
-    Return the RustLinkStrategyInfo for a given set of artifacts. The main consideration
-    is computing the right set of dependencies.
-    """
     link_output = outputs[MetadataKind("link")]
-    tdeps, rust_debug_info = _compute_transitive_deps(ctx, dep_ctx, link_strategy)
 
     toolchain_info = ctx.attrs._rust_toolchain[RustToolchainInfo]
     if toolchain_info.advanced_unstable_linking:
@@ -780,12 +770,10 @@ def _handle_rust_artifact(
             actions = ctx.actions,
             label = ctx.label,
             artifacts = filter(None, [link_output.compile_output.dwo_output_directory]),
-            children = rust_debug_info,
+            children = inherited_rust_external_debug_info(ctx, dep_ctx, link_strategy),
         )
     return RustLinkStrategyInfo(
         outputs = {m: x.product.output for m, x in outputs.items()},
-        singleton_tset = {m: x.product.singleton_tset for m, x in outputs.items()},
-        transitive_deps = tdeps,
         rust_debug_info = rust_debug_info,
     )
 
@@ -908,7 +896,6 @@ def _proc_macro_link_providers(ctx: AnalysisContext, link: RustcOutput) -> list[
         RustProcMacroInfo(
             crate = attr_crate(ctx),
             dylib = link.product.output,
-            singleton_tset = link.product.singleton_tset,
         ),
     ]
 
@@ -1029,7 +1016,7 @@ def _advanced_unstable_link_providers(
         RustLinkInfo(
             crate = crate,
             strategies = rust_artifacts,
-            crates = crate_graph(ctx, compile_ctx.crate_deps),
+            crates = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts),
             link_graph = ctx.actions.tset(
                 RustLinkGraph,
                 value = RustLinkGraphNode(
@@ -1073,7 +1060,7 @@ def _stable_link_providers(
     rust_link_info = RustLinkInfo(
         crate = crate,
         strategies = rust_artifacts,
-        crates = crate_graph(ctx, compile_ctx.crate_deps),
+        crates = crate_graph(ctx, compile_ctx.crate_deps, rust_artifacts),
         link_graph = compile_ctx.inherited_link_deps.graph,
         shared_libs = merge_shared_libraries(
             ctx.actions,
@@ -1204,36 +1191,6 @@ def _native_link_providers(
     )
 
     return providers
-
-# Compute transitive deps. Caller decides whether this is necessary.
-def _compute_transitive_deps(
-    ctx: AnalysisContext, dep_ctx: DepCollectionContext, dep_link_strategy: LinkStrategy
-) -> (
-    dict[MetadataKind, TransitiveDeps],
-    list[ArtifactTSet],
-):
-    toolchain_info = ctx.attrs._rust_toolchain[RustToolchainInfo]
-    transitive_deps = {m: [] for m in MetadataKind}
-    rust_debug_info = []
-
-    for dep in resolve_rust_deps(ctx, dep_ctx):
-        if isinstance(dep.info, RustProcMacroInfo) or isinstance(dep.info, RustProcMacroArchInfo):
-            # We don't want to propagate proc macros directly, and they have no transitive deps
-            continue
-        strategy = strategy_info(toolchain_info, dep.info, dep_link_strategy)
-        for m in MetadataKind:
-            # The `miri` kind is absent when the toolchain provides no
-            # Miri artifacts; every other kind is always built.
-            if m in strategy.singleton_tset:
-                transitive_deps[m].append(strategy.singleton_tset[m])
-                transitive_deps[m].append(strategy.transitive_deps[m])
-
-        if strategy.rust_debug_info:
-            rust_debug_info.append(strategy.rust_debug_info)
-
-    transitive_deps = {m: ctx.actions.tset(TransitiveDeps, children = children) for m, children in transitive_deps.items()}
-
-    return transitive_deps, rust_debug_info
 
 def _dual_arch_eligible_for_package() -> bool:
     if get_cell_name() == "fbcode":

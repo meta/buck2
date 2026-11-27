@@ -103,7 +103,6 @@ def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact, arch: str | None = Non
             subdir = "any",
             dep_link_strategy = DEFAULT_STATIC_LINK_STRATEGY,
             dep_metadata_kind = MetadataKind("full"),
-            is_rustdoc_test = False,
             arch = arch,
             cwd = cwd,
         )

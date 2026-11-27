@@ -1168,10 +1168,10 @@ def rust_compile(
     )
 
 # --extern <crate>=<path> for direct dependencies
-# -Ldependency=<dir> for transitive dependencies
+# -Ldependency=<dir> for all dependencies, direct and transitive
 # For native dependencies, we use -Clink-arg=@argsfile
 #
-# Second element of returned tuple is an @argsfile containing the -Ldependency=<dir> for transitive dependencies.
+# Second element of returned tuple is an @argsfile containing the -Ldependency=<dir> flags.
 # It is separate from the first element because some commands (e.g., rustc) do NOT support nested @argsfiles.
 #
 # Third element of returned tuple is a mapping from crate names back to target
@@ -1192,7 +1192,6 @@ def dependency_args(
     subdir: str,
     dep_link_strategy: LinkStrategy,
     dep_metadata_kind: MetadataKind,
-    is_rustdoc_test: bool,
     arch: str | None = None,
     cwd: Artifact | None = None,
 ) -> (cmd_args, cmd_args, list[(CrateName, Label)]):
@@ -1284,11 +1283,11 @@ def dependency_args(
             args.add(extern_arg(dep.flags, crate, split_metadata))
         crate_targets.append((crate, dep.dep.label))
 
-        # Because deps of this *target* can also be transitive deps of this
-        # compiler invocation, pass the artifact (under its original crate name)
-        # through `-L` unconditionally for doc tests.
-        if is_rustdoc_test:
-            transitive_deps.append(singleton_tset)
+        # `--extern` is all that the crate itself needs to find this dependency. Its doctests
+        # reach the dependency through the crate though, that is as a transitive dependency of
+        # their own compile, which is found on the `-L` path (under its original crate name).
+        # The path is the same for every compile.
+        transitive_deps.append(singleton_tset)
 
         # Unwanted transitive_deps have already been excluded
         if transitive_artifacts != None:
@@ -1605,7 +1604,6 @@ def _compute_common_args(
                 subdir = subdir,
                 dep_link_strategy = params.dep_link_strategy,
                 dep_metadata_kind = dep_metadata_kind,
-                is_rustdoc_test = is_rustdoc_test,
             )
             dep_args.add(cmd_args(hidden = compile_ctx.transitive_srcs.project_as_args("artifacts")))
             dep_args.add(dep_argsfiles)
@@ -1626,7 +1624,6 @@ def _compute_common_args(
                     subdir = subdir,
                     dep_link_strategy = params.dep_link_strategy,
                     dep_metadata_kind = dep_metadata_kind,
-                    is_rustdoc_test = is_rustdoc_test,
                     arch = arch,
                 )
                 arch_dep_args.add(cmd_args(hidden = compile_ctx.transitive_srcs.project_as_args("artifacts")), arch_dep_argsfiles)

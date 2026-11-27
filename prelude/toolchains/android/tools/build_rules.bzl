@@ -78,7 +78,9 @@ def _set_versioned_java_srcs(**kwargs):
     if not kwargs.pop("versioned_java_srcs", False):
         return kwargs
     java_version = select({
-        "DEFAULT": native.read_config("java", "buck2_java_version", "21"),
+        # @oss-disable[end= ]: "DEFAULT": native.read_config("java", "buck2_java_version", "21"),
+        # Open source: `read_config` here reads `prelude/.buckconfig`, so read the project's value.
+        "DEFAULT": read_root_config("java", "buck2_java_version", "21"), # @oss-enable
         # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-setting-version[11]": "11",
         # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-setting-version[17]": "17",
         # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-setting-version[21]": "21",

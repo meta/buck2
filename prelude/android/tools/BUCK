@@ -7,6 +7,12 @@ source_listing()
 prelude = native  # Avoid warnings and auto-formatters
 
 prelude.python_bootstrap_binary(
+    name = "check_sdk_files",
+    main = "check_sdk_files.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
     name = "duplicate_class_checker",
     main = "duplicate_class_checker.py",
     visibility = ["PUBLIC"],

@@ -14,40 +14,39 @@ load("@prelude//tests:test_listing.bzl", "TestListingInfo")
 
 def _android_sdk_tools_impl(ctx):
     sub_targets = {}
+    sdk_path = ctx.attrs.android_sdk_path
+    build_tools = "build-tools/{}".format(ctx.attrs.build_tools_version)
+    platform = "platforms/{}".format(ctx.attrs.compile_sdk_version)
 
-    sub_targets["aapt2"] = [RunInfo(args = ["{}/build-tools/{}/aapt2".format(ctx.attrs.android_sdk_path, ctx.attrs.build_tools_version)])]
-    sub_targets["aidl"] = [RunInfo(args = ["{}/build-tools/{}/aidl".format(ctx.attrs.android_sdk_path, ctx.attrs.build_tools_version)])]
-    sub_targets["zipalign"] = [RunInfo(args = ["{}/build-tools/{}/zipalign".format(ctx.attrs.android_sdk_path, ctx.attrs.build_tools_version)])]
+    # Every SDK file the build uses goes through `check_sdk_files`, so a wrong `[android] sdk_path`
+    # or a missing SDK package fails with a message naming the fix instead of a dangling path.
+    def check(name, files, link):
+        output = ctx.actions.declare_output(name, has_content_based_path = False)
+        args = cmd_args(ctx.attrs._check_sdk_files[RunInfo], "--sdk-path", sdk_path)
+        for relative_path, package in files:
+            args.add("--file", relative_path, package)
+        if link:
+            args.add("--link")
+        args.add("--output", output.as_output())
+        ctx.actions.run(args, category = "android_sdk_check", identifier = name)
+        return output
 
-    sub_targets["adb"] = [RunInfo(args = ["{}/platform-tools/adb".format(ctx.attrs.android_sdk_path)])]
-
-    android_jar = ctx.actions.declare_output("android.jar", has_content_based_path = False)
-    ctx.actions.run(
-        cmd_args(["ln", "-s", "{}/platforms/{}/android.jar".format(ctx.attrs.android_sdk_path, ctx.attrs.compile_sdk_version), android_jar.as_output()]),
-        category = "android_jar_symlink",
+    build_tools_package = "build-tools;{}".format(ctx.attrs.build_tools_version)
+    build_tools_checked = check(
+        "build_tools_checked",
+        [("{}/{}".format(build_tools, tool), build_tools_package) for tool in ["aapt2", "aidl", "zipalign"]],
+        link = False,
     )
-    sub_targets["android.jar"] = [DefaultInfo(default_output = android_jar)]
+    for tool in ["aapt2", "aidl", "zipalign"]:
+        sub_targets[tool] = [RunInfo(args = cmd_args("{}/{}/{}".format(sdk_path, build_tools, tool), hidden = build_tools_checked))]
 
-    core_for_system_modules_jar = ctx.actions.declare_output("core-for-system-modules.jar", has_content_based_path = False)
-    ctx.actions.run(
-        cmd_args([
-            "ln",
-            "-s",
-            "{}/platforms/{}/core-for-system-modules.jar".format(ctx.attrs.android_sdk_path, ctx.attrs.compile_sdk_version),
-            core_for_system_modules_jar.as_output(),
-        ]),
-        category = "core_for_system_modules_jar_symlink",
-    )
-    sub_targets["core-for-system-modules.jar"] = [DefaultInfo(default_output = core_for_system_modules_jar)]
+    adb_checked = check("adb_checked", [("platform-tools/adb", "platform-tools")], link = False)
+    sub_targets["adb"] = [RunInfo(args = cmd_args("{}/platform-tools/adb".format(sdk_path), hidden = adb_checked))]
 
-    framework_aidl_file = ctx.actions.declare_output("framework.aidl", has_content_based_path = False)
-    ctx.actions.run(
-        cmd_args(
-            ["ln", "-s", "{}/platforms/{}/framework.aidl".format(ctx.attrs.android_sdk_path, ctx.attrs.compile_sdk_version), framework_aidl_file.as_output()]
-        ),
-        category = "framework_aidl_symlink",
-    )
-    sub_targets["framework.aidl"] = [DefaultInfo(default_output = framework_aidl_file)]
+    platform_package = "platforms;{}".format(ctx.attrs.compile_sdk_version)
+    for file_name in ["android.jar", "core-for-system-modules.jar", "framework.aidl"]:
+        linked = check(file_name, [("{}/{}".format(platform, file_name), platform_package)], link = True)
+        sub_targets[file_name] = [DefaultInfo(default_output = linked)]
 
     optimized_proguard_config = ctx.actions.declare_output("proguard-android-optimize.txt", has_content_based_path = False)
     ctx.actions.run(
@@ -80,6 +79,7 @@ android_sdk_tools = rule(
         "android_sdk_path": attrs.string(default = read_root_config("android", "sdk_path", "/opt/android_sdk")),
         "build_tools_version": attrs.string(default = read_root_config("android", "build_tools_version", "35.0.0")),
         "compile_sdk_version": attrs.string(default = read_root_config("android", "compile_sdk_version", "android-35")),
+        "_check_sdk_files": attrs.exec_dep(default = "prelude//android/tools:check_sdk_files", providers = [RunInfo]),
     },
 )
 

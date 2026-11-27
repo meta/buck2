@@ -26,6 +26,13 @@ rust_library(
                         ],
                     },
                 },
+                "target": {
+                    '\'cfg(any(target_os = "linux", target_os = "macos"))\'': {
+                        "dependencies": {
+                            "tikv-jemalloc-ctl": {"features": ["stats", "use_std"]},
+                        },
+                    },
+                },
             },
             "extra_buck_dependencies": {
                 "dependencies": [
@@ -33,6 +40,15 @@ rust_library(
                     (None, "//common/rust/shed/hostcaps:hostcaps"),
                     "fbsource//third-party/rust:fbinit",
                 ],
+                # Cargo-only: `src/memory.rs` reads jemalloc's stats and turns on its background
+                # threads in cargo builds, where jemalloc is the global allocator.
+                "target": {
+                    '\'cfg(any(target_os = "linux", target_os = "macos"))\'': {
+                        "dependencies": [
+                            "fbsource//third-party/rust:jemalloc-ctl",
+                        ],
+                    },
+                },
             },
         },
     },

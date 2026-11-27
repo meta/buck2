@@ -69,6 +69,9 @@ assert_matches.workspace = true
 indoc.workspace = true
 test-case.workspace = true
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+tikv-jemalloc-ctl.workspace = true
+
 [target.'cfg(target_os = "linux")'.dependencies]
 buck2_process_kill.workspace = true
 hyper-util.workspace = true

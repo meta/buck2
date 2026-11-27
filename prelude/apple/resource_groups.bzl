@@ -186,6 +186,7 @@ def get_filtered_resources(
     scene_kit_assets_specs = []
     cxx_resource_specs = []
     reachable_xcassets_symbol_specs = []
+    resource_targets = []
 
     for target in targets:
         target_resource_group = resource_group_mappings.get(target)
@@ -226,6 +227,8 @@ def get_filtered_resources(
             cxx_resource_spec = node.cxx_resource_spec
             if cxx_resource_spec:
                 cxx_resource_specs.append(cxx_resource_spec)
+            if resource_spec or asset_catalog_spec or core_data_spec or scene_kit_assets_spec or cxx_resource_spec:
+                resource_targets.append(target)
 
     return AppleResourceSelectionOutput(
         resource_specs = resource_specs,
@@ -235,4 +238,5 @@ def get_filtered_resources(
         core_data_specs = core_data_specs,
         scene_kit_assets_spec = scene_kit_assets_specs,
         cxx_resource_specs = cxx_resource_specs,
+        resource_targets = resource_targets,
     )

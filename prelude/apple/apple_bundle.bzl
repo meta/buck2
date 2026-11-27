@@ -607,6 +607,7 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
         _xcode_populate_attributes,
         processed_info_plist = apple_bundle_part_list_output.info_plist_part.source,
         info_plist_relative_path = plist_bundle_relative_path,
+        resource_targets = apple_bundle_part_list_output.resource_output.resource_targets,
     )
     sub_targets[XCODE_DATA_SUB_TARGET] = xcode_data_default_info
 
@@ -724,7 +725,7 @@ def apple_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
 
     return providers
 
-def _xcode_populate_attributes(ctx, processed_info_plist: Artifact, info_plist_relative_path: str) -> dict[str, typing.Any]:
+def _xcode_populate_attributes(ctx, processed_info_plist: Artifact, info_plist_relative_path: str, resource_targets: list[Label]) -> dict[str, typing.Any]:
     data = {
         XcodeDataInfoKeys.BUNDLE_TYPE: _infer_apple_bundle_type(ctx),
         XcodeDataInfoKeys.DEPLOYMENT_VERSION: get_bundle_min_target_version(ctx, get_default_binary_dep(ctx.attrs.binary)),
@@ -735,6 +736,7 @@ def _xcode_populate_attributes(ctx, processed_info_plist: Artifact, info_plist_r
         XcodeDataInfoKeys.SDK: get_apple_sdk_name(ctx),
         XcodeDataInfoKeys.APP_EXTENSION_DEPENDENCIES: _app_extension_deps(ctx),
         XcodeDataInfoKeys.WATCH_APP_DEPENDENCIES: _watch_app_deps(ctx),
+        XcodeDataInfoKeys.RESOURCE_TARGETS: resource_targets,
     }
 
     apple_xcode_data_add_xctoolchain(ctx, data)

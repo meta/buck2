@@ -78,6 +78,8 @@ AppleBundleResourcePartListOutput = record(
     xcassets_catalogs = field([XcassetsBundleResourceCatalogs, None], None),
     xcassets_sub_targets = field(dict[str, list[Provider]], {}),
     xcassets_trim_providers = field(list[Provider], []),
+    # The nodes of the bundle's resource graph whose resources the bundle holds.
+    resource_targets = field(list[Label], []),
 )
 
 def get_apple_bundle_resource_part_list(ctx: AnalysisContext) -> AppleBundleResourcePartListOutput:
@@ -170,6 +172,7 @@ def get_apple_bundle_resource_part_list(ctx: AnalysisContext) -> AppleBundleReso
         xcassets_catalogs = xcassets_catalogs,
         xcassets_sub_targets = xcassets_sub_targets,
         xcassets_trim_providers = xcassets_trim_providers,
+        resource_targets = selection.resource_targets,
     )
 
 # Same logic as in v1, see `buck_client/src/com/facebook/buck/apple/ApplePkgInfo.java`

@@ -77,4 +77,6 @@ AppleResourceSelectionOutput = record(
     core_data_specs = field(list[AppleCoreDataSpec]),
     scene_kit_assets_spec = field(list[SceneKitAssetsSpec]),
     cxx_resource_specs = field(list[CxxResourceSpec]),
+    # The selected nodes of the resource graph that carry a resource spec.
+    resource_targets = field(list[Label], []),
 )

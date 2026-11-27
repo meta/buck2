@@ -302,7 +302,7 @@ internal class InlineBodyStage : AbiGenStage {
       function.compatValueParameters.forEach { it.defaultValue = null }
       return true
     }
-    if (firDefaults.size != function.compatValueParameters.size) {
+    if (firDefaults.size != regularParameters(function, firFunction).size) {
       skipBody(messageCollector, name, "its parameter list changed shape during conversion")
       return false
     }
@@ -332,6 +332,11 @@ internal class InlineBodyStage : AbiGenStage {
     }
     return true
   }
+
+  // The IR counterparts of FIR's `valueParameters`: [compatValueParameters] also holds the context
+  // parameters, first, which FIR keeps apart.
+  private fun regularParameters(function: IrFunction, firFunction: FirFunction) =
+      function.compatValueParameters.drop(firFunction.contextParameters.size)
 
   // Entry to fir2ir's expression converter across compiler versions (via its `$default` bridge
   // when it has trailing defaulted parameters). Null keeps the old behavior: a loud skip. The third
@@ -420,7 +425,7 @@ internal class InlineBodyStage : AbiGenStage {
                 .invoke(declarations, irFunction, firFunction)
             var ok = true
             for ((index, firDefault) in firDefaults.withIndex()) {
-              val irParameter = irFunction.compatValueParameters[index]
+              val irParameter = regularParameters(irFunction, firFunction)[index]
               if (firDefault == null) {
                 irParameter.defaultValue = null
                 continue

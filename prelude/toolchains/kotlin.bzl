@@ -21,7 +21,15 @@ def _typechecker_cli():
     # typechecker_cli the attr stays None and no sub-target is created.
     return read_config("kotlin", "typechecker_cli", None)
 
+_KOSABI_PLUGINS = "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/kosabi"
+
+def _source_only_abi_enabled():
+    # Whether Kosabi builds the source-only ABIs of targets with `abi_generation_mode = "source_only"`.
+    # Without it those targets build class ABIs.
+    return read_root_config("kotlin", "enable_source_only_abi", "True").lower() in ("true", "1", "yes")
+
 def kotlincd_toolchain(name, java_binary_for_kotlincd = None, visibility = None):
+    source_only_abi = _source_only_abi_enabled()
     _kotlin_toolchain_rule(
         java_binary_for_kotlincd = java_binary_for_kotlincd,
         name = name,
@@ -50,6 +58,8 @@ def kotlincd_toolchain(name, java_binary_for_kotlincd = None, visibility = None)
         kotlincd = "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/workertool:kotlincd_tool-main",
         kotlinc_protocol = "kotlincd",
         kotlincd_main_class = "com.facebook.buck.jvm.kotlin.cd.workertool.KotlinCDMain",
+        kosabi_jvm_abi_gen_k2_plugin = _KOSABI_PLUGINS + "/k2-jvm-abi-gen:k2-jvm-abi-gen" if source_only_abi else None,
+        kosabi_stubs_gen_k2_plugin = _KOSABI_PLUGINS + "/stubsgen:stubsgen_k2" if source_only_abi else None,
         visibility = visibility,
     )
 

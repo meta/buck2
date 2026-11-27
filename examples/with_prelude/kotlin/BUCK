@@ -1,0 +1,27 @@
+oncall("build_infra")
+
+# With `abi_generation_mode = "source_only"`, Kosabi generates the ABI that dependents compile
+# against from this target's sources, so they compile without waiting for this target.
+kotlin_library(
+    name = "greeting",
+    srcs = ["greeting/Greeter.kt"],
+    abi_generation_mode = "source_only",
+)
+
+kotlin_library(
+    name = "app_lib",
+    srcs = ["app/Main.kt"],
+    abi_generation_mode = "source_only",
+    deps = [":greeting"],
+)
+
+java_binary(
+    name = "app",
+    main_class = "com.example.app.MainKt",
+    deps = [
+        ":app_lib",
+        # `kotlin_library` compiles against the toolchain's Kotlin standard library but does not
+        # package it.
+        "prelude//toolchains/android/third-party:kotlin-stdlib",
+    ],
+)

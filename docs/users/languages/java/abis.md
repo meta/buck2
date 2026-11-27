@@ -65,6 +65,9 @@ that can normally be determined only by looking at dependencies.
 - **Use when**: You want maximum build performance and can meet the requirements
   (see below)
 
+For Kotlin, Kosabi generates source-only ABI JARs; see
+[Source-only ABIs](../kotlin/overview.md#source-only-abis) for its requirements.
+
 ## Requirements for Source-Only ABI Generation
 
 Buck2 generates source-only ABI JARs using only the text of the source code for

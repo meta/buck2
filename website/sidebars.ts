@@ -151,6 +151,14 @@ export const sidebars: SidebarsConfig = {
             },
             {
               type: 'category' as const,
+              label: 'Kotlin',
+              collapsed: false,
+              items: [
+                'users/languages/kotlin/overview',
+              ],
+            },
+            {
+              type: 'category' as const,
               label: 'Python',
               collapsed: false,
               items: [

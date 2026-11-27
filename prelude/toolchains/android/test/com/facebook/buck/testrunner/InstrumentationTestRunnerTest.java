@@ -163,6 +163,25 @@ public class InstrumentationTestRunnerTest {
   }
 
   @Test
+  public void createsATemporaryOutputDirectoryWithoutOutput() throws Throwable {
+    InstrumentationTestRunner.ArgsParser argsParser =
+        new InstrumentationTestRunner.ArgsParser(new HashMap<>());
+    argsParser.fromArgs(
+        "--test-package-name",
+        "com.example.test",
+        "--target-package-name",
+        "com.example",
+        "--test-runner",
+        "com.example.test.TestRunner",
+        "--adb-executable-path",
+        "required_but_not_used",
+        "--auto-run-on-connected-device");
+
+    Assert.assertNotNull(argsParser.outputDirectory);
+    Assert.assertTrue(argsParser.outputDirectory.isDirectory());
+  }
+
+  @Test
   public void failOnTestFailureThrowsWhenATestFails() throws Throwable {
     InstrumentationTestRunner runner = runnerWithOneFailingTest();
     runner.failOnTestFailure();

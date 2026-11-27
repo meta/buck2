@@ -492,8 +492,8 @@ public class InstrumentationTestRunner extends DeviceRunner {
       }
 
       if (outputDirectory == null) {
-        System.err.println("Must pass --output argument.");
-        System.exit(1);
+        outputDirectory = Files.createTempDirectory("instrumentation_test_output").toFile();
+        System.out.printf("Writing test results to %s\n", outputDirectory);
       }
 
       // Process env-based setup - using package name to uniquify the folders

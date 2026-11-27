@@ -95,8 +95,9 @@ android_instrumentation_apk(
     ],
 )
 
-# `buck2 run //app:android_tests` installs both APKs on the device or emulator
-# that `adb` reaches and runs the tests there.
+# `buck2 test //app:android_tests` installs both APKs on the first device or
+# emulator that `adb devices` lists and runs the tests there. To pick one, add
+# `-- --env ANDROID_SERIAL=<serial>`.
 android_instrumentation_test(
     name = "android_tests",
     apk = ":android_tests_apk",

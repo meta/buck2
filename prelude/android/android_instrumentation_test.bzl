@@ -6,6 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//:prelude_rule.bzl", "prelude_rule")
 load("@prelude//android:android_providers.bzl", "AndroidApkExopackageInfo", "AndroidApkInfo", "AndroidApkUnderTestInfo", "AndroidInstrumentationApkInfo")
 load("@prelude//android:android_toolchain.bzl", "AndroidToolchainInfo")
@@ -199,11 +200,15 @@ def android_instrumentation_test_impl(ctx: AnalysisContext):
     cmd.extend(
         [
             "--adb-executable-path",
-            "required_but_unused",
+            "required_but_unused" if is_full_meta_repo() else (android_toolchain.adb or "adb"),
             "--instrumentation-apk-path",
             apk_info.apk,
         ],
     )
+
+    # Open-source `buck2 test` picks no device and reads the result from the exit code.
+    if not is_full_meta_repo():
+        cmd.extend(["--auto-run-on-connected-device", "--fail-on-test-failure"])
 
     # Exopackage secondary dexes live out-of-band, not in base.apk. Pass the build's secondary-dex
     # dir so the runner pushes them to /data/local/tmp/exopackage/<pkg>/secondary-dex before

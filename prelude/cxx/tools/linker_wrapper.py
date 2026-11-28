@@ -34,8 +34,14 @@ def is_whole_archive_option(argument):
 
 
 def expand_library_path(argument, full_library_paths):
-    library_name = argument.split(":", maxsplit=1)[-1]
-    return "/WHOLEARCHIVE:" + full_library_paths[library_name]
+    # `/WHOLEARCHIVE:<library>` names the library either by the basename of a
+    # library given earlier on the command line, or by its path (which is what
+    # `get_link_whole_args` in prelude/cxx/linker.bzl passes). Expand the former
+    # and keep the latter.
+    option, separator, library = argument.partition(":")
+    if not separator:
+        return argument
+    return option + ":" + full_library_paths.get(library, library)
 
 
 # NOTE: it does not check for cycles
@@ -57,32 +63,39 @@ def expand_args(arguments):
     return expanded
 
 
-def main():
-    linker_real, rest = sys.argv[1], sys.argv[2:]
-    working_dir = os.getcwd()
-
-    arguments = expand_args(rest)
-
+def rewrite_args(arguments, working_dir):
     full_library_paths = {}
     new_args = []
     for argument in arguments:
         argument = unquote(argument)
 
-        # Save library paths to support expanding them afterwards
-        if is_library_path(argument):
+        if is_whole_archive_option(argument):
+            # LLVM linker expects full path in /WHOLEARCHIVE option while MSVC
+            # expects just the filename. That's why we need to expand the path.
+            argument = expand_library_path(argument, full_library_paths)
+            option, separator, library = argument.partition(":")
+            if separator:
+                full_library_paths.setdefault(os.path.basename(library), library)
+                if is_relative_buck_out_path(library):
+                    argument = option + ":" + os.path.join(working_dir, library)
+        elif is_library_path(argument):
+            # Save library paths to support expanding them afterwards
             library_name = os.path.basename(argument)
             full_library_paths[library_name] = argument
-
-        # LLVM linker expects full path in /WHOLEARCHIVE option while MSVC
-        # expects just the filename. That's why we need to expand the path.
-        if is_whole_archive_option(argument):
-            argument = expand_library_path(argument, full_library_paths)
 
         # Make relative paths absolute for support paths longer than 260 chars.
         if is_relative_buck_out_path(argument):
             argument = os.path.join(working_dir, argument)
 
         new_args.append(argument)
+    return new_args
+
+
+def main():
+    linker_real, rest = sys.argv[1], sys.argv[2:]
+    working_dir = os.getcwd()
+
+    new_args = rewrite_args(expand_args(rest), working_dir)
 
     # Based on rustc's @linker-arguments file construction.
     # https://github.com/rust-lang/rust/blob/1.69.0/compiler/rustc_codegen_ssa/src/back/link.rs#L1383-L1407

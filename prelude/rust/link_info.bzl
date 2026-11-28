@@ -584,11 +584,14 @@ def _rust_non_proc_macro_link_infos(ctx: AnalysisContext, dep_ctx: DepCollection
 # the configuration out of the inputs of every compile, which content-based output paths need.
 #
 # A target that really is a different crate in each of two configurations, and needs both in one
-# graph, has to say so for itself, by adding something of its own to this string. No target
-# needs that today, so there is no attribute for it; putting the configuration back in here for
-# every target is not the way to get it.
-def crate_metadata(label: Label) -> str:
-    return str(label.raw_target())
+# graph, has to say so for itself, by adding something of its own to this string: its
+# `metadata_disambiguator` attribute, which it sets to a different value in each configuration.
+# Putting the configuration back in here for every target is not the way to get that.
+def crate_metadata(ctx: AnalysisContext) -> str:
+    metadata = str(ctx.label.raw_target())
+    if ctx.attrs.metadata_disambiguator:
+        metadata += "#" + ctx.attrs.metadata_disambiguator
+    return metadata
 
 # A crate's dependencies.
 RustCrateDeps = record(
@@ -608,17 +611,18 @@ RustCrateDeps = record(
 def _inconsistent_link_deps(label: typing.Any, a: typing.Any, b: typing.Any):
     fail("cannot depend on {} in multiple inconsistent ways:\n{}\n{}".format(label, a, b))
 
-def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], native: list[Dependency] = [], crate: Label | None = None) -> RustCrateDeps:
+def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], native: list[Dependency] = []) -> RustCrateDeps:
     """
-    Collects what the dependencies of `crate` bring along: `direct` are the Rust
-    ones and `native` the ones whose link providers its Rust dependents inherit.
+    Collects what the current target's dependencies bring along: `direct` are
+    the Rust ones and `native` the ones whose link providers its Rust dependents
+    inherit.
 
-    Fails if two of the crates have the same `-Cmetadata`, `crate` included,
-    which is the case for one target in two configurations. Those are two
-    compilations that rustc and the linker take for one crate. Both define all
-    of its symbols, and nothing makes the definitions agree: the two differ in
-    whatever `crate_metadata` leaves out. A link that is given both keeps one
-    definition of each symbol and silently drops the other.
+    Fails if two crates have the same `-Cmetadata`, which is the case for one
+    target in two configurations. Those are two compilations that rustc and the
+    linker take for one crate. Both define all of its symbols, and nothing makes
+    the definitions agree: the two differ in whatever `crate_metadata` leaves
+    out. A link that is given both keeps one definition of each symbol and
+    silently drops the other.
 
     Nothing checks this for C++ libraries, or for Rust crates that only a C++
     target brings together. Here it is an error at the lowest target that
@@ -639,7 +643,13 @@ def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], nativ
     children.extend([dep.info.graph for dep in direct if isinstance(dep.info, RustLinkInfo)])
     graph = ctx.actions.tset(RustGraph, children = children)
 
-    seen = {crate_metadata(crate): crate.configured_target()} if crate else {}
+    seen = {}
+    if hasattr(ctx.attrs, "metadata_disambiguator"):
+        seen[crate_metadata(ctx)] = ctx.label.configured_target()
+    else:
+        # When `resolve_crate_deps` is called from `_make_rustc_shim` in
+        # cargo_buildscript.bzl, there is no "current crate".
+        pass
     proc_macro_deps = {dep.dep.label.raw_target(): None for dep in direct if not isinstance(dep.info, RustLinkInfo)}
     merged_link_infos = {}
     linkable_graphs = {}
@@ -690,7 +700,11 @@ def resolve_crate_deps(ctx: AnalysisContext, direct: list[RustDependency], nativ
 
 def crate_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> RustCrateDeps:
     """The dependencies of the crate being analyzed."""
-    return resolve_crate_deps(ctx, resolve_rust_deps(ctx, dep_ctx), _native_link_dependencies(ctx, dep_ctx), crate = ctx.label)
+    return resolve_crate_deps(
+        ctx = ctx,
+        direct = resolve_rust_deps(ctx, dep_ctx),
+        native = _native_link_dependencies(ctx, dep_ctx),
+    )
 
 def crate_graph(
     ctx: AnalysisContext,
@@ -709,7 +723,7 @@ def crate_graph(
         RustGraph,
         value = RustGraphNode(
             crate = RustCrate(
-                metadata = crate_metadata(ctx.label),
+                metadata = crate_metadata(ctx),
                 label = ctx.label.configured_target(),
                 crate = attr_crate(ctx),
                 outputs = {link_strategy: info.outputs for link_strategy, info in strategies.items()},

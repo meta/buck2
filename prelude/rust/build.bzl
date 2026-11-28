@@ -1735,7 +1735,7 @@ def _compute_common_args(
         "--crate-type={}".format(crate_type.value),
         "-Crelocation-model={}".format(params.reloc_model.value),
         "--edition={}".format(edition),
-        "-Cmetadata={}".format(_metadata(ctx.label, is_rustdoc_test)[0]),
+        "-Cmetadata={}".format(_metadata(ctx, is_rustdoc_test)[0]),
         # JSON diagnostics are for `rustc_action.py`; commands run at test time
         # print rendered text directly.
         ["--error-format=json", "--json=diagnostic-rendered-ansi"] if not (is_rustdoc_test or is_miri_run) else [],
@@ -1807,8 +1807,8 @@ def _host_agnostic_proc_macro(crate_type: CrateType, emit: Emit, is_rustdoc_test
 # Returns the crate's `-Cmetadata` and a hash of it. The hash is added to the
 # filename to give two otherwise identically named crates a lower likelihood
 # of duplicate names, but it doesn't matter if they collide.
-def _metadata(label: Label, is_rustdoc_test: bool) -> (str, str):
-    metadata = crate_metadata(label)
+def _metadata(ctx: AnalysisContext, is_rustdoc_test: bool) -> (str, str):
+    metadata = crate_metadata(ctx)
 
     if is_rustdoc_test:
         metadata = "doctest/" + metadata
@@ -1971,7 +1971,7 @@ def _rustc_emit(
         # Don't support profiles with predeclared outputs
         crate_name_and_extra_for_profile = None
     else:
-        extra_hash = "-" + _metadata(ctx.label, False)[1]
+        extra_hash = "-" + _metadata(ctx, False)[1]
         emit_args.add("-Cextra-filename={}".format(extra_hash))
         crate_name_and_extra_for_profile = simple_crate + extra_hash
 

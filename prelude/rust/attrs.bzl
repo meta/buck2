@@ -280,6 +280,17 @@ def rust_common_attributes(is_binary: bool):
                 to a cache.
             """,
             ),
+            "metadata_disambiguator": attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                Added to the crate's `-Cmetadata`, which is otherwise the target label alone. A target is
+                the same crate in every configuration, and one dependency graph cannot contain it in two
+                configurations. A target that is really a different crate in some configurations, and
+                needs more than one of them in one graph, sets this to a different value in each (with a
+                `select`) to make them different crates with different symbol names.
+            """,
+            ),
             "multi_arch_toolchain": multi_arch_toolchain_attr(),
             "resources": attrs.named_set(
                 attrs.one_of(attrs.dep(), attrs.source()),

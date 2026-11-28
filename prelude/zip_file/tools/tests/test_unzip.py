@@ -40,6 +40,16 @@ class UnzipTest(unittest.TestCase):
             with open(os.path.join(out, "t")) as linked:
                 self.assertEqual(linked.read(), "inside")
 
+    def test_a_symlink_in_a_directory_without_an_entry_is_extracted(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            archive = os.path.join(tmp_dir, "a.zip")
+            out = os.path.join(tmp_dir, "out")
+            # What `zip -ryD` stores: no entries for directories, and `b` holds only a link.
+            write_archive(archive, [("a/f", "inside"), ("b/t", "../a/f", "symlink")])
+            unzip.do_unzip(archive, out)
+            with open(os.path.join(out, "b", "t")) as linked:
+                self.assertEqual(linked.read(), "inside")
+
     def test_a_symlink_chain_that_leaves_the_output_directory_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             archive = os.path.join(tmp_dir, "a.zip")

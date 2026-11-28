@@ -55,6 +55,8 @@ def do_unzip(archive, output_dir):
                 raise RuntimeError(
                     f"Symlink `{info.filename}` -> `{symlink_dst}` (normalized destination path relative to archive output directory is `{output_dir_relative_symlink_dst}`) points outside of archive output directory which is prohibited."
                 )
+            # The archive may have no entry for the directory the symlink is in.
+            os.makedirs(os.path.dirname(symlink_path), exist_ok=True)
             os.symlink(symlink_dst, symlink_path)
         # A target is resolved through the other links, so a chain of them can leave the
         # output directory even when each target passes the check above.

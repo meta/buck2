@@ -71,3 +71,21 @@ class UnzipTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "outside"):
                 unzip.do_unzip(archive, out)
             self.assertFalse(os.path.lexists(os.path.join(tmp_dir, "escaped_link")))
+
+    def test_a_file_in_a_read_only_directory_is_extracted(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            archive = os.path.join(tmp_dir, "a.zip")
+            out = os.path.join(tmp_dir, "out")
+            # What `zip -r` stores for a directory of mode `r-xr-xr-x`.
+            with zipfile.ZipFile(archive, "w") as z:
+                directory = zipfile.ZipInfo("d/")
+                directory.external_attr = (stat.S_IFDIR | 0o555) << 16
+                z.writestr(directory, "")
+                z.writestr("d/f", "inside")
+            unzip.do_unzip(archive, out)
+            mode = stat.S_IMODE(os.stat(os.path.join(out, "d")).st_mode)
+            os.chmod(os.path.join(out, "d"), 0o755)
+            with open(os.path.join(out, "d", "f")) as extracted:
+                self.assertEqual(extracted.read(), "inside")
+            if os.name != "nt":
+                self.assertEqual(mode, 0o555)

@@ -209,6 +209,7 @@ fn channel_from_endpoint(endpoint: &tonic::transport::Endpoint) -> Channel {
     // be set here instead of on the endpoint
     let mut http = HttpConnector::new();
     http.enforce_http(false);
+    http.set_nodelay(true);
     let connector = CountingConnector::new(http);
 
     // We need to use a lazy channel so the pool isn't blocked waiting for new

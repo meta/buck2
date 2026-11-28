@@ -238,15 +238,12 @@ async fn test_a_resource_at_the_main_link_is_an_error(buck: &Buck) {
 
 // prelude/http_archive/unarchive.bzl `unarchive`
 #[buck_test(inplace = false, skip_for_os = ["windows", "darwin"])]
-async fn test_excluded_names_are_read_by_tar_as_globs(buck: &Buck) -> anyhow::Result<()> {
-    // The exclusion list holds the member names that matched the `excludes`
-    // regexes, but tar reads every `--exclude-from` line as a glob: `[id].js`
-    // keeps the excluded file and drops `i.js` and `d.js` instead.
+async fn test_excluded_names_are_matched_literally(buck: &Buck) -> anyhow::Result<()> {
     let out = output(buck, "root//archive:unpacked").await?;
     let mut names = std::fs::read_dir(out.join("pages"))?
         .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
         .collect::<anyhow::Result<Vec<_>>>()?;
     names.sort();
-    assert_eq!(names, ["[id].js", "keep.js"]);
+    assert_eq!(names, ["d.js", "i.js", "keep.js"]);
     Ok(())
 }

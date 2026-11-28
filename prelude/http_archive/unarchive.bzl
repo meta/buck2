@@ -64,6 +64,11 @@ def _unarchive_cmd(ext_type: str, archive: Artifact, strip_prefix: [str, None]) 
     else:
         fail()
 
+def _tar_literal_pattern(path: str) -> str:
+    for metachar in ["\\", "*", "?", "["]:
+        path = path.replace(metachar, "\\" + metachar)
+    return path
+
 def _tar_strip_prefix_flags(strip_prefix: [str, None]) -> list[str]:
     if strip_prefix:
         # count nonempty path components in the prefix
@@ -178,7 +183,7 @@ def unarchive(
             for f in files:
                 for exclusion in exclude_regexen:
                     if exclusion.match(f):
-                        exclusion_list.append(f)
+                        exclusion_list.append(_tar_literal_pattern(f))
                         break
             ctx.actions.write(outputs[exclusions], "\n".join(exclusion_list))
 

@@ -480,6 +480,12 @@ fn convert_result<R: TryFrom<command_result::Result, Error = command_result::Res
     }
 }
 
+/// Whether the invocation record is kept in the event log in addition to sending it to
+/// `buck2_events` sinks (like Scribe at Meta or OpenTelemetry). Open source users aren't
+/// necessarily collecting invocation records in the same place as event logs, so it's helpful to
+/// have a copy of the invocation record in the event log.
+const INVOCATION_RECORD_IN_EVENT_LOG: bool = !cfg!(fbcode_build);
+
 /// Forwards events to a list of subscribers to record and report build events.
 pub struct EventsCtx {
     pub recorder: Option<Box<InvocationRecorder>>,
@@ -778,10 +784,39 @@ impl EventsCtx {
     /// Finalizes every subscriber except the invocation recorder, in order.
     async fn finalize_subscribers(&mut self) -> Vec<String> {
         let mut errors = Vec::new();
+        if INVOCATION_RECORD_IN_EVENT_LOG
+            && let Err(e) = self.record_invocation_in_event_log().await
+        {
+            errors.push(format!(
+                "{:?}",
+                e.context("Failed to write the invocation record to the event log")
+            ));
+        }
         for subscriber in std::mem::take(&mut self.subscribers) {
             Self::finalize_one(subscriber, &mut errors).await;
         }
         errors
+    }
+
+    /// Hands the invocation record to the subscribers, one of which is the event log. The
+    /// recorder keeps it, to send the same record when it is finalized.
+    async fn record_invocation_in_event_log(&mut self) -> buck2_error::Result<()> {
+        if !self.log_invocation_record {
+            return Ok(());
+        }
+        let Some(recorder) = self.recorder.as_mut() else {
+            return Ok(());
+        };
+        let record = [Arc::new(recorder.create_record_event_early())];
+        let mut futures: FuturesUnordered<_> = self
+            .subscribers
+            .iter_mut()
+            .map(|s| s.handle_events(&record))
+            .collect();
+        while let Some(res) = futures.next().await {
+            res?;
+        }
+        Ok(())
     }
 
     /// Sends the invocation record, if this command logs one.
@@ -878,6 +913,8 @@ pub enum EventsCtxError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::Mutex;
     use std::time::Duration;
     use std::time::SystemTime;
 
@@ -886,8 +923,10 @@ mod tests {
     use buck2_error::ErrorTag;
     use buck2_error::buck2_error;
     use buck2_event_log::stream_value::StreamValue;
+    use buck2_events::BuckEvent;
     use buck2_fs::paths::abs_path::AbsPathBuf;
     use buck2_wrapper_common::invocation_id::TraceId;
+    use dupe::Dupe;
     use futures::stream;
 
     use crate::command_outcome::CommandOutcome;
@@ -914,11 +953,36 @@ mod tests {
         }
     }
 
-    /// The finalizing errors written to the command report when the only other subscriber
-    /// takes `slow` to finalize. The recorder has no Scribe sink here, so its `finalize`
-    /// leaves a "Scribe sink not enabled" error whenever it runs: that error is the evidence
-    /// that the invocation record was attempted.
-    fn finalizing_errors(slow: Duration) -> Vec<String> {
+    /// Notes, in order, the invocation records it is handed and its own finalization.
+    struct Witness(Arc<Mutex<Vec<&'static str>>>);
+
+    #[async_trait]
+    impl EventSubscriber for Witness {
+        fn name(&self) -> &'static str {
+            "witness"
+        }
+
+        async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
+            for event in events {
+                if let buck2_data::buck_event::Data::Record(buck2_data::RecordEvent {
+                    data: Some(buck2_data::record_event::Data::InvocationRecord(_)),
+                }) = event.data()
+                {
+                    self.0.lock().unwrap().push("invocation record");
+                }
+            }
+            Ok(())
+        }
+
+        async fn finalize(self: Box<Self>) -> buck2_error::Result<()> {
+            self.0.lock().unwrap().push("finalize");
+            Ok(())
+        }
+    }
+
+    /// The finalizing errors written to the command report when a command with an invocation
+    /// recorder finishes with `subscribers`.
+    fn finalizing_errors(subscribers: Vec<Box<dyn EventSubscriber>>) -> Vec<String> {
         buck2_events::sink::remote::disable();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -926,7 +990,7 @@ mod tests {
             .build()
             .unwrap();
         let recorder = InvocationRecorder::new(TraceId::new(), None, SystemTime::now(), vec![]);
-        let mut ctx = EventsCtx::new(Some(recorder), vec![Box::new(SlowFinalize(slow))]);
+        let mut ctx = EventsCtx::new(Some(recorder), subscribers);
         let dir = tempfile::tempdir().unwrap();
         let path = AbsPathBuf::new(dir.path().join("command_report.json")).unwrap();
         ctx.command_report_path = Some(path.clone());
@@ -942,9 +1006,12 @@ mod tests {
             .collect()
     }
 
+    /// The recorder has no Scribe sink here, so its `finalize` leaves a "Scribe sink not
+    /// enabled" error whenever it runs: that error is the evidence that the invocation record
+    /// was attempted.
     #[test]
     fn test_recorder_is_finalized_after_a_fast_subscriber() {
-        let errors = finalizing_errors(Duration::ZERO);
+        let errors = finalizing_errors(vec![Box::new(SlowFinalize(Duration::ZERO))]);
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
             errors[0].contains("'invocation recorder' failed to finalize"),
@@ -1025,12 +1092,35 @@ mod tests {
     /// invocation record is still attempted afterwards.
     #[test]
     fn test_slow_subscriber_does_not_skip_the_invocation_record() {
-        let errors = finalizing_errors(Duration::from_secs(31));
+        let errors = finalizing_errors(vec![Box::new(SlowFinalize(Duration::from_secs(31)))]);
         assert_eq!(errors.len(), 2, "{errors:?}");
         assert_eq!(errors[0], "Timeout after 30s waiting for logging cleanup");
         assert!(
             errors[1].contains("'invocation recorder' failed to finalize"),
             "{errors:?}"
         );
+    }
+
+    /// Without Scribe, the invocation record goes to the subscribers (among them the event log)
+    /// before any of them is finalized.
+    #[cfg(not(fbcode_build))]
+    #[test]
+    fn test_invocation_record_reaches_subscribers_before_they_finalize() {
+        let seen: Arc<Mutex<Vec<_>>> = Arc::default();
+        finalizing_errors(vec![Box::new(Witness(seen.dupe()))]);
+        assert_eq!(*seen.lock().unwrap(), ["invocation record", "finalize"]);
+    }
+
+    /// Without Scribe, a subscriber that takes longer than the cleanup budget does not keep the
+    /// invocation record from the others.
+    #[cfg(not(fbcode_build))]
+    #[test]
+    fn test_slow_subscriber_does_not_keep_the_invocation_record_from_the_others() {
+        let seen: Arc<Mutex<Vec<_>>> = Arc::default();
+        finalizing_errors(vec![
+            Box::new(SlowFinalize(Duration::from_secs(31))),
+            Box::new(Witness(seen.dupe())),
+        ]);
+        assert_eq!(*seen.lock().unwrap(), ["invocation record"]);
     }
 }

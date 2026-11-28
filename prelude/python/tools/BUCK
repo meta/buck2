@@ -237,6 +237,13 @@ prelude.python_test(
 )
 
 prelude.python_test(
+    name = "extract_test",
+    srcs = ["tests/extract_test.py"],
+    base_module = "",
+    resources = ["extract.py"],
+)
+
+prelude.python_test(
     name = "create_link_tree_test",
     srcs = ["tests/create_link_tree_test.py"],
     base_module = "",

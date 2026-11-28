@@ -2023,8 +2023,11 @@ def _get_compile_base(toolchain: CxxToolchainInfo, compiler_info: typing.Any, us
     else:
         compiler = compiler_info.compiler_with_wrapper if compiler_info.compiler_with_wrapper and use_wrapper else compiler_info.compiler
 
-    if toolchain.remap_cwd and compiler_info.compiler_type in ["clang", "clang_windows", "clang_cl", "gcc"]:
+    if toolchain.remap_cwd and compiler_info.compiler_type in ["clang", "clang_windows", "clang_cl"]:
         return cmd_args(toolchain.internal_tools.remap_cwd, compiler)
+    elif toolchain.remap_cwd and compiler_info.compiler_type == "gcc":
+        # GCC does not pass -ffile-prefix-map to the GNU assembler for .s/.S/.sx sources.
+        return cmd_args(toolchain.internal_tools.remap_cwd, "--gnu-assembler", compiler)
     else:
         return cmd_args(compiler)
 

@@ -10,14 +10,16 @@
 # pyre-strict
 
 """
-Usage: remap_cwd.py path/to/compiler [args...]
+Usage: remap_cwd.py [--gnu-assembler] path/to/compiler [args...]
 
-Runs `path/to/compiler [args...] -ffile-prefix-map=$PWD=. -Wa,--debug-prefix-map=$PWD=.`
+Runs `path/to/compiler [args...] -ffile-prefix-map=$PWD=.`, plus `-Wa,--debug-prefix-map=$PWD=.`
+when `--gnu-assembler` is given.
 
 Flags are appended so that compiler wrappers using "$@" see the real binary as $1. Using $PWD=.
 remaps both DW_AT_comp_dir (which GCC sets to exactly $PWD without trailing slash) and source file
-paths. -Wa,--debug-prefix-map is needed because GCC does not pass -ffile-prefix-map through to the
-assembler for .s/.S/.sx files.
+paths. -Wa,--debug-prefix-map is needed for GCC because it does not pass -ffile-prefix-map through
+to the assembler for .s/.S/.sx files. Clang's integrated assembler honours -ffile-prefix-map, and
+the Clang driver rejects --debug-prefix-map in -Wa, so the flag is only added on request.
 """
 
 import os
@@ -28,11 +30,11 @@ import sys
 if __name__ == "__main__":
     cwd = os.getcwd()
 
-    ret = subprocess.call(
-        [
-            *sys.argv[1:],
-            f"-ffile-prefix-map={cwd}=.",
-            f"-Wa,--debug-prefix-map={cwd}=.",
-        ],
-    )
+    args = sys.argv[1:]
+    remap_flags = [f"-ffile-prefix-map={cwd}=."]
+    if args and args[0] == "--gnu-assembler":
+        args = args[1:]
+        remap_flags.append(f"-Wa,--debug-prefix-map={cwd}=.")
+
+    ret = subprocess.call([*args, *remap_flags])
     sys.exit(ret)

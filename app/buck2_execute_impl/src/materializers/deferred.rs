@@ -142,7 +142,6 @@ pub struct DeferredMaterializerAccessor<T: IoHandler + 'static> {
     /// sure only one executes at a time and in the order they came in.
     /// TODO(rafaelc): aim to replace it with a simple mutex.
     #[allocative(skip)]
-    #[cfg_attr(not(test), expect(dead_code))]
     command_thread: Option<std::thread::JoinHandle<()>>,
     #[allocative(skip)]
     cancellation: Arc<CancellationScope>,

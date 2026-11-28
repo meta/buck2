@@ -30,7 +30,6 @@ pub struct SelfRef<D: RefData> {
     // Owner must be in `Arc` (or `Rc`) because
     // - pointers stay valid when `SelfRef` is moved.
     // - it cannot be `Box` because it would violate aliasing rules
-    #[expect(dead_code)]
     owner: Arc<dyn Allocative + Send + Sync + 'static>,
 }
 

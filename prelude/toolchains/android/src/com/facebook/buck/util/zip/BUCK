@@ -90,6 +90,8 @@ buck_prebuilt_artifact(
     name = "zip_scrubber_main.jar",
     # @oss-disable[end= ]: cas_digest = "9cec24a193a236fc5acdaff4fae66769f22c56af19c1e9204affad545d0ec7ab:10388458",
     oss_sha1 = "23c85d8db2958ad502c1cd1eb3bbcd1342c37c7d",
+    oss_sha256 = "ae71f570ac36d9af7fa5d2e38dde8165ca5ace2637cebd1147388f3a11ebdec2",
+    oss_size_bytes = 10388458,
     oss_url = "https://github.com/facebook/buck2/releases/download/androidToolchain%2F2025-04-03/zip_scrubber_main.jar",
 )
 
@@ -138,6 +140,8 @@ buck_prebuilt_artifact(
     name = "jar_builder_main.jar",
     # @oss-disable[end= ]: cas_digest = "73149775903042a6a323255a7b40862323c8afc35afd582c4b8861ff77d8fbe9:23604183",
     oss_sha1 = "18f839ebb58babae4ae35900ef33cdf065d0cbc5",
+    oss_sha256 = "f3f5ee7ec6639a2a6524bbd8485515a80b8aacbc76f76412d7d3304bf905fe9a",
+    oss_size_bytes = 22113272,
     oss_url = "https://github.com/facebook/buck2/releases/download/androidToolchain%2F2025-04-03/jar_builder_main.jar",
 )
 

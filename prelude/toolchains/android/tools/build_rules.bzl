@@ -142,7 +142,12 @@ def _toolchain_prebuilt_jar(name, **kwargs):
         kwargs["_prebuilt_jar_toolchain"] = "toolchains//:prebuilt_jar_bootstrap"
     return fb_native.prebuilt_jar(name = name, **kwargs)
 
-def _oss_remote_file_with_wrapper(name, ext, url, sha1, **kwargs):
+# `sha256` and `size_bytes` let Buck2 take the file from the remote cache
+# instead of its origin: a cache keyed by SHA-256 (the open source default)
+# can't look a download up by its SHA-1, so with a SHA-1 alone every new
+# daemon fetches it from its origin, even when everything built from it is a
+# cache hit.
+def _oss_remote_file_with_wrapper(name, ext, url, sha1, sha256 = None, size_bytes = None, **kwargs):
     remote_file_target_name = name + "_" + ext
     if ext == "jar":
         _toolchain_prebuilt_jar(name = name, binary_jar = ":" + remote_file_target_name, **kwargs)
@@ -155,6 +160,8 @@ def _oss_remote_file_with_wrapper(name, ext, url, sha1, **kwargs):
         name = remote_file_target_name,
         out = name + "." + ext,
         sha1 = sha1,
+        sha256 = sha256,
+        size_bytes = size_bytes,
         url = url,
         type = "executable" if ext == "exe" else "data",
     )
@@ -165,10 +172,12 @@ def _buck_remote_file_with_wrapper(
     url,
     sha1,
     # @oss-disable[end= ]: internal_alias,
+    sha256 = None,
+    size_bytes = None,
     **kwargs,
 ):
     if not is_full_meta_repo():
-        return _oss_remote_file_with_wrapper(name, ext, url, sha1, **kwargs)
+        return _oss_remote_file_with_wrapper(name, ext, url, sha1, sha256 = sha256, size_bytes = size_bytes, **kwargs)
     # @oss-disable[end= ]: else:
         # @oss-disable: # deps are managed by Artificer internally - only relevant for OSS builds.
         # @oss-disable[end= ]: kwargs.pop("deps", None)
@@ -180,6 +189,8 @@ def third_party_jar(
     url,
     sha1,
     # @oss-disable[end= ]: internal_alias,
+    sha256 = None,
+    size_bytes = None,
     **kwargs,
 ):
     return _buck_remote_file_with_wrapper(
@@ -188,6 +199,8 @@ def third_party_jar(
         url,
         sha1,
         # @oss-disable[end= ]: internal_alias,
+        sha256 = sha256,
+        size_bytes = size_bytes,
         **kwargs,
     )
 
@@ -196,6 +209,8 @@ def third_party_aar(
     url,
     sha1,
     # @oss-disable[end= ]: internal_alias,
+    sha256 = None,
+    size_bytes = None,
     **kwargs,
 ):
     return _buck_remote_file_with_wrapper(
@@ -204,6 +219,8 @@ def third_party_aar(
         url,
         sha1,
         # @oss-disable[end= ]: internal_alias,
+        sha256 = sha256,
+        size_bytes = size_bytes,
         **kwargs,
     )
 
@@ -212,6 +229,8 @@ def third_party_exe(
     url,
     sha1,
     # @oss-disable[end= ]: internal_alias,
+    sha256 = None,
+    size_bytes = None,
     **kwargs,
 ):
     return _buck_remote_file_with_wrapper(
@@ -220,6 +239,8 @@ def third_party_exe(
         url,
         sha1,
         # @oss-disable[end= ]: internal_alias,
+        sha256 = sha256,
+        size_bytes = size_bytes,
         **kwargs,
     )
 
@@ -342,10 +363,12 @@ def buck_prebuilt_artifact(
     # @oss-disable[end= ]: cas_digest,
     oss_url = None,
     oss_sha1 = None,
+    oss_sha256 = None,
+    oss_size_bytes = None,
     **kwargs,
 ):
     if (not is_full_meta_repo()) and oss_url:
-        return fb_native.remote_file(sha1 = oss_sha1, url = oss_url, **kwargs)
+        return fb_native.remote_file(sha1 = oss_sha1, sha256 = oss_sha256, size_bytes = oss_size_bytes, url = oss_url, **kwargs)
     # @oss-disable[end= ]: else:
         # @oss-disable[end= ]: return android_build_tools_cas_artifact(digest = cas_digest, **kwargs)
         fail() # @oss-enable

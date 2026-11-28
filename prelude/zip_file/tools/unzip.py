@@ -27,13 +27,17 @@ def do_unzip(archive, output_dir):
         # symlink type (whether it's a file or a directory which is important for Windows platform)
         # is automatically detected for non-broken symlinks (see documentation for `os.symlink` function).
         # That way we don't need to pass `target_is_directory` argument to `os.symlink` function.
+        directory_modes = []
         for info in (i for i in z.infolist() if not _is_symlink(i)):
             z.extract(info, path=output_dir)
             if _is_executable(info):
-                os.chmod(
-                    os.path.join(output_dir, info.filename),
-                    _file_attributes(info) | stat.S_IXUSR,
-                )
+                path = os.path.join(output_dir, info.filename)
+                mode = _file_attributes(info) | stat.S_IXUSR
+                if info.is_dir():
+                    # A directory may be read-only, so it gets its mode once it is filled.
+                    directory_modes.append((path, mode))
+                else:
+                    os.chmod(path, mode)
         for info in (i for i in z.infolist() if _is_symlink(i)):
             if (
                 os.path.isabs(info.filename)
@@ -65,6 +69,9 @@ def do_unzip(archive, output_dir):
                 raise RuntimeError(
                     f"Symlink `{info.filename}` resolves to `{resolved}` which is outside of archive output directory which is prohibited."
                 )
+        # A directory sorts before what it contains, so the deepest ones come first.
+        for path, mode in sorted(directory_modes, reverse=True):
+            os.chmod(path, mode)
 
 
 def _file_attributes(zip_info):

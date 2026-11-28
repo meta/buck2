@@ -438,6 +438,7 @@ impl BuckTest {
             extra_config.push_str("[buildfile]\nextra_for_test = TARGETS.test\n");
             (cell_root()?, Some(self.isolation_prefix()?))
         } else {
+            tokio::fs::write(base_dir.join(".buckroot"), b"").await?;
             if let Some(data) = self.data_source()? {
                 copy_tree(&data, &project_dir)
                     .with_context(|| format!("Copying the test data from `{}`", data.display()))?;

@@ -231,6 +231,7 @@ async def buck_fixture(  # noqa C901 : "too complex"
             extra_config_lines.append("[buildfile]\nextra_for_test = TARGETS.test\n")
 
         else:
+            (base_dir / ".buckroot").touch()
             if marker.data_dir is not None:
                 src = Path(os.environ["TEST_REPO_DATA"], marker.data_dir)
                 _copytree(src, project_dir)

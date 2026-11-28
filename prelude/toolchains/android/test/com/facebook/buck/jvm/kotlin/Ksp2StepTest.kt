@@ -59,17 +59,17 @@ class Ksp2StepTest {
   }
 
   @Test
-  fun `source-only ABI options become KSP options`() {
+  fun `toolchain options become KSP options`() {
     assertEquals(
         mapOf("com.facebook.ultralight.native" to "on", "a.b" to "x=y"),
-        Ksp2Step.sourceOnlyAbiOptions(listOf("com.facebook.ultralight.native=on", "a.b=x=y")),
+        Ksp2Step.kspOptions(listOf("com.facebook.ultralight.native=on", "a.b=x=y")),
     )
-    assertEquals(emptyMap<String, String>(), Ksp2Step.sourceOnlyAbiOptions(emptyList()))
+    assertEquals(emptyMap<String, String>(), Ksp2Step.kspOptions(emptyList()))
   }
 
   @Test(expected = IllegalStateException::class)
-  fun `a source-only ABI option without a value is refused`() {
-    Ksp2Step.sourceOnlyAbiOptions(listOf("com.facebook.ultralight.native"))
+  fun `a toolchain option without a value is refused`() {
+    Ksp2Step.kspOptions(listOf("com.facebook.ultralight.native"))
   }
 
   @Test

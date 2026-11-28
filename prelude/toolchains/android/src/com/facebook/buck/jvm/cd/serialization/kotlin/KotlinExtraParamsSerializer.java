@@ -101,6 +101,7 @@ public class KotlinExtraParamsSerializer {
         kotlinExtraParams.getDisableKosabiKeptBodyStubCheck(),
         kotlinExtraParams.getShouldTrackIncrementalInputs(),
         kotlinExtraParams.getShouldReclaimReadOnlyOutputs(),
-        ImmutableList.copyOf(kotlinExtraParams.getSourceOnlyAbiKspOptionsList()));
+        ImmutableList.copyOf(kotlinExtraParams.getSourceOnlyAbiKspOptionsList()),
+        ImmutableList.copyOf(kotlinExtraParams.getLibraryKspOptionsList()));
   }
 }

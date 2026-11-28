@@ -84,6 +84,9 @@ message KotlinExtraParams {
   // KSP processors the toolchain names (`source_only_abi_ksp_options`). Empty
   // by default.
   repeated string sourceOnlyAbiKspOptions = 41;
+  // `option=value` pairs given to KSP in a library action only, for the KSP
+  // processors the toolchain names (`library_ksp_options`). Empty by default.
+  repeated string libraryKspOptions = 42;
 
   // Turns off the K2 JVM ABI gen check that fails a source-only ABI whose kept
   // inline bodies name a class that only a Kosabi stub provides. Unset (false)

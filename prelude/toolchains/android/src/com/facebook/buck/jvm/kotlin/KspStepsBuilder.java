@@ -150,7 +150,8 @@ public class KspStepsBuilder {
             kotlinCDAnalytics,
             kspCachesOutput,
             extraParams.getFriendPaths(),
-            extraParams.getSourceOnlyAbiKspOptions());
+            extraParams.getSourceOnlyAbiKspOptions(),
+            extraParams.getLibraryKspOptions());
     steps.add(ksp2Step);
     steps.addAll(
         createKspOutputStagingSteps(

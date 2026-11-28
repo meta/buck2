@@ -255,6 +255,7 @@ def create_jar_artifact_kotlincd(
         incremental_state_dir = incremental_state_dir,
         language_version = language_version,
         source_only_abi_applicability_classpath = source_only_abi_applicability_classpath,
+        library_ksp_options = _ksp_options(kotlin_toolchain.library_ksp_options, annotation_processor_properties),
     )
 
     library_command_builder = command_builder(
@@ -316,7 +317,7 @@ def create_jar_artifact_kotlincd(
             language_version = language_version,
             source_only_abi_applicability_classpath = cmd_args(),
             kosabi_jvm_abi_gen_options = kotlin_toolchain.kosabi_jvm_abi_gen_options + _kosabi_member_order_options(kotlin_toolchain, extra_kotlinc_arguments),
-            source_only_abi_ksp_options = _source_only_abi_ksp_options(kotlin_toolchain, annotation_processor_properties),
+            source_only_abi_ksp_options = _ksp_options(kotlin_toolchain.source_only_abi_ksp_options, annotation_processor_properties),
         )
 
         # kotlincd does not support source abi
@@ -473,6 +474,7 @@ def _encode_kotlin_extra_params(
     source_only_abi_applicability_classpath: cmd_args = cmd_args(),
     kosabi_jvm_abi_gen_options: list[str] = [],
     source_only_abi_ksp_options: list[str] = [],
+    library_ksp_options: list[str] = [],
 ):
     kosabiPluginOptionsMap = {}
 
@@ -495,7 +497,11 @@ def _encode_kotlin_extra_params(
         kosabiPluginOptionsMap["rokoko_stubgen_so"] = kotlin_toolchain.rokoko_stubgen_so[DefaultInfo].default_outputs[0]
 
     # Only a non-empty list is encoded, so an action without such options keeps its key.
-    optional_params = {"sourceOnlyAbiKspOptions": source_only_abi_ksp_options} if source_only_abi_ksp_options else {}
+    optional_params = {}
+    if source_only_abi_ksp_options:
+        optional_params["sourceOnlyAbiKspOptions"] = source_only_abi_ksp_options
+    if library_ksp_options:
+        optional_params["libraryKspOptions"] = library_ksp_options
 
     return struct(
         extraClassPaths = bootclasspath_entries,
@@ -526,9 +532,9 @@ def _encode_kotlin_extra_params(
         **optional_params,
     )
 
-def _source_only_abi_ksp_options(kotlin_toolchain: KotlinToolchainInfo, annotation_processor_properties: AnnotationProcessorProperties) -> list[str]:
-    """The toolchain's source-only ABI KSP options for the processors this target runs."""
-    by_processor = kotlin_toolchain.source_only_abi_ksp_options
+def _ksp_options(by_processor: dict[str, list[str]], annotation_processor_properties: AnnotationProcessorProperties) -> list[str]:
+    """The toolchain's KSP options (`source_only_abi_ksp_options` or `library_ksp_options`) for the
+    processors this target runs."""
     if not by_processor:
         return []
     options = []

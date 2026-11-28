@@ -57,6 +57,8 @@ KotlinToolchainInfo = provider(
         "kotlincd_small_action_jvm_args": provider_field(list[str], default = []),
         "kotlincd_small_action_max_srcs": provider_field(int, default = 0),
         "kotlincd_worker": provider_field(typing.Any, default = None),
+        # The same for a target's library action only (`library_ksp_options`). Empty by default.
+        "library_ksp_options": provider_field(dict[str, list[str]], default = {}),
         # Whether kotlincd replaces read-only outputs before an incremental round: Buck2 leaves a failed
         # run's outputs read-only under `buck2.readonly_outputs`.
         "reclaim_read_only_outputs": provider_field(bool, default = False),

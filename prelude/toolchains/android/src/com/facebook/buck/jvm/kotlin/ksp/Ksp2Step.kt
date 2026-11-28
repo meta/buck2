@@ -71,6 +71,10 @@ class Ksp2Step(
      * KotlinExtraParams).
      */
     private val sourceOnlyAbiKspOptions: List<String> = emptyList(),
+    /**
+     * `option=value` pairs for KSP on a library step only (toolchain-set; see KotlinExtraParams).
+     */
+    private val libraryKspOptions: List<String> = emptyList(),
 ) : IsolatedStep {
 
   /** Whether this step runs on Remote Execution, read as `KotlinCDCommand` reads its platform. */
@@ -388,9 +392,11 @@ class Ksp2Step(
       apOptions[paramAndValue[0]] = paramAndValue[1]
     }
 
-    if (invokingRule.isSourceOnlyAbi) {
-      apOptions.putAll(sourceOnlyAbiOptions(sourceOnlyAbiKspOptions))
-    }
+    apOptions.putAll(
+        kspOptions(
+            if (invokingRule.isSourceOnlyAbi) sourceOnlyAbiKspOptions else libraryKspOptions,
+        ),
+    )
 
     apOptions["com.facebook.buck.kotlin.ksp_generated_out_path"] = kotlinPluginGeneratedOutFullPath
     return apOptions
@@ -444,14 +450,13 @@ class Ksp2Step(
 
     private val LOG: Logger = Logger.get(Ksp2Step::class.java)
 
-    /** The toolchain's `option=value` pairs for a source-only ABI step, as KSP options. */
+    /** The toolchain's `option=value` pairs for this kind of step, as KSP options. */
     @JvmStatic
-    fun sourceOnlyAbiOptions(options: List<String>): Map<String, String> =
-        options.associate { option ->
-          val key = option.substringBefore('=')
-          check(key.isNotEmpty() && key.length < option.length) { "not `option=value`: $option" }
-          key to option.substring(key.length + 1)
-        }
+    fun kspOptions(options: List<String>): Map<String, String> = options.associate { option ->
+      val key = option.substringBefore('=')
+      check(key.isNotEmpty() && key.length < option.length) { "not `option=value`: $option" }
+      key to option.substring(key.length + 1)
+    }
 
     private const val PROCESSOR_OUTPUT_EXTRAS_KEY = "ksp2_processor_generated_files"
 

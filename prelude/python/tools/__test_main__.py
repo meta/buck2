@@ -219,6 +219,7 @@ class BuckTestResult(unittest.TextTestResult):
         self._current_test = test
         self._test_start_time = time.time()
         self._current_status = TestStatus.ABORTED
+        self._failed = False
         self._messages = []
         self._stacktrace = None
         self._stdout = ""
@@ -293,8 +294,13 @@ class BuckTestResult(unittest.TextTestResult):
 
     def _setStatus(self, test, status, message=None, stacktrace=None):
         assert test == self._current_test
-        self._current_status = status
-        self._stacktrace = stacktrace
+        # A skip after a failed subtest (a later subtest skipped, or `skipTest`
+        # called after the subtests) keeps the failure: unittest counts both.
+        if not (self._failed and status in (TestStatus.PASSED, TestStatus.SKIPPED)):
+            self._current_status = status
+            self._stacktrace = stacktrace
+        if status in (TestStatus.FAILED, TestStatus.ABORTED):
+            self._failed = True
         if message is not None:
             if message.endswith(os.linesep):
                 message = message[:-1]

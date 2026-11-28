@@ -38,6 +38,18 @@ def _subtests_case() -> tuple[type[unittest.TestCase], list[bool]]:
                 self.skipTest("platform not supported")
             after_skip.append(True)
 
+        def test_subtest_fails_then_one_skips(self) -> None:
+            for platform in ["linux", "windows"]:
+                with self.subTest(platform=platform):
+                    if platform == "windows":
+                        self.skipTest("windows not supported")
+                    self.assertEqual(len(platform), 0, "fails on %s" % platform)
+
+        def test_subtest_fails_then_test_skips(self) -> None:
+            with self.subTest(case="first"):
+                self.assertEqual(1, 0, "first case fails")
+            self.skipTest("rest not supported")
+
     return Subtests, after_skip
 
 
@@ -66,6 +78,27 @@ class SubtestReportingTest(unittest.TestCase):
             result["message"], "AssertionError: 1 != 0 : value 1 is not zero"
         )
         self.assertIn("test_subtest_fails", str(result["stacktrace"]))
+
+    def test_a_later_skipped_subtest_keeps_the_failure(self) -> None:
+        case, _ = _subtests_case()
+        result = _results_of(case)["test_subtest_fails_then_one_skips"]
+        self.assertEqual(result["type"], "FAILURE")
+        self.assertEqual(
+            result["message"],
+            os.linesep.join(
+                [
+                    "AssertionError: 5 != 0 : fails on linux",
+                    "Skipped: windows not supported",
+                ]
+            ),
+        )
+        self.assertIn("test_subtest_fails_then_one_skips", str(result["stacktrace"]))
+
+    def test_a_skip_after_a_failed_subtest_keeps_the_failure(self) -> None:
+        case, _ = _subtests_case()
+        result = _results_of(case)["test_subtest_fails_then_test_skips"]
+        self.assertEqual(result["type"], "FAILURE")
+        self.assertIn("test_subtest_fails_then_test_skips", str(result["stacktrace"]))
 
 
 def _waiting_for_sigterm() -> None:

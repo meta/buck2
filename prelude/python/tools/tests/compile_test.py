@@ -10,6 +10,8 @@
 
 import importlib.util
 import json
+import marshal
+import os
 import subprocess
 import sys
 import tempfile
@@ -19,7 +21,9 @@ from pathlib import Path
 COMPILE: Path = Path(__file__).resolve().parent.parent / "compile.py"
 
 
-def _compile(tmp: Path, manifest: list[list[str]]) -> list[str]:
+def _compile(
+    tmp: Path, manifest: list[list[str]], env: dict[str, str] | None = None
+) -> list[str]:
     manifest_path = tmp / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf8")
     bytecode_manifest = tmp / "bytecode.manifest"
@@ -37,6 +41,7 @@ def _compile(tmp: Path, manifest: list[list[str]]) -> list[str]:
         capture_output=True,
         encoding="utf8",
         cwd=tmp,
+        env=env,
     )
     if proc.returncode != 0:
         raise AssertionError(proc.stderr)
@@ -59,3 +64,22 @@ class PycPathTest(unittest.TestCase):
             dests = _compile(tmp, _two_sources(tmp))
         self.assertEqual(dests[0], importlib.util.cache_from_source("a/b/c.py"))
         self.assertEqual(dests[1], importlib.util.cache_from_source("a/b.c.py"))
+
+    def test_the_bytecode_path_does_not_follow_the_environment(self) -> None:
+        for name, value in [
+            ("PYTHONPYCACHEPREFIX", "pycache"),
+            ("PYTHONOPTIMIZE", "1"),
+        ]:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                (tmp / "c.py").write_text("assert False\n", encoding="utf8")
+                manifest = [["a/b/c.py", str(tmp / "c.py"), "//x:x"]]
+                env = {**os.environ, name: value}
+                dests = _compile(tmp, manifest, env)
+                self.assertEqual(
+                    dests, ["a/b/__pycache__/c.%s.pyc" % sys.implementation.cache_tag]
+                )
+                # The assert is kept, as for the interpreter that imports the pyc.
+                code = marshal.loads((tmp / "out" / dests[0]).read_bytes()[16:])
+                with self.assertRaises(AssertionError):
+                    exec(code, {})

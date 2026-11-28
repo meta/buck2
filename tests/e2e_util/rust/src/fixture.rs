@@ -356,6 +356,18 @@ impl BuckTest {
             .get(OsStr::new("TEST_EXECUTABLE"))
             .cloned()
             .context("`TEST_EXECUTABLE` is not set; the buck e2e test macros set it")?;
+        // Isolated tests get a `$HOME` of their own so they neither read the user's files
+        // nor write them: what resolves the home directory (buck2 state, user configs, tools
+        // the test runs) sees an empty directory of the test's own. Other tests run against
+        // the repository and keep the user's environment.
+        if is_core_test() {
+            let home_dir = base_dir.join("home");
+            fs::create_dir_all(&home_dir)?;
+            env.insert(OsString::from("HOME"), home_dir.clone().into_os_string());
+            if cfg!(windows) {
+                env.insert(OsString::from("USERPROFILE"), home_dir.into_os_string());
+            }
+        }
         let mut set = |key: &str, value: &str| {
             env.insert(key.into(), value.into());
         };

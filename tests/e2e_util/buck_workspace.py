@@ -159,6 +159,16 @@ async def buck_fixture(  # noqa C901 : "too complex"
     common_dir = await _get_common_dir()
     base_dir = Path(tempfile.mkdtemp(dir=common_dir))
 
+    # Isolated tests get a `$HOME` of their own so they neither read the user's files
+    # nor write them. Other tests run against the repository and keep the user's
+    # environment.
+    if _is_core_test():
+        home_dir = base_dir / "home"
+        home_dir.mkdir(exist_ok=True)
+        env["HOME"] = str(home_dir)
+        if is_windows:
+            env["USERPROFILE"] = str(home_dir)
+
     isolation_prefix = None
     keep_temp = os.environ.get("BUCK_E2E_KEEP_TEMP") == "1"
 

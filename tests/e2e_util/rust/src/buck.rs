@@ -127,10 +127,11 @@ impl Buck {
     /// from the test's `buck` gets its own copy of the test's external config with the routing key
     /// replaced. Clients with equal routing share the file. A shared daemon's namespace is keyed
     /// only by the client's compatibility key, so clients that share get a home of their own
-    /// (`BUCK2_TEST_HOME_DIR`), unless the test set one; unshared ones keep the real one, as they
-    /// do outside tests. Where the host does not share daemons a client asked to share stays
-    /// unshared, as it would outside tests, but still gets the home, so the test's paths under it
-    /// hold on every host.
+    /// (`BUCK2_TEST_HOME_DIR`), unless the test set one; unshared clients in isolated tests use
+    /// the test's isolated `$HOME`, while tests running against the repository keep the real
+    /// home, as they do outside tests. Where the host does not share daemons a client asked
+    /// to share stays unshared, as it would outside tests, but still gets the home, so the
+    /// test's paths under it hold on every host.
     pub fn set_daemon_routing(&mut self, share_daemon: bool) -> anyhow::Result<()> {
         let own_home = share_daemon;
         let share_daemon = share_daemon && host_shares_daemons();

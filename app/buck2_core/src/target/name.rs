@@ -172,6 +172,7 @@ impl Deref for TargetName {
     PartialEq,
     Ord,
     PartialOrd,
+    Allocative,
     StrongHash
 )]
 #[repr(transparent)]

@@ -30,8 +30,6 @@ use buck2_events::dispatch::span;
 use buck2_query::query::syntax::simple::eval::label_indexed::LabelIndexed;
 use buck2_query::query::syntax::simple::eval::set::TargetSet;
 use buck2_util::late_binding::LateBinding;
-use buck2_util::self_ref::RefData;
-use buck2_util::self_ref::SelfRef;
 use dice::DiceComputations;
 use dupe::Dupe;
 use either::Either;
@@ -52,26 +50,15 @@ pub static UNIVERSE_FROM_LITERALS: LateBinding<
         -> Pin<Box<dyn Future<Output = buck2_error::Result<CqueryUniverse>> + Send + 'c>>,
 > = LateBinding::new("UNIVERSE_FROM_LITERALS");
 
-#[derive(Debug)]
-struct CqueryUniverseInner<'a> {
-    targets: BTreeMap<
-        PackageLabel,
-        BTreeMap<&'a TargetNameRef, BTreeSet<LabelIndexed<ConfiguredTargetNodeRef<'a>>>>,
-    >,
-}
-
-struct CqueryUniverseInnerType;
-
-impl RefData for CqueryUniverseInnerType {
-    type Data<'a> = CqueryUniverseInner<'a>;
-}
-
 /// Subset of targets `cquery` command works with.
 ///
 /// Targets are resolved in the universe, and file owners are also resolved in the universe.
 #[derive(Allocative, Debug)]
 pub struct CqueryUniverse {
-    data: SelfRef<CqueryUniverseInnerType>,
+    targets: BTreeMap<
+        PackageLabel,
+        BTreeMap<&'static TargetNameRef, BTreeSet<LabelIndexed<ConfiguredTargetNode>>>,
+    >,
 }
 
 // SAFETY: `_assert_send_sync` requires the only field to be `Send + Sync`. Spelled out
@@ -79,74 +66,52 @@ pub struct CqueryUniverse {
 unsafe impl Send for CqueryUniverse {}
 unsafe impl Sync for CqueryUniverse {}
 
-fn _assert_send_sync(CqueryUniverse { data }: &CqueryUniverse) {
+fn _assert_send_sync(CqueryUniverse { targets }: &CqueryUniverse) {
     fn assert<T: Send + Sync>(_: &T) {}
-    assert(data);
-}
-
-impl<'a> CqueryUniverseInner<'a> {
-    pub fn new(
-        targets: BTreeMap<
-            PackageLabel,
-            BTreeMap<&'a TargetNameRef, BTreeSet<LabelIndexed<ConfiguredTargetNodeRef<'a>>>>,
-        >,
-    ) -> Self {
-        CqueryUniverseInner { targets }
-    }
-
-    fn build_inner(
-        universe: &'a TargetSet<ConfiguredTargetNode>,
-    ) -> buck2_error::Result<CqueryUniverseInner<'a>> {
-        let mut targets: BTreeMap<
-            PackageLabel,
-            BTreeMap<&TargetNameRef, BTreeSet<LabelIndexed<ConfiguredTargetNodeRef>>>,
-        > = BTreeMap::new();
-
-        configured_node_visit_all_deps(universe.iter().map(|t| t.as_ref()), |target| {
-            let label = target.label();
-            let package_targets: &mut _ = targets.entry(label.pkg().dupe()).or_default();
-
-            let nodes: &mut _ = match package_targets.get_mut(label.name()) {
-                Some(v) => v,
-                None => package_targets.entry(label.name()).or_default(),
-            };
-
-            let inserted = nodes.insert(LabelIndexed(target));
-            assert!(inserted, "Visited targets must be unique");
-        });
-
-        Ok(CqueryUniverseInner::new(targets))
-    }
+    assert(targets);
 }
 
 impl CqueryUniverse {
     pub fn len(&self) -> usize {
-        self.data
-            .data()
-            .targets
-            .values()
-            .map(|e| e.values().len())
-            .sum()
+        self.targets.values().map(|e| e.values().len()).sum()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = ConfiguredTargetNodeRef<'_>> {
-        self.data
-            .data()
-            .targets
-            .values()
-            .flat_map(|map| map.values().flat_map(|set| set.iter().map(|node| node.0)))
+        self.targets.values().flat_map(|map| {
+            map.values()
+                .flat_map(|set| set.iter().map(|node| node.0.as_ref()))
+        })
     }
 
     pub fn build(
         universe: &TargetSet<ConfiguredTargetNode>,
     ) -> buck2_error::Result<CqueryUniverse> {
         span(buck2_data::CqueryUniverseBuildStart {}, || {
-            let r = SelfRef::try_new(universe.clone(), |universe| {
-                CqueryUniverseInner::build_inner(universe)
-            })
-            .map(|data| CqueryUniverse { data });
-            (r, buck2_data::CqueryUniverseBuildEnd {})
+            (
+                Ok(Self::build_inner(universe)),
+                buck2_data::CqueryUniverseBuildEnd {},
+            )
         })
+    }
+
+    fn build_inner(universe: &TargetSet<ConfiguredTargetNode>) -> CqueryUniverse {
+        let mut targets: BTreeMap<
+            PackageLabel,
+            BTreeMap<&'static TargetNameRef, BTreeSet<LabelIndexed<ConfiguredTargetNode>>>,
+        > = BTreeMap::new();
+
+        configured_node_visit_all_deps(universe.iter().map(|t| t.as_ref()), |target| {
+            let label = target.label().unconfigured();
+            let inserted = targets
+                .entry(label.pkg())
+                .or_default()
+                .entry(label.name())
+                .or_default()
+                .insert(LabelIndexed(target.to_owned()));
+            assert!(inserted, "Visited targets must be unique");
+        });
+
+        CqueryUniverse { targets }
     }
 
     pub fn get(
@@ -174,13 +139,11 @@ impl CqueryUniverse {
             let package = label.pkg();
             let name = label.name();
             let results = self
-                .data
-                .data()
                 .targets
                 .get(&package)
                 .into_iter()
                 .flat_map(move |package_universe| package_universe.get(name).into_iter().flatten())
-                .map(|node| node.0.to_owned());
+                .map(|node| node.0.dupe());
 
             configured_nodes.extend(results);
         }
@@ -227,9 +190,7 @@ impl CqueryUniverse {
         package: PackageLabel,
         spec: &'a PackageSpec<P>,
     ) -> impl Iterator<Item = (ConfiguredTargetNodeRef<'a>, P)> + 'a {
-        self.data
-            .data()
-            .targets
+        self.targets
             .get(&package)
             .into_iter()
             .flat_map(move |package_universe| match spec {
@@ -241,7 +202,7 @@ impl CqueryUniverse {
                             .flat_map(|nodes| {
                                 nodes.iter().filter_map(|node| {
                                     if extra.matches_cfg(node.0.label().cfg()) {
-                                        Some((node.0, extra.clone()))
+                                        Some((node.0.as_ref(), extra.clone()))
                                     } else {
                                         None
                                     }
@@ -253,7 +214,7 @@ impl CqueryUniverse {
                     package_universe
                         .values()
                         .flatten()
-                        .map(|node| (node.0, P::default())),
+                        .map(|node| (node.0.as_ref(), P::default())),
                 ),
             })
     }
@@ -272,13 +233,13 @@ impl CqueryUniverse {
             // We do it because the map is by `Package`,
             // and `BTreeMap` does not allow lookup by equivalent key.
             let package = PackageLabel::from_cell_path(package)?;
-            let package_data = match self.data.data().targets.get(&package) {
+            let package_data = match self.targets.get(&package) {
                 None => continue,
                 Some(package_data) => package_data,
             };
             for node in package_data.values().flatten() {
                 if node.0.body()?.inputs().contains(path) {
-                    nodes.push(node.0.to_owned());
+                    nodes.push(node.0.dupe());
                 }
             }
         }

@@ -31,7 +31,6 @@ pub mod process;
 pub mod process_stats;
 pub mod properly_reaped_child;
 pub mod rtabort;
-pub mod self_ref;
 pub mod sliding_window;
 pub mod strong_hasher;
 pub mod system_stats;

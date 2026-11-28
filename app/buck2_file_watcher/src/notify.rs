@@ -263,14 +263,25 @@ impl NotifyFileWatcher {
         let data = Arc::new(Mutex::new(Ok(NotifyFileData::new())));
         let data2 = data.dupe();
         let root2 = root.dupe();
-        let mut watcher = notify::recommended_watcher(move |event| {
-            let mut guard = data2.lock().unwrap();
-            if let Ok(state) = &mut *guard {
-                if let Err(e) = state.process(event, &root2, &ignores) {
-                    *guard = Err(e);
+        // The watcher must not follow symlinks. inotify has one watch per directory, however
+        // many paths lead to it, and notify reports the directory's events under whichever of
+        // those paths it walked last. Suppose the project has a symlink `link -> a`. If notify
+        // walked `link` after `a`, a change to `a/f` would be reported as a change to
+        // `link/f`. Nothing depends on `link/f`, because buck2 reads a symlink's target by the
+        // target's own path, so the daemon would keep its stale copy of `a/f`. Watchman doesn't
+        // follow symlinks either.
+        let config = notify::Config::default().with_follow_symlinks(false);
+        let mut watcher = RecommendedWatcher::new(
+            move |event| {
+                let mut guard = data2.lock().unwrap();
+                if let Ok(state) = &mut *guard {
+                    if let Err(e) = state.process(event, &root2, &ignores) {
+                        *guard = Err(e);
+                    }
                 }
-            }
-        })
+            },
+            config,
+        )
         .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::NotifyWatcher))?;
         watcher
             .watch(root.root().as_path(), notify::RecursiveMode::Recursive)
@@ -502,5 +513,44 @@ mod tests {
         assert!(ignore_event_kind(EventKind::Access(
             notify::event::AccessKind::Read
         )));
+    }
+
+    /// A change in a directory that a symlink also leads to is reported under the directory's
+    /// own path, not the symlink's. The directory has several symlinks to it, so that a watcher
+    /// that followed them would almost certainly walk one of them after the directory itself.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn change_behind_symlink_is_reported_under_real_path() {
+        let (root, ignores, _t) = fixture();
+        let real = root.root().as_path().join("a");
+        std::fs::create_dir(&real).unwrap();
+        for i in 0..16 {
+            let dir = root.root().as_path().join(format!("links{i}"));
+            std::fs::create_dir(&dir).unwrap();
+            std::os::unix::fs::symlink("../a", dir.join("a")).unwrap();
+        }
+        let watcher = NotifyFileWatcher::new(&root, ignores).unwrap();
+        std::fs::write(real.join("f"), "changed").unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let paths = loop {
+            let paths: Vec<String> = match &*watcher.data.lock().unwrap() {
+                Ok(state) => state
+                    .events
+                    .iter()
+                    .map(|(path, _)| path.to_string())
+                    .collect(),
+                Err(e) => panic!("watcher failed: {e}"),
+            };
+            if !paths.is_empty() || std::time::Instant::now() > deadline {
+                break paths;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert!(paths.iter().any(|path| path == "a/f"), "events: {paths:?}");
+        assert!(
+            paths.iter().all(|path| !path.starts_with("links")),
+            "events: {paths:?}"
+        );
     }
 }
